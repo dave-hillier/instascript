@@ -1,38 +1,35 @@
 import { useReducer, useState } from 'react'
-import { Sun, Moon, Settings, ArrowUp } from 'lucide-react'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Sun, Moon, Settings } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
+import { HomePage } from './pages/HomePage'
 import './App.css'
 
 type ThemeAction = { type: 'TOGGLE_THEME' }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
-type TabAction = { type: 'SET_ACTIVE_TAB'; tab: 'scripts' | 'archive' }
 
-type AppState = { 
+type UIState = { 
   isDark: boolean
   showSettingsModal: boolean
-  activeTab: 'scripts' | 'archive'
 }
 
-type Action = ThemeAction | ModalAction | TabAction
+type UIAction = ThemeAction | ModalAction
 
-const appReducer = (state: AppState, action: Action): AppState => {
+const uiReducer = (state: UIState, action: UIAction): UIState => {
   switch (action.type) {
     case 'TOGGLE_THEME':
       return { ...state, isDark: !state.isDark }
     case 'TOGGLE_SETTINGS_MODAL':
       return { ...state, showSettingsModal: !state.showSettingsModal }
-    case 'SET_ACTIVE_TAB':
-      return { ...state, activeTab: action.tab }
     default:
       return state
   }
 }
 
-function App() {
-  const [state, dispatch] = useReducer(appReducer, { 
+function AppContent() {
+  const [uiState, uiDispatch] = useReducer(uiReducer, { 
     isDark: true, 
-    showSettingsModal: false,
-    activeTab: 'scripts' 
+    showSettingsModal: false
   })
   
   const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('apiKey', '')
@@ -42,16 +39,17 @@ function App() {
     if (tempApiKey.trim()) {
       setApiKey(tempApiKey.trim())
     }
-    dispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
+    uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
   const handleOpenSettings = () => {
     setTempApiKey(apiKey || '')
-    dispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
+    uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
+
   return (
-    <div data-theme={state.isDark ? 'dark' : 'light'}>
+    <div data-theme={uiState.isDark ? 'dark' : 'light'}>
       <header role="banner">
         <div>
           <h1>
@@ -68,116 +66,29 @@ function App() {
             <Settings size={18} />
           </button>
           <button 
-            onClick={() => dispatch({ type: 'TOGGLE_THEME' })}
-            aria-label={state.isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={() => uiDispatch({ type: 'TOGGLE_THEME' })}
+            aria-label={uiState.isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             type="button"
           >
-            {state.isDark ? <Sun size={18} /> : <Moon size={18} />}
+            {uiState.isDark ? <Sun size={18} /> : <Moon size={18} />}
           </button>
         </nav>
       </header>
       
       <main>
-        <section>
-          <h2>What script should we generate?</h2>
-        </section>
-        
-        <section>
-          <form>
-            <textarea 
-              placeholder="Describe a script to generate"
-              aria-label="Script description"
-            />
-            <div>
-              <div>
-              </div>
-              <div>
-                <button type="submit">
-                  <ArrowUp size={24} />
-                </button>
-              </div>
-            </div>
-          </form>
-        </section>
-
-        <section>
-          <div 
-            role="tablist"
-            aria-label="Script categories"
-          >
-            <button 
-              role="tab"
-              aria-selected={state.activeTab === 'scripts'}
-              aria-controls="scripts-panel"
-              id="scripts-tab"
-              onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'scripts' })}
-              type="button"
-            >
-              Scripts
-            </button>
-            <button 
-              role="tab"
-              aria-selected={state.activeTab === 'archive'}
-              aria-controls="archive-panel"
-              id="archive-tab"
-              onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'archive' })}
-              type="button"
-            >
-              Archive
-            </button>
-          </div>
-        </section>
-
-        <section 
-          role="tabpanel"
-          id={`${state.activeTab}-panel`}
-          aria-labelledby={`${state.activeTab}-tab`}
-        >
-          <div>
-            <article>
-              <div>
-                <h3>Weekly team standup script</h3>
-                <div>Aug 23 · Generated Markdown</div>
-              </div>
-              <div aria-label="4 comments">4</div>
-            </article>
-            
-            <article>
-              <div>
-                <h3>Customer onboarding walkthrough</h3>
-                <div>Aug 23 · Generated Markdown</div>
-              </div>
-              <div aria-label="Status: Complete">Complete</div>
-              <div aria-label="Script length: 2.5 pages">2.5 pages</div>
-            </article>
-            
-            <article>
-              <div>
-                <h3>Product demo presentation script</h3>
-                <div>Aug 23 · Generated Markdown</div>
-              </div>
-              <div aria-label="Script length: 8.2 pages">8.2 pages</div>
-            </article>
-            
-            <article>
-              <div>
-                <h3>Training workshop outline</h3>
-                <div>Aug 23 · Generated Markdown</div>
-              </div>
-              <div aria-label="4 comments">4</div>
-            </article>
-          </div>
-        </section>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+        </Routes>
       </main>
 
-      {state.showSettingsModal && (
+      {uiState.showSettingsModal && (
         <div 
           role="dialog"
           aria-modal="true"
           aria-labelledby="settings-title"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              dispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
+              uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
             }
           }}
         >
@@ -185,7 +96,7 @@ function App() {
             <header>
               <h2 id="settings-title">Settings</h2>
               <button 
-                onClick={() => dispatch({ type: 'TOGGLE_SETTINGS_MODAL' })}
+                onClick={() => uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })}
                 aria-label="Close settings"
                 type="button"
               >
@@ -209,7 +120,7 @@ function App() {
             </div>
             <footer>
               <button 
-                onClick={() => dispatch({ type: 'TOGGLE_SETTINGS_MODAL' })}
+                onClick={() => uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })}
                 type="button"
               >
                 Cancel
@@ -225,6 +136,14 @@ function App() {
         </div>
       )}
     </div>
+  )
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   )
 }
 

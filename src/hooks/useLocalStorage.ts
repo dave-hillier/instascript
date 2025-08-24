@@ -52,7 +52,7 @@ export const useLocalStorage = <T>(key: string, defaultValue: T | null = null) =
   const removeValue = () => {
     try {
       window.localStorage.removeItem(key)
-      dispatch({ type: 'SET_VALUE', value: null })
+      dispatch({ type: 'SET_VALUE', value: null as T })
     } catch (error) {
       console.error(`Error removing localStorage key "${key}":`, error)
     }

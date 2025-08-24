@@ -229,6 +229,7 @@ main > section:nth-child(3) > div {
 main > section:nth-child(3) button {
   background: none;
   border: none;
+  border-radius: 0;
   padding: 0.75rem 1rem;
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -256,6 +257,7 @@ article {
   border: 1px solid;
   border-radius: 8px;
   transition: background-color 0.2s ease;
+  position: relative;
 }
 
 [data-theme="dark"] article {
@@ -477,4 +479,59 @@ article > div[aria-label*="Changes"]:last-child {
 
 [data-theme="light"] [role="dialog"] footer button:first-child {
   border-color: #d1d5db;
+}
+
+.script-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.25rem;
+  background-color: rgba(0, 0, 0, 0.8);
+  padding: 0.25rem;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+article:hover .script-actions {
+  opacity: 1;
+}
+
+[data-theme="light"] .script-actions {
+  background-color: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e5e5e5;
+}
+
+.script-actions button {
+  background: none;
+  border: none;
+  padding: 0.25rem;
+  cursor: pointer;
+  border-radius: 4px;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s ease;
+}
+
+[data-theme="light"] .script-actions button {
+  color: #1a1a1a;
+}
+
+.script-actions button:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="light"] .script-actions button:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.script-actions button:first-child:hover {
+  background-color: rgba(79, 70, 229, 0.2);
+}
+
+.script-actions button:last-child:hover {
+  background-color: rgba(239, 68, 68, 0.2);
 }
