@@ -1,0 +1,45 @@
+# Project Instructions
+
+## Development Commands
+
+- `yarn dev` - Start development server - assume that already is running
+- `yarn build` - Build for production
+- `yarn lint` - Run linting
+- `yarn preview` - Preview production build
+
+## Tech Stack
+
+- Vite
+- React
+- TypeScript
+
+## React Coding Standards
+
+- Prefer `useReducer` for complex state management
+- Don't use `useRef` unless absolutely necessary for DOM access
+- Don't use `useCallback` and `useMemo` as optimizations unless proven necessary through profiling
+- Use event-driven approach with reducers (past-tense events)
+- Don't use `index.ts` files
+- Don't use style blocks in TSX
+- No direct DOM manipulation
+- Don't use emojis in React apps
+
+## HTML & Accessibility Standards
+
+- Use semantic HTML elements (`article`, `section`, `header`, `nav`, `main`, `footer`)
+- Implement WCAG-compliant patterns for interactive components (tabs, modals, etc.)
+- Use classless CSS approach - prefer semantic elements over div-based layouts
+- Include appropriate ARIA attributes and roles for accessibility
+- Use proper heading hierarchy and landmark elements
+
+## Icon Standards
+
+- Use Lucide React icons exclusively
+- Import specific icons rather than the entire library
+- Provide appropriate sizing and accessibility labels
+
+## Data Storage Standards
+
+- Store application settings in localStorage
+- Use custom hooks for localStorage operations with error handling
+- Implement proper state management for persisted data
