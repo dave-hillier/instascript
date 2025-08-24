@@ -31,55 +31,60 @@ export const ScriptPage = () => {
   const estimatedReadTime = Math.max(1, Math.round(wordCount / 200)) // 200 words per minute
   
   return (
-    <div>
-      <section>
-        <div>
-          <div>
+    <section>
+      <header>
+        <dl>
+          <dt>
             <Calendar size={16} />
-            <span>{new Date(script.createdAt).toLocaleDateString()}</span>
-          </div>
+            <span>Created</span>
+          </dt>
+          <dd>{new Date(script.createdAt).toLocaleDateString()}</dd>
           
           {script.status && (
-            <div>
-              <FileText size={16} />
-              <span>{script.status}</span>
-            </div>
+            <>
+              <dt>
+                <FileText size={16} />
+                <span>Status</span>
+              </dt>
+              <dd>{script.status}</dd>
+            </>
           )}
           
-          <div>
+          <dt>
             <Clock size={16} />
-            <span>{estimatedReadTime} min read</span>
-          </div>
+            <span>Reading time</span>
+          </dt>
+          <dd>{estimatedReadTime} min read</dd>
           
-          <div>
+          <dt>
             <FileText size={16} />
-            <span>{wordCount} words</span>
-          </div>
-        </div>
+            <span>Length</span>
+          </dt>
+          <dd>{wordCount} words</dd>
+        </dl>
         
         {script.tags && script.tags.length > 0 && (
-          <div>
+          <aside>
             <Tag size={16} />
-            <div>
+            <span>Tags:</span>
+            <ul>
               {script.tags.map((tag: string) => (
-                <span key={tag}>{tag}</span>
+                <li key={tag}>{tag}</li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </aside>
         )}
-      </section>
+      </header>
       
       <article>
-        <div>
-          {script.content.split('\n').map((paragraph: string, index: number) => (
-            paragraph.trim() ? (
-              <p key={index}>{paragraph}</p>
-            ) : (
-              <br key={index} />
-            )
-          ))}
-        </div>
+        {script.content.split('\n').map((paragraph: string, index: number) => (
+          paragraph.trim() ? (
+            <p key={index}>{paragraph}</p>
+          ) : (
+            <br key={index} />
+          )
+        ))}
       </article>
-    </div>
+    </section>
   )
 }
