@@ -1,8 +1,10 @@
 import { useReducer, useState } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { Sun, Moon, Settings } from 'lucide-react'
+import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
+import { Sun, Moon, Settings, ArrowLeft } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
+import { useAppContext } from './hooks/useAppContext'
 import { HomePage } from './pages/HomePage'
+import { ScriptPage } from './pages/ScriptPage'
 import './App.css'
 
 type ThemeAction = { type: 'TOGGLE_THEME' }
@@ -27,6 +29,9 @@ const uiReducer = (state: UIState, action: UIAction): UIState => {
 }
 
 function AppContent() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { state } = useAppContext()
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
     isDark: true, 
     showSettingsModal: false
@@ -34,6 +39,13 @@ function AppContent() {
   
   const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('apiKey', '')
   const [tempApiKey, setTempApiKey] = useState('')
+  
+  const isScriptPage = location.pathname.startsWith('/script/')
+  
+  // Extract script ID from URL and get script title
+  const scriptId = isScriptPage ? location.pathname.split('/script/')[1] : null
+  const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
+  const headerTitle = isScriptPage && currentScript ? currentScript.title : 'Hypno'
 
   const handleSaveSettings = () => {
     if (tempApiKey.trim()) {
@@ -52,9 +64,19 @@ function AppContent() {
     <div data-theme={uiState.isDark ? 'dark' : 'light'}>
       <header role="banner">
         <div>
+          {isScriptPage && (
+            <button 
+              onClick={() => navigate('/')}
+              aria-label="Go back to homepage"
+              type="button"
+              style={{ marginRight: '1rem' }}
+            >
+              <ArrowLeft size={18} />
+            </button>
+          )}
           <h1>
-            <span aria-hidden="true">🔮</span>
-            Hypno
+            {!isScriptPage && <span aria-hidden="true">🔮</span>}
+            {headerTitle}
           </h1>
         </div>
         <nav>
@@ -78,6 +100,7 @@ function AppContent() {
       <main>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/script/:id" element={<ScriptPage />} />
         </Routes>
       </main>
 

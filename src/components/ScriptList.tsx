@@ -1,4 +1,5 @@
 import { Archive, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useAppContext } from '../hooks/useAppContext'
 import type { Script } from '../types/script'
 
@@ -8,6 +9,7 @@ type ScriptListProps = {
 }
 
 export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) => {
+  const navigate = useNavigate()
   const { state: appState, dispatch: appDispatch } = useAppContext()
 
   const handleArchiveScript = (scriptId: string) => {
@@ -26,7 +28,19 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
       onMouseEnter={() => appDispatch({ type: 'SET_HOVER', scriptId: script.id })}
       onMouseLeave={() => appDispatch({ type: 'SET_HOVER', scriptId: null })}
     >
-      <div>
+      <div 
+        onClick={() => navigate(`/script/${script.id}`)}
+        style={{ cursor: 'pointer' }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            navigate(`/script/${script.id}`)
+          }
+        }}
+        aria-label={`View script: ${script.title}`}
+      >
         <h3>{script.title}</h3>
         <div>{script.createdAt} · Generated Markdown</div>
       </div>

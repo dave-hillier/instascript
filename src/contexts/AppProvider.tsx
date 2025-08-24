@@ -69,23 +69,32 @@ export const AppProvider = ({ children }: AppProviderProps) => {
     hoveredScript: null
   })
 
-  const { value: storedScripts, setValue: setStoredScripts } = useLocalStorage<Script[]>('scripts', [])
+  const { value: storedScripts, setValue: setStoredScripts, isLoaded } = useLocalStorage<Script[]>('scripts', [])
 
+  // Load initial scripts from localStorage or use mock data (only once)
   useEffect(() => {
-    if (storedScripts && storedScripts.length > 0) {
-      dispatch({ type: 'LOAD_SCRIPTS', scripts: storedScripts })
-    } else {
-      dispatch({ type: 'LOAD_SCRIPTS', scripts: mockScripts })
-      setStoredScripts(mockScripts)
+    if (isLoaded && state.scripts.length === 0) {
+      if (storedScripts && storedScripts.length > 0) {
+        dispatch({ type: 'LOAD_SCRIPTS', scripts: storedScripts })
+      } else {
+        dispatch({ type: 'LOAD_SCRIPTS', scripts: mockScripts })
+        setStoredScripts(mockScripts)
+      }
     }
-  }, [storedScripts, setStoredScripts])
+  }, [isLoaded]) // Only depend on isLoaded
 
+  // Save scripts to localStorage when state changes (but not on initial load)
   useEffect(() => {
-    if (state.scripts.length > 0) {
-      setStoredScripts(state.scripts)
+    if (isLoaded && state.scripts.length > 0) {
+      // Only save if the scripts have actually changed from what's stored
+      const scriptsChanged = JSON.stringify(state.scripts) !== JSON.stringify(storedScripts)
+      if (scriptsChanged) {
+        setStoredScripts(state.scripts)
+      }
     }
-  }, [state.scripts, setStoredScripts])
+  }, [state.scripts, isLoaded]) // Remove setStoredScripts and storedScripts from deps
 
+  // Only compute filtered scripts if we have scripts loaded
   const activeScripts = state.scripts.filter(script => !script.isArchived)
   const archivedScripts = state.scripts.filter(script => script.isArchived)
 
