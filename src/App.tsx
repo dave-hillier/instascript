@@ -1,16 +1,16 @@
 import { useReducer, useState } from 'react'
-import { Sun, Moon, Paperclip, Mic, Settings } from 'lucide-react'
+import { Sun, Moon, Settings, ArrowUp } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import './App.css'
 
 type ThemeAction = { type: 'TOGGLE_THEME' }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
-type TabAction = { type: 'SET_ACTIVE_TAB'; tab: 'tasks' | 'archive' }
+type TabAction = { type: 'SET_ACTIVE_TAB'; tab: 'scripts' | 'archive' }
 
 type AppState = { 
   isDark: boolean
   showSettingsModal: boolean
-  activeTab: 'tasks' | 'archive'
+  activeTab: 'scripts' | 'archive'
 }
 
 type Action = ThemeAction | ModalAction | TabAction
@@ -32,7 +32,7 @@ function App() {
   const [state, dispatch] = useReducer(appReducer, { 
     isDark: true, 
     showSettingsModal: false,
-    activeTab: 'tasks' 
+    activeTab: 'scripts' 
   })
   
   const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('apiKey', '')
@@ -56,12 +56,10 @@ function App() {
         <div>
           <h1>
             <span aria-hidden="true">🔮</span>
-            Codex
+            Hypno
           </h1>
         </div>
         <nav>
-          <button type="button">Environments</button>
-          <button type="button">Docs</button>
           <button 
             onClick={handleOpenSettings}
             aria-label="Open settings"
@@ -81,36 +79,22 @@ function App() {
       
       <main>
         <section>
-          <h2>What should we code next?</h2>
+          <h2>What script should we generate?</h2>
         </section>
         
         <section>
           <form>
             <textarea 
-              placeholder="Describe a task"
-              aria-label="Task description"
+              placeholder="Describe a script to generate"
+              aria-label="Script description"
             />
             <div>
               <div>
-                <button aria-label="Attach file" type="button">
-                  <Paperclip size={16} />
-                </button>
-                <select aria-label="Select branch">
-                  <option>dave-hillier/refactor-...</option>
-                </select>
-                <select aria-label="Select base branch">
-                  <option>main</option>
-                </select>
-                <select aria-label="Select context size">
-                  <option>4x</option>
-                </select>
               </div>
               <div>
-                <button aria-label="Voice input" type="button">
-                  <Mic size={16} />
+                <button type="submit">
+                  <ArrowUp size={24} />
                 </button>
-                <button type="button">Ask</button>
-                <button type="submit">Code</button>
               </div>
             </div>
           </form>
@@ -119,17 +103,17 @@ function App() {
         <section>
           <div 
             role="tablist"
-            aria-label="Task categories"
+            aria-label="Script categories"
           >
             <button 
               role="tab"
-              aria-selected={state.activeTab === 'tasks'}
-              aria-controls="tasks-panel"
-              id="tasks-tab"
-              onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'tasks' })}
+              aria-selected={state.activeTab === 'scripts'}
+              aria-controls="scripts-panel"
+              id="scripts-tab"
+              onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'scripts' })}
               type="button"
             >
-              Tasks
+              Scripts
             </button>
             <button 
               role="tab"
@@ -152,33 +136,33 @@ function App() {
           <div>
             <article>
               <div>
-                <h3>Suggest refactoring improvements to legacy tool</h3>
-                <div>Aug 23 · dave-hillier/refactor-mcp</div>
+                <h3>Weekly team standup script</h3>
+                <div>Aug 23 · Generated Markdown</div>
               </div>
               <div aria-label="4 comments">4</div>
             </article>
             
             <article>
               <div>
-                <h3>Replace CON_LINE_WIDTH with constexpr</h3>
-                <div>Aug 23 · dave-hillier/old-demo</div>
+                <h3>Customer onboarding walkthrough</h3>
+                <div>Aug 23 · Generated Markdown</div>
               </div>
-              <div aria-label="Status: Merged">Merged</div>
-              <div aria-label="Changes: 14 additions, 13 deletions">+14 -13</div>
+              <div aria-label="Status: Complete">Complete</div>
+              <div aria-label="Script length: 2.5 pages">2.5 pages</div>
             </article>
             
             <article>
               <div>
-                <h3>Remove logging macros and update interface</h3>
-                <div>Aug 23 · dave-hillier/old-demo</div>
+                <h3>Product demo presentation script</h3>
+                <div>Aug 23 · Generated Markdown</div>
               </div>
-              <div aria-label="Changes: 680 additions, 678 deletions">+680 -678</div>
+              <div aria-label="Script length: 8.2 pages">8.2 pages</div>
             </article>
             
             <article>
               <div>
-                <h3>Suggest codebase improvements</h3>
-                <div>Aug 23 · dave-hillier/old-demo</div>
+                <h3>Training workshop outline</h3>
+                <div>Aug 23 · Generated Markdown</div>
               </div>
               <div aria-label="4 comments">4</div>
             </article>
