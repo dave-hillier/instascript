@@ -213,7 +213,7 @@ function AppContent() {
 
 function App() {
   return (
-    <BrowserRouter basename="/hypno">
+    <BrowserRouter basename="/instascript">
       <AppContent />
     </BrowserRouter>
   )
