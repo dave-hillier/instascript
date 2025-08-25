@@ -22,57 +22,61 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
     }
   }
 
-  const renderScriptItem = (script: Script) => (
-    <li 
-      key={script.id}
-      onMouseEnter={() => appDispatch({ type: 'SET_HOVER', scriptId: script.id })}
-      onMouseLeave={() => appDispatch({ type: 'SET_HOVER', scriptId: null })}
-    >
-      <div 
-        onClick={() => navigate(`/script/${script.id}`)}
-        style={{ cursor: 'pointer' }}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            navigate(`/script/${script.id}`)
-          }
-        }}
-        aria-label={`View script: ${script.title}`}
+  const renderScriptItem = (script: Script) => {
+    const isHovered = appState.hoveredScript === script.id
+    
+    return (
+      <li 
+        key={script.id}
+        onMouseEnter={() => appDispatch({ type: 'SET_HOVER', scriptId: script.id })}
+        onMouseLeave={() => appDispatch({ type: 'SET_HOVER', scriptId: null })}
       >
-        <h3>{script.title}</h3>
-        <div>{script.createdAt} · Generated Markdown</div>
-      </div>
-      {script.comments && (
-        <div aria-label={`${script.comments} comments`}>{script.comments}</div>
-      )}
-      {script.status && (
-        <div aria-label={`Status: ${script.status}`}>{script.status}</div>
-      )}
-      {script.length && (
-        <div aria-label={`Script length: ${script.length}`}>{script.length}</div>
-      )}
-      {appState.hoveredScript === script.id && (
-        <div className="script-actions">
-          <button
-            onClick={() => handleArchiveScript(script.id)}
-            aria-label={script.isArchived ? 'Unarchive script' : 'Archive script'}
-            type="button"
-          >
-            <Archive size={16} />
-          </button>
-          <button
-            onClick={() => handleDeleteScript(script.id)}
-            aria-label="Delete script"
-            type="button"
-          >
-            <Trash2 size={16} />
-          </button>
+        <div 
+          onClick={() => navigate(`/script/${script.id}`)}
+          style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              navigate(`/script/${script.id}`)
+            }
+          }}
+          aria-label={`View script: ${script.title}`}
+        >
+          <h3>{script.title}</h3>
+          <div>{script.createdAt} · Generated Markdown</div>
         </div>
-      )}
-    </li>
-  )
+        {!isHovered && script.comments && (
+          <div aria-label={`${script.comments} comments`}>{script.comments}</div>
+        )}
+        {!isHovered && script.status && (
+          <div aria-label={`Status: ${script.status}`}>{script.status}</div>
+        )}
+        {!isHovered && script.length && (
+          <div aria-label={`Script length: ${script.length}`}>{script.length}</div>
+        )}
+        {isHovered && (
+          <div className="script-actions">
+            <button
+              onClick={() => handleArchiveScript(script.id)}
+              aria-label={script.isArchived ? 'Unarchive script' : 'Archive script'}
+              type="button"
+            >
+              <Archive size={16} />
+            </button>
+            <button
+              onClick={() => handleDeleteScript(script.id)}
+              aria-label="Delete script"
+              type="button"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        )}
+      </li>
+    )
+  }
 
   if (scripts.length === 0) {
     return <p>No {showArchived ? 'archived ' : ''}scripts found.</p>
