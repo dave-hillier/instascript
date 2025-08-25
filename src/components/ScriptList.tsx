@@ -23,7 +23,7 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
   }
 
   const renderScriptItem = (script: Script) => (
-    <article 
+    <li 
       key={script.id}
       onMouseEnter={() => appDispatch({ type: 'SET_HOVER', scriptId: script.id })}
       onMouseLeave={() => appDispatch({ type: 'SET_HOVER', scriptId: null })}
@@ -71,7 +71,7 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
           </button>
         </div>
       )}
-    </article>
+    </li>
   )
 
   if (scripts.length === 0) {
@@ -79,8 +79,8 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
   }
 
   return (
-    <div>
+    <ul>
       {scripts.map(renderScriptItem)}
-    </div>
+    </ul>
   )
 }
