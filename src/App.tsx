@@ -80,7 +80,7 @@ function AppContent() {
   // Extract script ID from URL and get script title
   const scriptId = isScriptPage ? location.pathname.split('/script/')[1] : null
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
-  const headerTitle = isScriptPage && currentScript ? currentScript.title : 'Hypno'
+  const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
 
   const handleSaveSettings = () => {
     if (tempApiKey.trim()) {
@@ -124,10 +124,19 @@ function AppContent() {
               <ArrowLeft size={18} />
             </button>
           )}
-          <h1>
-            {!isScriptPage && <span aria-hidden="true">🔮</span>}
-            {headerTitle}
-          </h1>
+          <div>
+            <h1>
+              {!isScriptPage && <span aria-hidden="true">🔮</span>}
+              {headerTitle}
+            </h1>
+            {isScriptPage && currentScript && (
+              <div>
+                <span>{currentScript.createdAt} · Generated Markdown</span>
+                {currentScript.status && <span> · {currentScript.status}</span>}
+                {currentScript.length && <span> · {currentScript.length}</span>}
+              </div>
+            )}
+          </div>
         </div>
         <nav>
           <button 
