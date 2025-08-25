@@ -14,8 +14,8 @@ export const ScriptPage = () => {
     return (
       <div>
         <button 
-          onClick={() => navigate('/')}
-          aria-label="Go back to homepage"
+          onClick={() => navigate(-1)}
+          aria-label="Go back"
           type="button"
         >
           <ArrowLeft size={18} />

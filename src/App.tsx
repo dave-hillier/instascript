@@ -100,8 +100,8 @@ function AppContent() {
         <div>
           {isScriptPage && (
             <button 
-              onClick={() => navigate('/')}
-              aria-label="Go back to homepage"
+              onClick={() => navigate(-1)}
+              aria-label="Go back"
               type="button"
               style={{ marginRight: '1rem' }}
             >
