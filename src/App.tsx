@@ -1,17 +1,19 @@
-import { useReducer, useState } from 'react'
+import { useReducer, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Sun, Moon, Settings, ArrowLeft } from 'lucide-react'
+import { Sun, Moon, Monitor, Settings, ArrowLeft } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useAppContext } from './hooks/useAppContext'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import './App.css'
 
-type ThemeAction = { type: 'TOGGLE_THEME' }
+type Theme = 'light' | 'dark' | 'system'
+
+type ThemeAction = { type: 'CYCLE_THEME' }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
 
 type UIState = { 
-  isDark: boolean
+  theme: Theme
   showSettingsModal: boolean
 }
 
@@ -19,8 +21,12 @@ type UIAction = ThemeAction | ModalAction
 
 const uiReducer = (state: UIState, action: UIAction): UIState => {
   switch (action.type) {
-    case 'TOGGLE_THEME':
-      return { ...state, isDark: !state.isDark }
+    case 'CYCLE_THEME': {
+      const themeOrder: Theme[] = ['light', 'dark', 'system']
+      const currentIndex = themeOrder.indexOf(state.theme)
+      const nextIndex = (currentIndex + 1) % themeOrder.length
+      return { ...state, theme: themeOrder[nextIndex] }
+    }
     case 'TOGGLE_SETTINGS_MODAL':
       return { ...state, showSettingsModal: !state.showSettingsModal }
     default:
@@ -32,14 +38,42 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state } = useAppContext()
+  
+  const { value: savedTheme, setValue: setSavedTheme } = useLocalStorage<Theme>('theme', 'system')
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
-    isDark: true, 
+    theme: savedTheme || 'system', 
     showSettingsModal: false
   })
   
   const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('apiKey', '')
   const [tempApiKey, setTempApiKey] = useState('')
+  const [systemPrefersDark, setSystemPrefersDark] = useState(
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  )
   
+  // Listen for system theme changes
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleChange = (e: MediaQueryListEvent) => {
+      setSystemPrefersDark(e.matches)
+    }
+    
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [])
+
+  // Save theme preference when it changes (only if different from saved)
+  useEffect(() => {
+    if (uiState.theme !== savedTheme) {
+      setSavedTheme(uiState.theme)
+    }
+  }, [uiState.theme, savedTheme, setSavedTheme])
+
+  // Determine effective theme (resolve 'system' to actual theme)
+  const effectiveTheme = uiState.theme === 'system' 
+    ? (systemPrefersDark ? 'dark' : 'light')
+    : uiState.theme
+
   const isScriptPage = location.pathname.startsWith('/script/')
   
   // Extract script ID from URL and get script title
@@ -61,7 +95,7 @@ function AppContent() {
 
 
   return (
-    <div data-theme={uiState.isDark ? 'dark' : 'light'}>
+    <div data-theme={effectiveTheme}>
       <header role="banner">
         <div>
           {isScriptPage && (
@@ -88,11 +122,13 @@ function AppContent() {
             <Settings size={18} />
           </button>
           <button 
-            onClick={() => uiDispatch({ type: 'TOGGLE_THEME' })}
-            aria-label={uiState.isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={() => uiDispatch({ type: 'CYCLE_THEME' })}
+            aria-label={`Theme: ${uiState.theme}. Click to switch to ${uiState.theme === 'light' ? 'dark' : uiState.theme === 'dark' ? 'system' : 'light'} mode`}
             type="button"
           >
-            {uiState.isDark ? <Sun size={18} /> : <Moon size={18} />}
+            {uiState.theme === 'light' ? <Sun size={18} /> : 
+             uiState.theme === 'dark' ? <Moon size={18} /> : 
+             <Monitor size={18} />}
           </button>
         </nav>
       </header>

@@ -1,4 +1,3 @@
-import React from 'react'
 import { ArrowUp } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { useAppContext } from '../hooks/useAppContext'
