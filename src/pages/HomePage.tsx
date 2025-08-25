@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import React from 'react'
 import { ArrowUp } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { useAppContext } from '../hooks/useAppContext'
 import { ScriptList } from '../components/ScriptList'
 
 type Tab = 'scripts' | 'archive'
 
 export const HomePage = () => {
-  const [activeTab, setActiveTab] = useState<Tab>('scripts')
+  const [searchParams, setSearchParams] = useSearchParams()
   const { activeScripts, archivedScripts } = useAppContext()
+  
+  const activeTab = (searchParams.get('state') === 'archived' ? 'archive' : 'scripts') as Tab
 
   const filteredScripts = activeTab === 'scripts' ? activeScripts : archivedScripts
 
@@ -45,7 +48,7 @@ export const HomePage = () => {
             aria-selected={activeTab === 'scripts'}
             aria-controls="scripts-panel"
             id="scripts-tab"
-            onClick={() => setActiveTab('scripts')}
+            onClick={() => setSearchParams({})}
             type="button"
           >
             Scripts
@@ -55,7 +58,7 @@ export const HomePage = () => {
             aria-selected={activeTab === 'archive'}
             aria-controls="archive-panel"
             id="archive-tab"
-            onClick={() => setActiveTab('archive')}
+            onClick={() => setSearchParams({ state: 'archived' })}
             type="button"
           >
             Archive
