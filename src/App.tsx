@@ -213,7 +213,7 @@ function AppContent() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/hypno">
       <AppContent />
     </BrowserRouter>
   )
