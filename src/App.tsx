@@ -1,4 +1,4 @@
-import { useReducer, useState, useEffect } from 'react'
+import { useReducer, useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { Sun, Moon, Monitor, Settings, ArrowLeft } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
@@ -38,6 +38,7 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state } = useAppContext()
+  const modalRef = useRef<HTMLDialogElement>(null)
   
   const { value: savedTheme, setValue: setSavedTheme } = useLocalStorage<Theme>('theme', 'system')
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
@@ -85,6 +86,7 @@ function AppContent() {
     if (tempApiKey.trim()) {
       setApiKey(tempApiKey.trim())
     }
+    modalRef.current?.close()
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
@@ -92,6 +94,20 @@ function AppContent() {
     setTempApiKey(apiKey || '')
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
+
+  const handleCloseModal = () => {
+    modalRef.current?.close()
+    uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
+  }
+
+  // Open/close modal based on state
+  useEffect(() => {
+    if (uiState.showSettingsModal) {
+      modalRef.current?.showModal()
+    } else {
+      modalRef.current?.close()
+    }
+  }, [uiState.showSettingsModal])
 
 
   return (
@@ -140,60 +156,57 @@ function AppContent() {
         </Routes>
       </main>
 
-      {uiState.showSettingsModal && (
-        <div 
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="settings-title"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
-            }
-          }}
-        >
-          <div>
-            <header>
-              <h2 id="settings-title">Settings</h2>
-              <button 
-                onClick={() => uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })}
-                aria-label="Close settings"
-                type="button"
-              >
-                ×
-              </button>
-            </header>
-            <div>
-              <div>
-                <label htmlFor="api-key">API Key</label>
-                <input 
-                  type="password" 
-                  id="api-key" 
-                  placeholder="Enter your API key"
-                  value={tempApiKey}
-                  onChange={(e) => setTempApiKey(e.target.value)}
-                />
-                {apiKey && (
-                  <p>API key is currently saved</p>
-                )}
-              </div>
-            </div>
-            <footer>
-              <button 
-                onClick={() => uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleSaveSettings}
-                type="button"
-              >
-                Save
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
+      <dialog 
+        ref={modalRef}
+        aria-labelledby="settings-title"
+        onClick={(e) => {
+          if (e.target === modalRef.current) {
+            handleCloseModal()
+          }
+        }}
+      >
+        <header>
+          <h2 id="settings-title">Settings</h2>
+          <button 
+            onClick={handleCloseModal}
+            aria-label="Close settings"
+            type="button"
+          >
+            ×
+          </button>
+        </header>
+        <form onSubmit={(e) => { e.preventDefault(); handleSaveSettings(); }}>
+          <fieldset>
+            <legend className="sr-only">API Configuration</legend>
+            <label htmlFor="api-key">API Key</label>
+            <input 
+              type="password" 
+              id="api-key" 
+              placeholder="Enter your API key"
+              value={tempApiKey}
+              onChange={(e) => setTempApiKey(e.target.value)}
+              aria-describedby={apiKey ? "api-key-status" : undefined}
+            />
+            {apiKey && (
+              <p id="api-key-status" role="status">API key is currently saved</p>
+            )}
+          </fieldset>
+        </form>
+        <footer>
+          <button 
+            onClick={handleCloseModal}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleSaveSettings}
+            type="button"
+          >
+            Save
+          </button>
+        </footer>
+      </dialog>
     </div>
   )
 }
