@@ -10,7 +10,11 @@ import type { APIProvider } from '../services/apiService'
 import type { ExampleScript } from '../services/vectorStore'
 import { Logger } from '../utils/logger'
 import { useJobQueue } from '../hooks/useJobQueue'
+import { messageBus } from '../services/messageBus'
+import { scriptRegenerationServiceV2 } from '../services/scriptRegenerationServiceV2'
+import { useRegeneration } from '../hooks/useRegeneration'
 import type { GenerateScriptJob, RegenerateSectionJob } from '../types/job'
+import type { MessageSubscription } from '../services/messageBus'
 
 type ConversationAction = 
   | { type: 'LOAD_CONVERSATIONS'; conversations: Conversation[] }
@@ -155,9 +159,76 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const exampleServiceRef = useRef<ExampleService>(new ExampleService('mock'))
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
+  const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
   
   // Job queue integration
   const jobQueue = useJobQueue()
+  
+  // Regeneration system integration
+  const { state: regenerationState, dispatch: regenerationDispatch } = useRegeneration()
+  
+  // Handle regeneration section request from message bus
+  const handleRegenerateSectionRequest = useCallback((payload: {
+    scriptId: string
+    sectionId: string
+    sectionTitle: string
+    conversationId: string
+  }) => {
+    Logger.log('ConversationProvider', 'Handling regeneration request from message bus', payload)
+    
+    // Create regeneration job
+    const jobData: Omit<RegenerateSectionJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
+      type: 'regenerate-section',
+      scriptId: payload.scriptId,
+      title: `Regenerate ${payload.sectionTitle}`,
+      sectionId: payload.sectionId,
+      sectionTitle: payload.sectionTitle,
+      conversationId: payload.conversationId,
+      prompt: `Regenerate the "${payload.sectionTitle}" section to be at least 400 words`
+    }
+    
+    jobQueue.addJob(jobData)
+  }, [jobQueue])
+
+  // Handle auto-regeneration check request from service
+  const handleAutoRegenerationCheck = useCallback((conversationId: string) => {
+    Logger.log('ConversationProvider', 'Handling auto-regeneration check request', { conversationId })
+    
+    const conversation = state.conversations.find(c => c.id === conversationId)
+    if (!conversation) {
+      Logger.warn('ConversationProvider', 'Conversation not found for auto-regeneration check', { conversationId })
+      return
+    }
+    
+    // Use the new reducer-based regeneration service
+    scriptRegenerationServiceV2.handleAutoRegenerationCheck(
+      regenerationState, 
+      conversation, 
+      jobQueue.state.jobs
+    )
+  }, [state.conversations, jobQueue.state.jobs, regenerationState])
+  
+  // Set up the service with the dispatch function and auto-regeneration handler
+  useEffect(() => {
+    scriptRegenerationServiceV2.setDispatch(regenerationDispatch)
+    scriptRegenerationServiceV2.setAutoRegenerationHandler(handleAutoRegenerationCheck)
+  }, [regenerationDispatch, handleAutoRegenerationCheck])
+
+  // Setup message bus subscriptions
+  useEffect(() => {
+    const subscriptions = [
+      messageBus.subscribe('REGENERATE_SECTION_REQUESTED', (payload) => {
+        handleRegenerateSectionRequest(payload)
+      })
+      // Removed AUTO_REGENERATION_CHECK_REQUESTED - now handled via direct service calls
+    ]
+    
+    messageSubscriptionsRef.current = subscriptions
+    
+    return () => {
+      subscriptions.forEach(sub => sub.unsubscribe())
+    }
+  }, [handleRegenerateSectionRequest, handleAutoRegenerationCheck])
 
   // Update API and example services when settings change
   useEffect(() => {
@@ -181,6 +252,35 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       }
     }
   }, [state.conversations, isLoaded, storedConversations, setStoredConversations])
+
+  // Auto-complete sections that are stuck in generating state
+  useEffect(() => {
+    if (!jobQueue.isLeader) return // Only leader processes auto-completion
+
+    state.conversations.forEach(conversation => {
+      // Check for sections that need to be marked as completed
+      // If conversation has "generating" sections but no conversation is currently generating, mark them as completed
+      const generatingSections = conversation.sections.filter(section => section.status === 'generating')
+      const isCurrentlyGenerating = state.currentGeneration && 
+        state.currentGeneration.conversationId === conversation.id && 
+        !state.currentGeneration.isComplete
+      
+      if (generatingSections.length > 0 && !isCurrentlyGenerating) {
+        Logger.log('ConversationProvider', `Found ${generatingSections.length} generating sections that should be completed`)
+        generatingSections.forEach(section => {
+          Logger.log('ConversationProvider', 'Marking section as completed', { sectionId: section.id, title: section.title })
+          dispatch({
+            type: 'UPDATE_SECTION',
+            conversationId: conversation.id,
+            sectionId: section.id,
+            updates: { status: 'completed' }
+          })
+        })
+        
+        // Auto-regeneration check will be triggered by the service after section completion events
+      }
+    })
+  }, [state.conversations, jobQueue.isLeader, state.currentGeneration, dispatch])
 
 
   const getConversationByScriptId = useCallback((scriptId: string): Conversation | undefined => {
@@ -425,64 +525,68 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         // Mark sections as completed
         if (request.regenerate && request.sectionId) {
           // For regeneration, only mark the specific section as completed
+          console.log('🎯 SECTION-UPDATE: Marking regenerated section as completed:', request.sectionId)
           dispatch({
             type: 'UPDATE_SECTION',
             conversationId: conversation.id,
             sectionId: request.sectionId,
             updates: { status: 'completed' }
           })
+          
         } else {
           // For new generation, mark all sections as completed
-          conversation.sections.forEach(section => {
-            dispatch({
-              type: 'UPDATE_SECTION',
-              conversationId: conversation.id,
-              sectionId: section.id,
-              updates: { status: 'completed' }
-            })
-          })
-
-          // Get the latest conversation state to check for short sections
-          const latestConversation = state.conversations.find(c => c.id === conversation.id)
-          if (latestConversation) {
-            Logger.log('Generation', `Checking for short sections. Total sections: ${latestConversation.sections.length}`)
-            
-            // Check for sections under 400 words and automatically queue regeneration jobs
-            const shortSections = latestConversation.sections.filter(section => {
-              const wordCount = section.content.split(/\s+/).length
-              Logger.log('Generation', `Section "${section.title}": ${wordCount} words`)
-              return wordCount < 400
-            })
-
-            if (shortSections.length > 0) {
-              Logger.log('Generation', `Found ${shortSections.length} section(s) under 400 words, queueing auto-regeneration`)
-              
-              // Queue regeneration jobs for all short sections
-              shortSections.forEach(shortSection => {
-                const wordCount = shortSection.content.split(/\s+/).length
-                Logger.log('Generation', `Queueing auto-regeneration for section: "${shortSection.title}" (${wordCount} words)`)
-                
-                const jobData: Omit<RegenerateSectionJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
-                  type: 'regenerate-section',
-                  scriptId: latestConversation.scriptId,
-                  title: `Auto-regenerate ${shortSection.title}`,
-                  sectionId: shortSection.id,
-                  sectionTitle: shortSection.title,
-                  conversationId: latestConversation.id,
-                  prompt: `Regenerate the "${shortSection.title}" section to be at least 400 words`
-                }
-                
-                // Use setTimeout to avoid blocking the current completion
-                setTimeout(() => {
-                  jobQueue.addJob(jobData)
-                }, 500) // Short delay to let UI update
+          // Parse sections from the accumulated content to ensure we get all sections created during streaming
+          const sectionMatches = accumulatedContent.match(/##\s+(.+?)(?=\n##|\n$|$)/gs) || []
+          
+          console.log('🎯 SECTION-UPDATE: Parsing sections from accumulated content')
+          console.log('🎯 SECTION-UPDATE: Found', sectionMatches.length, 'section matches in content')
+          
+          // Create a list of section titles that should be completed
+          const sectionTitlesToComplete = sectionMatches.map(match => {
+            const titleMatch = match.match(/##\s+(.+?)(?=\n|$)/)
+            return titleMatch ? titleMatch[1].trim() : ''
+          }).filter(title => title !== '')
+          
+          console.log('🎯 SECTION-UPDATE: Section titles to complete:', sectionTitlesToComplete)
+          
+          // Get the latest conversation state to find section IDs
+          const latestConversation = state.conversations.find(c => c.id === conversation.id) || conversation
+          
+          console.log('🎯 SECTION-UPDATE: Latest conversation has', latestConversation.sections.length, 'sections')
+          
+          // Mark sections as completed by matching titles
+          sectionTitlesToComplete.forEach(sectionTitle => {
+            const section = latestConversation.sections.find(s => s.title === sectionTitle)
+            if (section) {
+              console.log('🎯 SECTION-UPDATE: Marking section as completed:', section.id, section.title)
+              dispatch({
+                type: 'UPDATE_SECTION',
+                conversationId: conversation.id,
+                sectionId: section.id,
+                updates: { status: 'completed' }
               })
             } else {
-              Logger.log('Generation', 'No sections under 400 words found')
+              console.log('🎯 SECTION-UPDATE: Could not find section for title:', sectionTitle)
             }
-          } else {
-            Logger.warn('Generation', 'Could not find latest conversation state for auto-regeneration check')
-          }
+          })
+
+        }
+
+        // Notify completion for both initial generation and regeneration
+        if (request.regenerate) {
+          // For section regeneration, notify section completion
+          messageBus.publish('SECTION_REGENERATION_COMPLETED', {
+            scriptId: conversation.scriptId,
+            sectionId: request.sectionId!,
+            conversationId: conversation.id,
+            content: accumulatedContent
+          })
+        } else {
+          // For initial script generation, notify script completion
+          messageBus.publish('SCRIPT_GENERATION_COMPLETED', {
+            conversationId: conversation.id,
+            scriptId: conversation.scriptId
+          })
         }
 
         dispatch({
@@ -528,7 +632,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         }
       })
     }
-  }, [state.conversations])
+  }, [state.conversations, apiProvider])
 
   // Job processing - only if we're the leader
   useEffect(() => {
@@ -576,9 +680,26 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         return
       }
       
-      const queuedJob = jobQueue.state.jobs.find(job => job.status === 'queued')
+      // Check if there's an active generation that should block regeneration jobs
+      const hasActiveGeneration = state.currentGeneration && !state.currentGeneration.isComplete
+      
+      // Get the next job to process, prioritizing script generation over regeneration
+      let queuedJob = jobQueue.state.jobs.find(job => 
+        job.status === 'queued' && job.type === 'generate-script'
+      )
+      
+      // If no script generation jobs, get regeneration jobs (but only if no active generation)
+      if (!queuedJob && !hasActiveGeneration) {
+        queuedJob = jobQueue.state.jobs.find(job => 
+          job.status === 'queued' && job.type === 'regenerate-section'
+        )
+      }
+      
       if (!queuedJob) {
-        // No jobs to process
+        // No jobs to process (or regeneration blocked by active generation)
+        if (hasActiveGeneration && jobQueue.state.jobs.some(job => job.status === 'queued' && job.type === 'regenerate-section')) {
+          // Logger.log('ConversationProvider', 'Regeneration jobs queued but blocked by active generation')
+        }
         return
       }
       
@@ -610,6 +731,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         jobQueue.updateJob(queuedJob.id, { status: 'completed' })
         Logger.log('ConversationProvider', `Job completed: ${queuedJob.id}`)
         
+        // Auto-regeneration check is now handled inside generateScript function
+        
       } catch (error) {
         Logger.error('ConversationProvider', `Job failed: ${queuedJob.id}`, error)
         jobQueue.updateJob(queuedJob.id, { 
@@ -623,7 +746,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     processJobs()
     const interval = setInterval(processJobs, 1000)
     return () => clearInterval(interval)
-  }, [jobQueue.isLeader, jobQueue.state.jobs, jobQueue.updateJob, generateScript])
+  }, [jobQueue, generateScript, handleAutoRegenerationCheck])
 
   const contextValue: ConversationContextType = {
     state,
