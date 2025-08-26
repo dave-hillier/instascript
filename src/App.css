@@ -455,6 +455,32 @@ dialog input {
   background-color: #f8f8f8;
 }
 
+dialog select {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+[data-theme="dark"] dialog select {
+  border-color: #333;
+  background-color: #1a1a1a;
+  color: #ffffff;
+}
+
+[data-theme="light"] dialog select {
+  border-color: #d1d5db;
+  background-color: #f8f8f8;
+  color: #1a1a1a;
+}
+
+dialog select:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+
 dialog input:focus {
   outline: none;
   border-color: #4f46e5;
