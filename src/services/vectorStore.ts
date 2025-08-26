@@ -160,7 +160,7 @@ export class VectorStoreService {
       formatted += `${example.content}\n\n---\n\n`
     })
 
-    formatted += 'Use these examples as inspiration for structure, language patterns, and therapeutic approaches. Create a new script that follows similar quality and format while being unique and tailored to the user\'s specific request.\n\n'
+    formatted += 'Use these examples as inspiration for structure, language patterns. Create a new script that follows similar quality and format while being unique and tailored to the user\'s specific request.\n\n'
 
     return formatted
   }
