@@ -46,7 +46,7 @@ function AppContent() {
     showSettingsModal: false
   })
   
-  const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('apiKey', '')
+  const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('OPENAI_API_KEY', '')
   const { value: apiProvider, setValue: setApiProvider } = useLocalStorage<'openai' | 'mock'>('apiProvider', 'mock')
   const [tempApiKey, setTempApiKey] = useState('')
   const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>('mock')

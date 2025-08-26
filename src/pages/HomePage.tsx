@@ -44,14 +44,14 @@ export const HomePage = () => {
       // Add script to app state
       appDispatch({ type: 'ADD_SCRIPT', script })
 
+      // Navigate to the script page immediately after creation
+      navigate(`/script/${scriptId}`)
+
       // Start generation
       await generateScript({
         prompt,
         conversationId: conversation.id
       })
-
-      // Navigate to the script page to show generation progress
-      navigate(`/script/${scriptId}`)
       
     } catch (error) {
       console.error('Failed to generate script:', error)
