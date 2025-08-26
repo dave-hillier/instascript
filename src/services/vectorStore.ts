@@ -1,5 +1,4 @@
 import OpenAI from 'openai';
-import { Logger } from '../utils/logger';
 
 export interface ExampleScript {
   content: string
@@ -64,7 +63,7 @@ export async function performVectorSearch(
     
     return results;
   } catch (error) {
-    Logger.error('VectorStore', 'Vector search error', error);
+    console.error('[VectorStore] Vector search error', error);
     return [];
   }
 }
@@ -75,7 +74,7 @@ export async function findVectorStoreByName(openai: OpenAI, storeName: string): 
     const store = stores.data.find(s => s.name === storeName);
     return store?.id || null;
   } catch (error) {
-    Logger.error('VectorStore', 'Error finding vector store', error);
+    console.error('[VectorStore] Error finding vector store', error);
     return null;
   }
 }
@@ -102,9 +101,9 @@ export class VectorStoreService {
 
     this.storeId = await findVectorStoreByName(this.client, this.storeName)
     if (!this.storeId) {
-      Logger.warn('VectorStore', `Vector store '${this.storeName}' not found`)
+      console.warn('[VectorStore]', `Vector store '${this.storeName}' not found`)
     } else {
-      Logger.log('VectorStore', `Connected to vector store: ${this.storeName}`, { storeId: this.storeId })
+      console.log('[VectorStore]', `Connected to vector store: ${this.storeName}`, { storeId: this.storeId })
     }
     
     return this.storeId
@@ -120,11 +119,11 @@ export class VectorStoreService {
     try {
       const storeId = await this.initializeStore()
       if (!storeId) {
-        Logger.warn('VectorStore', 'No vector store available, returning empty results')
+        console.warn('[VectorStore] No vector store available, returning empty results')
         return []
       }
 
-      Logger.log('VectorStore', 'Performing vector search', { 
+      console.log('[VectorStore] Performing vector search', { 
         query: query.substring(0, 50) + (query.length > 50 ? '...' : ''), 
         limit 
       })
@@ -141,10 +140,10 @@ export class VectorStoreService {
         }
       }))
 
-      Logger.log('VectorStore', `Found ${examples.length} example scripts from vector store`)
+      console.log('[VectorStore]', `Found ${examples.length} example scripts from vector store`)
       return examples
     } catch (error) {
-      Logger.error('VectorStore', 'Vector store search failed', error)
+      console.error('[VectorStore] Vector store search failed', error)
       return []
     }
   }

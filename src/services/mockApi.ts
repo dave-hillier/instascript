@@ -1,12 +1,11 @@
 import type { GenerationRequest, Conversation } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
-import { Logger } from '../utils/logger'
 
 export class MockAPIService {
   private async delay(min: number, max?: number, reason?: string): Promise<void> {
     const ms = max ? Math.random() * (max - min) + min : min
     if (reason) {
-      Logger.log('MockAPI', `${reason} (${ms.toFixed(0)}ms)`)
+      console.log('[MockAPI]', `${reason} (${ms.toFixed(0)}ms)`)
     }
     await new Promise(resolve => setTimeout(resolve, ms))
   }
@@ -163,8 +162,8 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     conversation?: Conversation,
     examples?: ExampleScript[]
   ): AsyncGenerator<string, void, unknown> {
-    Logger.group('MockAPI Generation')
-    Logger.log('MockAPI', 'Starting mock generation', {
+    console.group('MockAPI Generation')
+    console.log('[MockAPI] Starting mock generation', {
       prompt: request.prompt.substring(0, 50) + '...',
       hasExamples: examples && examples.length > 0,
       regenerate: request.regenerate
@@ -172,7 +171,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
 
     // Log examples usage (in real implementation, examples would influence content generation)
     if (examples && examples.length > 0) {
-      Logger.log('MockAPI', `Using ${examples.length} example(s) to inform generation`)
+      console.log('[MockAPI]', `Using ${examples.length} example(s) to inform generation`)
     }
 
     // Simulate initial API processing delay
@@ -184,7 +183,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     if (request.regenerate && request.sectionId && conversation) {
       const section = conversation.sections.find(s => s.id === request.sectionId)
       if (section) {
-        Logger.log('MockAPI', 'Regenerating section', { 
+        console.log('[MockAPI] Regenerating section', { 
           sectionId: request.sectionId, 
           originalTitle: section.title 
         })
@@ -193,31 +192,32 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
         content = this.generateExpandedSectionContent(section.title)
         const wordCount = content.split(/\s+/).length
         
-        Logger.log('MockAPI', 'Generated expanded content', {
+        console.log('[MockAPI] Generated expanded content', {
           wordCount,
           meetsRequirement: wordCount >= 400
         })
         
         // If content is still under 400 words, generate additional content
         if (wordCount < 400) {
-          Logger.log('MockAPI', 'Content under 400 words, expanding further')
+          console.log('[MockAPI] Content under 400 words, expanding further')
           content = this.generateEvenLongerContent(section.title)
         }
       } else {
-        Logger.warn('MockAPI', 'Section not found for regeneration', { sectionId: request.sectionId })
+        console.warn('[MockAPI] Section not found for regeneration', { sectionId: request.sectionId })
         content = this.generateScriptContent(request.prompt)
       }
     } else {
       content = this.generateScriptContent(request.prompt)
     }
 
-    Logger.log('MockAPI', 'Content prepared', {
-      contentSize: Logger.formatSize(content.length)
+    const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
+    console.log('[MockAPI] Content prepared', {
+      contentSize: formatSize(content.length)
     })
 
     // Split into realistic chunks
     const chunks = this.splitIntoRealisticChunks(content)
-    Logger.log('MockAPI', `Split into ${chunks.length} chunks`)
+    console.log('[MockAPI]', `Split into ${chunks.length} chunks`)
     
     // Stream chunks with realistic delays
     for (let i = 0; i < chunks.length; i++) {
@@ -226,7 +226,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       
       // Log progress every 25%
       if (i === 0 || (i + 1) % Math.ceil(chunks.length / 4) === 0) {
-        Logger.log('MockAPI', `Streaming progress: ${progress}%`)
+        console.log('[MockAPI]', `Streaming progress: ${progress}%`)
       }
       
       yield chunk
@@ -246,7 +246,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       }
     }
 
-    Logger.log('MockAPI', 'Streaming complete')
-    Logger.groupEnd()
+    console.log('[MockAPI] Streaming complete')
+    console.groupEnd()
   }
 }

@@ -2,7 +2,6 @@ import { VectorStoreService } from './vectorStore'
 import { MockVectorStoreService } from './mockVectorStore'
 import type { ExampleScript } from './vectorStore'
 import type { APIProvider } from './apiService'
-import { Logger } from '../utils/logger'
 
 /**
  * ExampleService provides access to hypnosis script examples from either:
@@ -24,9 +23,9 @@ export class ExampleService {
     
     if (provider === 'openai' && apiKey) {
       this.vectorStoreService = new VectorStoreService(apiKey)
-      Logger.log('ExampleService', 'Initialized with OpenAI provider')
+      console.log('[ExampleService] Initialized with OpenAI provider')
     } else {
-      Logger.log('ExampleService', 'Initialized with Mock provider')
+      console.log('[ExampleService] Initialized with Mock provider')
     }
   }
 
@@ -36,15 +35,15 @@ export class ExampleService {
     
     if (provider === 'openai' && apiKey) {
       this.vectorStoreService = new VectorStoreService(apiKey)
-      Logger.log('ExampleService', `Provider switched from ${previousProvider} to OpenAI`)
+      console.log('[ExampleService]', `Provider switched from ${previousProvider} to OpenAI`)
     } else {
-      Logger.log('ExampleService', `Provider switched from ${previousProvider} to Mock`)
+      console.log('[ExampleService]', `Provider switched from ${previousProvider} to Mock`)
     }
   }
 
   async searchExamples(query: string, limit: number = 3): Promise<ExampleScript[]> {
     const usingProvider = this.provider === 'openai' && this.vectorStoreService ? 'OpenAI' : 'Mock'
-    Logger.log('ExampleService', `Searching examples using ${usingProvider} provider`, {
+    console.log('[ExampleService]', `Searching examples using ${usingProvider} provider`, {
       query: query.substring(0, 50) + (query.length > 50 ? '...' : ''),
       limit
     })
@@ -52,25 +51,25 @@ export class ExampleService {
     try {
       if (this.provider === 'openai' && this.vectorStoreService) {
         const examples = await this.vectorStoreService.searchExamples(query, limit)
-        Logger.log('ExampleService', `Retrieved ${examples.length} examples from OpenAI`)
+        console.log('[ExampleService]', `Retrieved ${examples.length} examples from OpenAI`)
         return examples
       } else {
         if (this.provider === 'openai' && !this.vectorStoreService) {
-          Logger.warn('ExampleService', 'OpenAI provider selected but not configured, falling back to Mock')
+          console.warn('[ExampleService] OpenAI provider selected but not configured, falling back to Mock')
         }
         const examples = await this.mockVectorStoreService.searchExamples(query, limit)
-        Logger.log('ExampleService', `Retrieved ${examples.length} examples from Mock`)
+        console.log('[ExampleService]', `Retrieved ${examples.length} examples from Mock`)
         return examples
       }
     } catch (error) {
-      Logger.error('ExampleService', 'Failed to search examples', error)
+      console.error('[ExampleService] Failed to search examples', error)
       throw error
     }
   }
 
   isConfigured(): boolean {
     const configured = this.provider === 'mock' || (this.provider === 'openai' && this.vectorStoreService !== null)
-    Logger.log('ExampleService', `Configuration check: ${configured ? 'configured' : 'not configured'}`)
+    console.log('[ExampleService]', `Configuration check: ${configured ? 'configured' : 'not configured'}`)
     return configured
   }
 

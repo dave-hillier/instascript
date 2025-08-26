@@ -2,7 +2,6 @@ import type { Conversation } from '../types/conversation'
 import type { Job } from '../types/job'
 import type { RegenerationState, RegenerationAction, SectionAnalysis } from '../types/regeneration'
 import { messageBus } from './messageBus'
-import { Logger } from '../utils/logger'
 import { 
   analyzeSections, 
   getSectionsNeedingRegeneration,
@@ -47,7 +46,7 @@ export class ScriptRegenerationServiceV2 {
   }
 
   private handleScriptGenerationCompleted(conversationId: string, scriptId: string): void {
-    Logger.log('ScriptRegenerationServiceV2', 'Script generation completed, checking for auto-regeneration', {
+    console.log('[ScriptRegenerationServiceV2] Script generation completed, checking for auto-regeneration', {
       conversationId,
       scriptId
     })
@@ -59,7 +58,7 @@ export class ScriptRegenerationServiceV2 {
   }
 
   private handleSectionRegenerationCompleted(conversationId: string, scriptId: string, sectionId: string): void {
-    Logger.log('ScriptRegenerationServiceV2', 'Section regeneration completed, checking for additional auto-regeneration', {
+    console.log('[ScriptRegenerationServiceV2] Section regeneration completed, checking for additional auto-regeneration', {
       conversationId,
       scriptId,
       sectionId
@@ -128,7 +127,7 @@ export class ScriptRegenerationServiceV2 {
     const firstSection = sortedSections[0]
     const sectionKey = createSectionKey(conversation.scriptId, firstSection.sectionId)
 
-    Logger.log('ScriptRegenerationServiceV2', 'Requesting next auto-regeneration (sequential)', {
+    console.log('[ScriptRegenerationServiceV2] Requesting next auto-regeneration (sequential)', {
       totalSectionsNeedingRegen: sortedSections.length,
       currentSection: firstSection.sectionTitle,
       wordCount: firstSection.wordCount,
@@ -145,7 +144,7 @@ export class ScriptRegenerationServiceV2 {
       })
     }
 
-    Logger.log('ScriptRegenerationServiceV2', 'Queueing next section for regeneration', {
+    console.log('[ScriptRegenerationServiceV2] Queueing next section for regeneration', {
       sectionId: firstSection.sectionId,
       sectionTitle: firstSection.sectionTitle,
       wordCount: firstSection.wordCount,
@@ -189,7 +188,7 @@ export class ScriptRegenerationServiceV2 {
       })
     }
 
-    Logger.log('ScriptRegenerationServiceV2', 'Requesting manual regeneration', {
+    console.log('[ScriptRegenerationServiceV2] Requesting manual regeneration', {
       sectionId,
       sectionTitle
     })
@@ -210,7 +209,7 @@ export class ScriptRegenerationServiceV2 {
     conversation: Conversation,
     existingJobs: Job[]
   ): void {
-    Logger.log('ScriptRegenerationServiceV2', 'Handling auto-regeneration check request', { 
+    console.log('[ScriptRegenerationServiceV2] Handling auto-regeneration check request', { 
       conversationId: conversation.id 
     })
     
@@ -218,7 +217,7 @@ export class ScriptRegenerationServiceV2 {
     const sectionsToRegenerate = getSectionsNeedingRegeneration(state, conversation, existingJobs)
     
     if (sectionsToRegenerate.length > 0) {
-      Logger.log('ScriptRegenerationServiceV2', 'Auto-regeneration analysis complete', {
+      console.log('[ScriptRegenerationServiceV2] Auto-regeneration analysis complete', {
         totalSections: conversation.sections.length,
         needingRegeneration: sectionsToRegenerate.length,
         sections: sectionsToRegenerate.map(s => ({ 
@@ -230,7 +229,7 @@ export class ScriptRegenerationServiceV2 {
       
       this.requestRegenerations(conversation, sectionsToRegenerate)
     } else {
-      Logger.log('ScriptRegenerationServiceV2', 'No sections need auto-regeneration', {
+      console.log('[ScriptRegenerationServiceV2] No sections need auto-regeneration', {
         totalSections: conversation.sections.length
       })
     }
@@ -246,7 +245,7 @@ export class ScriptRegenerationServiceV2 {
         rules: newRules
       })
     }
-    Logger.log('ScriptRegenerationServiceV2', 'Rules updated', newRules)
+    console.log('[ScriptRegenerationServiceV2] Rules updated', newRules)
   }
 
   /**

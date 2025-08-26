@@ -8,7 +8,6 @@ import { APIService } from '../services/apiService'
 import { ExampleService } from '../services/exampleService'
 import type { APIProvider } from '../services/apiService'
 import type { ExampleScript } from '../services/vectorStore'
-import { Logger } from '../utils/logger'
 import { useJobQueue } from '../hooks/useJobQueue'
 import { messageBus } from '../services/messageBus'
 import { scriptRegenerationServiceV2 } from '../services/scriptRegenerationServiceV2'
@@ -174,7 +173,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     sectionTitle: string
     conversationId: string
   }) => {
-    Logger.log('ConversationProvider', 'Handling regeneration request from message bus', payload)
+    console.log('[ConversationProvider] Handling regeneration request from message bus', payload)
     
     // Create regeneration job
     const jobData: Omit<RegenerateSectionJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
@@ -192,11 +191,11 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   // Handle auto-regeneration check request from service
   const handleAutoRegenerationCheck = useCallback((conversationId: string) => {
-    Logger.log('ConversationProvider', 'Handling auto-regeneration check request', { conversationId })
+    console.log('[ConversationProvider] Handling auto-regeneration check request', { conversationId })
     
     const conversation = state.conversations.find(c => c.id === conversationId)
     if (!conversation) {
-      Logger.warn('ConversationProvider', 'Conversation not found for auto-regeneration check', { conversationId })
+      console.warn('[ConversationProvider] Conversation not found for auto-regeneration check', { conversationId })
       return
     }
     
@@ -266,9 +265,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         !state.currentGeneration.isComplete
       
       if (generatingSections.length > 0 && !isCurrentlyGenerating) {
-        Logger.log('ConversationProvider', `Found ${generatingSections.length} generating sections that should be completed`)
+        console.log('[ConversationProvider]', `Found ${generatingSections.length} generating sections that should be completed`)
         generatingSections.forEach(section => {
-          Logger.log('ConversationProvider', 'Marking section as completed', { sectionId: section.id, title: section.title })
+          console.log('[ConversationProvider] Marking section as completed', { sectionId: section.id, title: section.title })
           dispatch({
             type: 'UPDATE_SECTION',
             conversationId: conversation.id,
@@ -312,8 +311,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const generateScript = useCallback(async (request: GenerationRequest): Promise<void> => {
     const startTime = Date.now()
     
-    Logger.group('Script Generation')
-    Logger.log('Generation', 'Starting generation', {
+    console.group('Script Generation')
+    console.log('[Generation] Starting generation', {
       prompt: request.prompt.substring(0, 100) + '...',
       conversationId: request.conversationId,
       sectionId: request.sectionId,
@@ -326,18 +325,18 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       let conversation: Conversation | undefined
       
       if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
-        Logger.log('Generation', 'Using pending conversation', { id: request.conversationId })
+        console.log('[Generation] Using pending conversation', { id: request.conversationId })
         conversation = pendingConversationRef.current
         pendingConversationRef.current = null // Clear the pending conversation
       } else if (request.conversationId) {
         conversation = state.conversations.find(c => c.id === request.conversationId)
         if (conversation) {
-          Logger.log('Generation', 'Found existing conversation', { id: request.conversationId })
+          console.log('[Generation] Found existing conversation', { id: request.conversationId })
         }
       }
 
       if (!conversation && request.conversationId) {
-        Logger.error('Generation', 'Conversation not found', request.conversationId)
+        console.error('[Generation] Conversation not found', request.conversationId)
         throw new Error('Conversation not found')
       }
 
@@ -353,21 +352,21 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       // Retrieve relevant examples for the initial prompt (not for regeneration)
       let examples: ExampleScript[] = []
       if (!request.regenerate && exampleServiceRef.current.isConfigured()) {
-        Logger.time('Example Retrieval')
+        console.time('Example Retrieval')
         try {
           examples = await exampleServiceRef.current.searchExamples(request.prompt, 3)
-          Logger.timeEnd('Example Retrieval')
-          Logger.log('Generation', 'Retrieved examples', {
+          console.timeEnd('Example Retrieval')
+          console.log('[Generation] Retrieved examples', {
             count: examples.length,
-            sizes: examples.map(e => Logger.formatSize(e.content.length))
+            sizes: examples.map(e => (e.content.length < 1024 ? `${e.content.length}B` : e.content.length < 1024 * 1024 ? `${(e.content.length / 1024).toFixed(1)}KB` : `${(e.content.length / (1024 * 1024)).toFixed(2)}MB`))
           })
         } catch (error) {
-          Logger.timeEnd('Example Retrieval')
-          Logger.warn('Generation', 'Failed to retrieve examples', error)
+          console.timeEnd('Example Retrieval')
+          console.warn('[Generation] Failed to retrieve examples', error)
           // Continue without examples - don't fail the generation
         }
       } else if (request.regenerate) {
-        Logger.log('Generation', 'Skipping examples for regeneration')
+        console.log('[Generation] Skipping examples for regeneration')
       }
 
       // Start generation progress tracking
@@ -398,15 +397,16 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       let chunkCount = 0
       let firstChunkTime: number | null = null
 
-      Logger.log('Generation', 'Starting streaming...')
-      Logger.time('Streaming Duration')
+      console.log('[Generation] Starting streaming...')
+      console.time('Streaming Duration')
 
       // Generate content using the API service
       for await (const chunk of apiServiceRef.current.generateScript(request, conversation, examples)) {
         if (firstChunkTime === null) {
           firstChunkTime = Date.now()
           const timeToFirstChunk = firstChunkTime - startTime
-          Logger.log('Generation', `Time to first chunk: ${Logger.formatDuration(timeToFirstChunk)}`)
+          const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}min`
+          console.log('[Generation]', `Time to first chunk: ${formatDuration(timeToFirstChunk)}`)
         }
 
         accumulatedContent += chunk
@@ -422,7 +422,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
               conversationId: conversation.id,
               title
             })
-            Logger.log('Generation', `Script title detected: "${title}"`)
+            console.log('[Generation]', `Script title detected: "${title}"`)
           }
         }
 
@@ -452,7 +452,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
               const existingSection = conversation.sections.find(s => s.title === sectionTitle)
               
               if (!existingSection) {
-                Logger.log('Generation', `New section detected: "${sectionTitle}"`)
+                console.log('[Generation]', `New section detected: "${sectionTitle}"`)
                 // Create new section
                 const newSection: ConversationSection = {
                   id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
@@ -492,15 +492,17 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         })
       }
 
-      Logger.timeEnd('Streaming Duration')
+      console.timeEnd('Streaming Duration')
       
       // Log generation summary
       const totalTime = Date.now() - startTime
       const sections = accumulatedContent.match(/##\s+(.+?)(?=\n|$)/gm) || []
       
-      Logger.log('Generation', 'Streaming complete', {
-        totalTime: Logger.formatDuration(totalTime),
-        contentSize: Logger.formatSize(accumulatedContent.length),
+      const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
+      const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}min`
+      console.log('[Generation] Streaming complete', {
+        totalTime: formatDuration(totalTime),
+        contentSize: formatSize(accumulatedContent.length),
         chunkCount,
         sectionsDetected: sections.length,
         sections: sections.map(s => s.replace('##', '').trim())
@@ -606,13 +608,14 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         }
       })
 
-      Logger.groupEnd()
-      Logger.log('Generation', 'Generation completed successfully')
+      console.groupEnd()
+      console.log('[Generation] Generation completed successfully')
       
     } catch (error) {
       const errorTime = Date.now() - startTime
-      Logger.error('Generation', `Generation failed after ${Logger.formatDuration(errorTime)}`, error)
-      Logger.groupEnd()
+      const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}min`
+      console.error('[Generation]', `Generation failed after ${formatDuration(errorTime)}`, error)
+      console.groupEnd()
       
       if (request.conversationId) {
         dispatch({
@@ -651,7 +654,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       
       stuckJobs.forEach(job => {
         const processingTime = Math.round((now - job.updatedAt) / 1000)
-        Logger.warn('ConversationProvider', `Resetting stuck job: ${job.id} (was processing for ${processingTime}s)`)
+        console.warn('[ConversationProvider]', `Resetting stuck job: ${job.id} (was processing for ${processingTime}s)`)
         jobQueue.updateJob(job.id, { 
           status: 'queued',
           error: undefined 
@@ -659,7 +662,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       })
       
       if (stuckJobs.length > 0) {
-        Logger.log('ConversationProvider', `Reset ${stuckJobs.length} stuck job(s)`)
+        console.log('[ConversationProvider]', `Reset ${stuckJobs.length} stuck job(s)`)
       }
     }
     
@@ -703,7 +706,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         return
       }
       
-      Logger.log('ConversationProvider', `Processing job: ${queuedJob.id} (${queuedJob.type})`)
+      console.log('[ConversationProvider]', `Processing job: ${queuedJob.id} (${queuedJob.type})`)
       
       try {
         // Mark job as processing
@@ -729,12 +732,12 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         
         // Mark job as completed
         jobQueue.updateJob(queuedJob.id, { status: 'completed' })
-        Logger.log('ConversationProvider', `Job completed: ${queuedJob.id}`)
+        console.log('[ConversationProvider]', `Job completed: ${queuedJob.id}`)
         
         // Auto-regeneration check is now handled inside generateScript function
         
       } catch (error) {
-        Logger.error('ConversationProvider', `Job failed: ${queuedJob.id}`, error)
+        console.error('[ConversationProvider]', `Job failed: ${queuedJob.id}`, error)
         jobQueue.updateJob(queuedJob.id, { 
           status: 'failed',
           error: error instanceof Error ? error.message : 'Unknown error'
