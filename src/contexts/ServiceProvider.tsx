@@ -17,7 +17,7 @@ type ServiceProviderProps = {
 }
 
 export function ServiceProvider({ children }: ServiceProviderProps) {
-  const { value: apiKey } = useLocalStorage<string>('apiKey', '')
+  const { value: apiKey } = useLocalStorage<string>('OPENAI_API_KEY', '')
   const { value: apiProvider } = useLocalStorage<APIProvider>('apiProvider', 'mock')
   
   // Create services only once using refs
