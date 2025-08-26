@@ -27,9 +27,9 @@ export class APIService {
     
     if (provider === 'openai' && apiKey) {
       this.openaiService = new OpenAIService(apiKey)
-      console.debug('Provider switched to OpenAI')
+      console.log('API Provider switched to OpenAI')
     } else {
-      console.debug('Provider switched to Mock')
+      console.log('API Provider switched to Mock')
     }
   }
 
@@ -38,15 +38,44 @@ export class APIService {
     conversation?: Conversation,
     examples?: ExampleScript[]
   ): AsyncGenerator<string, void, unknown> {
-    // Generating script
+    console.log(`Starting ${this.provider.toUpperCase()} API generation`, {
+      prompt: request.prompt.substring(0, 100) + '...',
+      conversationId: request.conversationId,
+      sectionId: request.sectionId,
+      regenerate: request.regenerate,
+      provider: this.provider
+    })
     
-    if (this.provider === 'openai' && this.openaiService) {
-      yield* this.openaiService.generateScript(request, conversation, examples)
-    } else {
-      if (this.provider === 'openai' && !this.openaiService) {
-        console.warn('OpenAI provider selected but not configured, falling back to Mock')
+    let chunkCount = 0
+    const startTime = Date.now()
+    
+    try {
+      if (this.provider === 'openai' && this.openaiService) {
+        for await (const chunk of this.openaiService.generateScript(request, conversation, examples)) {
+          chunkCount++
+          yield chunk
+        }
+      } else {
+        if (this.provider === 'openai' && !this.openaiService) {
+          console.warn('OpenAI provider selected but not configured, falling back to Mock')
+        }
+        for await (const chunk of this.mockService.generateScript(request, conversation, examples)) {
+          chunkCount++
+          yield chunk
+        }
       }
-      yield* this.mockService.generateScript(request, conversation, examples)
+      
+      const totalTime = Date.now() - startTime
+      const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}min`
+      
+      console.log(`${this.provider.toUpperCase()} API generation completed`, {
+        totalTime: formatDuration(totalTime),
+        chunkCount,
+        provider: this.provider
+      })
+    } catch (error) {
+      console.error(`${this.provider.toUpperCase()} API generation failed:`, error)
+      throw error
     }
   }
 

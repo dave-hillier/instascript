@@ -162,12 +162,11 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     conversation?: Conversation,
     examples?: ExampleScript[]
   ): AsyncGenerator<string, void, unknown> {
-    console.group('MockAPI Generation')
-    // Starting generation
+    // Starting mock generation
 
     // Log examples usage (in real implementation, examples would influence content generation)
     if (examples && examples.length > 0) {
-      console.log(`Using ${examples.length} examples to inform generation:`, examples.map(e => e.metadata?.filename || 'unknown'))
+      console.debug(`Using ${examples.length} examples to inform generation:`, examples.map(e => e.metadata?.filename || 'unknown'))
     }
 
     // Simulate initial API processing delay
@@ -185,14 +184,14 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
         content = this.generateExpandedSectionContent(section.title)
         const wordCount = content.split(/\s+/).length
         
-        console.log('Generated expanded content', {
+        console.debug('Generated expanded content', {
           wordCount,
           meetsRequirement: wordCount >= 400
         })
         
         // If content is still under 400 words, generate additional content
         if (wordCount < 400) {
-          console.log('Content under 400 words, expanding further')
+          console.debug('Content under 400 words, expanding further')
           content = this.generateEvenLongerContent(section.title)
         }
       } else {
@@ -204,13 +203,13 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     }
 
     const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
-    console.log('Content prepared', {
+    console.debug('Content prepared', {
       contentSize: formatSize(content.length)
     })
 
     // Split into realistic chunks
     const chunks = this.splitIntoRealisticChunks(content)
-    console.log(`Split into ${chunks.length} chunks`)
+    console.debug(`Split into ${chunks.length} chunks`)
     
     // Stream chunks with realistic delays
     for (let i = 0; i < chunks.length; i++) {
@@ -219,7 +218,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       
       // Log progress every 25%
       if (i === 0 || (i + 1) % Math.ceil(chunks.length / 4) === 0) {
-        console.log(`Streaming progress: ${progress}%`)
+        // Progress tracking
       }
       
       yield chunk
@@ -239,7 +238,6 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       }
     }
 
-    console.log('Streaming complete')
-    console.groupEnd()
+    // Streaming complete
   }
 }

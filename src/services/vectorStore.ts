@@ -137,7 +137,7 @@ export class VectorStoreService {
         }
       }))
 
-      console.log(`Found ${examples.length} examples:`, examples.map(e => ({ filename: e.metadata?.filename, score: e.score })))
+      console.debug(`Found ${examples.length} examples:`, examples.map(e => ({ filename: e.metadata?.filename, score: e.score })))
       return examples
     } catch (error) {
       console.error('Vector store search failed', error)

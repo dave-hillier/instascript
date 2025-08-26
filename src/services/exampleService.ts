@@ -46,14 +46,14 @@ export class ExampleService {
     try {
       if (this.provider === 'openai' && this.vectorStoreService) {
         const examples = await this.vectorStoreService.searchExamples(query, limit)
-        console.log(`Retrieved ${examples.length} examples from OpenAI:`, examples.map(e => e.metadata?.filename || 'unknown'))
+        console.debug(`Retrieved ${examples.length} examples from OpenAI:`, examples.map(e => e.metadata?.filename || 'unknown'))
         return examples
       } else {
         if (this.provider === 'openai' && !this.vectorStoreService) {
           console.warn('OpenAI provider selected but not configured, falling back to Mock')
         }
         const examples = await this.mockVectorStoreService.searchExamples(query, limit)
-        console.log(`Retrieved ${examples.length} examples from Mock:`, examples.map(e => e.metadata?.filename || 'unknown'))
+        console.debug(`Retrieved ${examples.length} examples from Mock:`, examples.map(e => e.metadata?.filename || 'unknown'))
         return examples
       }
     } catch (error) {

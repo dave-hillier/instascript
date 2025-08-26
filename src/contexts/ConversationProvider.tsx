@@ -175,7 +175,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     sectionTitle: string
     conversationId: string
   }) => {
-    console.log('Handling regeneration request from message bus', payload)
+    console.debug('Handling regeneration request from message bus', payload)
     
     // Create regeneration job
     const jobData: Omit<RegenerateSectionJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
@@ -196,7 +196,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     // Use current state if provided, otherwise use the closure state
     const stateToUse = currentState || state
     
-    console.log('Handling auto-regeneration check request', { 
+    console.debug('Handling auto-regeneration check request', { 
       conversationId,
       stateConversationCount: stateToUse.conversations.length,
       stateConversationIds: stateToUse.conversations.map(c => c.id),
@@ -209,7 +209,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     let conversation = stateToUse.conversations.find(c => c.id === conversationId)
     if (!conversation && pendingConversationRef.current?.id === conversationId) {
       conversation = pendingConversationRef.current
-      console.log('Found conversation in pending reference', { conversationId })
+      console.debug('Found conversation in pending reference', { conversationId })
     }
     
     if (!conversation) {
@@ -221,7 +221,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       return
     }
     
-    console.log('Found conversation for auto-regeneration', {
+    console.debug('Found conversation for auto-regeneration', {
       conversationId: conversation.id,
       sectionsCount: conversation.sections.length,
       sectionTitles: conversation.sections.map(s => s.title),
@@ -288,9 +288,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         !state.currentGeneration.isComplete
       
       if (generatingSections.length > 0 && !isCurrentlyGenerating) {
-        console.log(`Found ${generatingSections.length} generating sections that should be completed`)
+        console.debug(`Found ${generatingSections.length} generating sections that should be completed`)
         generatingSections.forEach((section, index) => {
-          console.log(`Marking section ${index + 1} as completed`, { 
+          console.debug(`Marking section ${index + 1} as completed`, { 
             sectionId: section.id, 
             title: section.title,
             currentStatus: section.status,
@@ -305,20 +305,20 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         })
         
         // Trigger auto-regeneration check now that sections are completed
-        console.log('Sections marked as completed, triggering auto-regeneration check', { 
+        console.debug('Sections marked as completed, triggering auto-regeneration check', { 
           conversationId: conversation.id,
           sectionsMarkedAsCompleted: generatingSections.length
         })
         
         // Use a longer delay and multiple checks to ensure state updates have propagated
         setTimeout(() => {
-          console.log('First auto-regeneration check attempt')
+          console.debug('First auto-regeneration check attempt')
           handleAutoRegenerationCheck(conversation.id, currentStateRef.current)
         }, 200)
         
         // Backup check in case the first one runs too early
         setTimeout(() => {
-          console.log('Second auto-regeneration check attempt (backup)')
+          console.debug('Second auto-regeneration check attempt (backup)')
           handleAutoRegenerationCheck(conversation.id, currentStateRef.current)
         }, 1000)
       }
@@ -356,13 +356,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     const startTime = Date.now()
     
     console.group('Script Generation')
-    console.log('Starting generation', {
-      prompt: request.prompt.substring(0, 100) + '...',
-      conversationId: request.conversationId,
-      sectionId: request.sectionId,
-      regenerate: request.regenerate,
-      provider: apiProvider
-    })
+    // API generation will be logged at the service layer
     
     try {
       // First check if this is the pending conversation (just created)
@@ -370,7 +364,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       
       if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
         conversation = pendingConversationRef.current
-        console.log('Using pending conversation', { 
+        console.debug('Using pending conversation', { 
           id: request.conversationId, 
           messages: conversation.messages.length, 
           sections: conversation.sections.length 
@@ -379,7 +373,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       } else if (request.conversationId) {
         conversation = state.conversations.find(c => c.id === request.conversationId)
         if (conversation) {
-          console.log('Found existing conversation', { 
+          console.debug('Found existing conversation', { 
             id: request.conversationId, 
             messages: conversation.messages.length, 
             sections: conversation.sections.length 
@@ -408,7 +402,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         try {
           examples = await exampleService.searchExamples(request.prompt, 3)
           console.timeEnd('Example Retrieval')
-          console.log('Retrieved examples', {
+          console.debug('Retrieved examples', {
             count: examples.length,
             sizes: examples.map(e => (e.content.length < 1024 ? `${e.content.length}B` : e.content.length < 1024 * 1024 ? `${(e.content.length / 1024).toFixed(1)}KB` : `${(e.content.length / (1024 * 1024)).toFixed(2)}MB`))
           })
@@ -418,7 +412,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           // Continue without examples - don't fail the generation
         }
       } else if (request.regenerate) {
-        console.log('Skipping examples for regeneration')
+        console.debug('Skipping examples for regeneration')
       }
 
       // Start generation progress tracking
@@ -449,7 +443,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       let chunkCount = 0
       let firstChunkTime: number | null = null
 
-      console.log('Starting streaming...')
+      console.debug('Starting streaming...')
       console.time('Streaming Duration')
 
       // Generate content using the API service
@@ -458,7 +452,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           firstChunkTime = Date.now()
           const timeToFirstChunk = firstChunkTime - startTime
           const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}min`
-          console.log(`Time to first chunk: ${formatDuration(timeToFirstChunk)}`)
+          console.debug(`Time to first chunk: ${formatDuration(timeToFirstChunk)}`)
         }
 
         accumulatedContent += chunk
@@ -474,7 +468,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
               conversationId: conversation.id,
               title
             })
-            console.log(`Script title detected: "${title}"`)
+            console.debug(`Script title detected: "${title}"`)
           }
         }
 
@@ -504,7 +498,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
               const existingSection = conversation.sections.find(s => s.title === sectionTitle)
               
               if (!existingSection) {
-                console.log(`New section detected: "${sectionTitle}"`)
+                console.debug(`New section detected: "${sectionTitle}"`)
                 // Create new section
                 const newSection: ConversationSection = {
                   id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
@@ -552,7 +546,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       
       const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
       const formatDuration = (ms: number) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${(ms / 60000).toFixed(1)}min`
-      console.log('Streaming complete', {
+      console.debug('Streaming complete', {
         totalTime: formatDuration(totalTime),
         contentSize: formatSize(accumulatedContent.length),
         chunkCount,
@@ -662,7 +656,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       })
 
       console.groupEnd()
-      console.log('Generation completed successfully')
+      // API generation completion logged at service layer
       
     } catch (error) {
       const errorTime = Date.now() - startTime
@@ -715,7 +709,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       })
       
       if (stuckJobs.length > 0) {
-        console.log(`Reset ${stuckJobs.length} stuck job(s)`)
+        console.debug(`Reset ${stuckJobs.length} stuck job(s)`)
       }
     }
     
@@ -759,7 +753,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         return
       }
       
-      console.log(`Processing job: ${queuedJob.id} (${queuedJob.type})`)
+      console.debug(`Processing job: ${queuedJob.id} (${queuedJob.type})`)
       
       try {
         // Mark job as processing
@@ -785,7 +779,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         
         // Mark job as completed
         jobQueue.updateJob(queuedJob.id, { status: 'completed' })
-        console.log(`Job completed: ${queuedJob.id}`)
+        console.debug(`Job completed: ${queuedJob.id}`)
         
         // Auto-regeneration check is now handled inside generateScript function
         
