@@ -46,6 +46,46 @@ export class MockAPIService {
     
     return chunks
   }
+  private generateEvenLongerContent(sectionTitle: string): string {
+    // Generate even longer content to ensure 400+ words
+    const title = sectionTitle.replace(/^## /, '')
+    
+    return `## ${title}
+
+Welcome to this comprehensive and deeply enriching section, carefully crafted to provide profound therapeutic benefits that extend far beyond this single session. As you continue on this transformative journey of personal growth, healing, and self-discovery, allow yourself to fully embrace the remarkable power of this present moment. Each word you hear, each gentle breath you take, each subtle sensation you experience throughout your being is guiding you systematically toward a more balanced, centered, and harmonious state of existence.
+
+In this sacred space of deep relaxation and heightened inner awareness, your subconscious mind becomes naturally and effortlessly receptive to positive change, healing suggestions, and transformative insights. You may begin to notice, perhaps with a sense of pleasant surprise, how magnificently your body responds as it begins to release layers of accumulated tension, starting from the very crown of your head and flowing like liquid golden light through every fiber, every cell, every molecule of your being.
+
+This gentle, warming wave of profound relaxation moves gracefully down through your forehead, softening the delicate muscles around your eyes, releasing any tightness in your temples, relaxing your jaw completely, and dissolving any stored tension that may have been held in your neck and shoulders. As this beautiful sensation continues its healing journey throughout your entire body, you become increasingly aware of your innate, natural capacity for healing, renewal, and positive transformation.
+
+Your breathing naturally becomes deeper, more rhythmic, and increasingly peaceful with each passing moment. Each inhalation brings in fresh, revitalizing energy and pure vitality, while each exhalation gently releases any lingering stress, worry, anxiety, or negativity that no longer serves your highest good and well-being. This natural rhythm of breathing connects you to the fundamental life force that flows through all living things.
+
+Within this sanctuary of profound inner peace and tranquility, your mind naturally and effortlessly begins to organize, process, and integrate the day's experiences with remarkable clarity and wisdom. You may discover that solutions to challenges and concerns begin to emerge with surprising clarity, as if your inner wisdom and intuitive knowledge is finally free to express itself without the interference of daily distractions, concerns, and mental chatter.
+
+The therapeutic benefits and positive changes from this experience extend far beyond this single session, creating lasting, meaningful transformations in how you perceive yourself, interact with others, and navigate through the world around you. With each passing moment, you are actively building new neural pathways that support greater confidence, enhanced resilience, inner strength, and emotional balance.
+
+These positive changes become more deeply embedded and integrated into your being with each practice, creating a solid, unshakeable foundation for ongoing personal growth, emotional well-being, and life satisfaction. As this enriching section draws to a gentle and peaceful close, take a moment to truly appreciate the profound and meaningful work you have accomplished here today.`
+  }
+
+  private generateExpandedSectionContent(sectionTitle: string): string {
+    // Generate expanded section content with at least 400 words
+    const title = sectionTitle.replace(/^## /, '')
+    
+    return `## ${title}
+
+Welcome to this expanded and enriched section designed to provide deeper therapeutic benefits. As you continue this journey of personal growth and healing, allow yourself to fully embrace the transformative power of this moment. Each word you hear, each breath you take, and each sensation you experience is guiding you toward a more balanced and centered state of being.
+
+In this space of deep relaxation and inner awareness, your subconscious mind is naturally receptive to positive change and healing suggestions. You may notice how effortlessly your body begins to release tension, starting from the very top of your head and flowing like warm, golden light through every fiber of your being. This gentle wave of relaxation moves down through your forehead, relaxing the muscles around your eyes, softening your jaw, and releasing any stored tension in your neck and shoulders.
+
+As this peaceful sensation continues its journey through your body, you become increasingly aware of your natural capacity for healing and renewal. Your breathing becomes deeper and more rhythmic, each inhalation bringing in fresh energy and vitality, while each exhalation releases any stress, worry, or negativity that no longer serves your highest good.
+
+Within this sanctuary of inner peace, your mind naturally begins to organize and integrate the day's experiences, filing away what is useful and gently releasing what is no longer needed. You may find that solutions to challenges begin to emerge with remarkable clarity, as if your inner wisdom is finally free to express itself without the interference of daily distractions and concerns.
+
+The therapeutic benefits of this experience extend far beyond this single session, creating lasting positive changes in how you perceive yourself and interact with the world around you. With each passing moment, you are building new neural pathways that support confidence, resilience, and inner strength. These positive changes become more deeply embedded with each practice, creating a solid foundation for ongoing personal growth and emotional well-being.
+
+As this section draws to a gentle close, take a moment to appreciate the profound work you have done here today. Your commitment to self-improvement and healing is truly admirable, and the benefits of this experience will continue to unfold in the days and weeks ahead, bringing you greater peace, clarity, and joy in all aspects of your life.`
+  }
+
   private generateScriptContent(prompt: string): string {
     // Generate different content based on the prompt
     if (prompt.toLowerCase().includes('confidence') || prompt.toLowerCase().includes('speaking')) {
@@ -144,10 +184,27 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     if (request.regenerate && request.sectionId && conversation) {
       const section = conversation.sections.find(s => s.id === request.sectionId)
       if (section) {
-        Logger.log('MockAPI', 'Regenerating section', { sectionId: request.sectionId })
-        // For regeneration, return a modified version of the section
-        content = section.content.replace(/\.\.\./g, '... [refreshed content] ...')
+        Logger.log('MockAPI', 'Regenerating section', { 
+          sectionId: request.sectionId, 
+          originalTitle: section.title 
+        })
+        
+        // Generate expanded content and ensure it meets word count requirements
+        content = this.generateExpandedSectionContent(section.title)
+        const wordCount = content.split(/\s+/).length
+        
+        Logger.log('MockAPI', 'Generated expanded content', {
+          wordCount,
+          meetsRequirement: wordCount >= 400
+        })
+        
+        // If content is still under 400 words, generate additional content
+        if (wordCount < 400) {
+          Logger.log('MockAPI', 'Content under 400 words, expanding further')
+          content = this.generateEvenLongerContent(section.title)
+        }
       } else {
+        Logger.warn('MockAPI', 'Section not found for regeneration', { sectionId: request.sectionId })
         content = this.generateScriptContent(request.prompt)
       }
     } else {

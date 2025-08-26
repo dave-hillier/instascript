@@ -57,12 +57,13 @@ export class OpenAIService {
           { role: 'user', content: request.prompt }
         ]
 
-    // If regenerating a specific section, add context
+    // If regenerating a specific section, add the specific regeneration instruction
     if (request.regenerate && request.sectionId && conversation) {
       const section = conversation.sections.find(s => s.id === request.sectionId)
       if (section) {
+        // Add the specific regeneration instruction
         messages.push({
-          role: 'user',
+          role: 'user', 
           content: PromptService.getSectionRegenerationPrompt(section.title)
         })
       }

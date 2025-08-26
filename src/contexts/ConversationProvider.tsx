@@ -274,6 +274,19 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         }
       })
 
+      // For regeneration, clear the existing section content to show streaming from start
+      if (request.regenerate && request.sectionId && conversation) {
+        const existingSection = conversation.sections.find(s => s.id === request.sectionId)
+        if (existingSection) {
+          dispatch({
+            type: 'UPDATE_SECTION',
+            conversationId: conversation.id,
+            sectionId: existingSection.id,
+            updates: { content: '', status: 'generating' }
+          })
+        }
+      }
+
       let accumulatedContent = ''
       let chunkCount = 0
       let firstChunkTime: number | null = null
@@ -306,41 +319,56 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           }
         }
 
-        // Check if we've completed a section (next section started)
-        // Skip the main title (single #) and only process sections (##)
-        const sectionMatches = accumulatedContent.match(/##\s+(.+?)(?=\n##|\n$|$)/gs)
-        if (sectionMatches && sectionMatches.length > 0) {
-          const lastSection = sectionMatches[sectionMatches.length - 1]
-          const sectionTitle = lastSection.match(/##\s+(.+?)(?=\n|$)/)?.[1]?.trim()
+        // Handle section updates differently for regeneration vs new generation
+        if (request.regenerate && request.sectionId && conversation) {
+          // For regeneration, update the specific section directly
+          const existingSection = conversation.sections.find(s => s.id === request.sectionId)
+          if (existingSection) {
+            dispatch({
+              type: 'UPDATE_SECTION',
+              conversationId: conversation.id,
+              sectionId: existingSection.id,
+              updates: { content: accumulatedContent, status: 'generating' }
+            })
+          }
+        } else {
+          // For new generation, parse sections from content
+          // Check if we've completed a section (next section started)
+          // Skip the main title (single #) and only process sections (##)
+          const sectionMatches = accumulatedContent.match(/##\s+(.+?)(?=\n##|\n$|$)/gs)
+          if (sectionMatches && sectionMatches.length > 0) {
+            const lastSection = sectionMatches[sectionMatches.length - 1]
+            const sectionTitle = lastSection.match(/##\s+(.+?)(?=\n|$)/)?.[1]?.trim()
 
-          if (sectionTitle && conversation) {
-            // Check if this is a new section
-            const existingSection = conversation.sections.find(s => s.title === sectionTitle)
-            
-            if (!existingSection) {
-              Logger.log('Generation', `New section detected: "${sectionTitle}"`)
-              // Create new section
-              const newSection: ConversationSection = {
-                id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-                title: sectionTitle,
-                content: lastSection,
-                status: 'generating',
-                messageIds: []
+            if (sectionTitle && conversation) {
+              // Check if this is a new section
+              const existingSection = conversation.sections.find(s => s.title === sectionTitle)
+              
+              if (!existingSection) {
+                Logger.log('Generation', `New section detected: "${sectionTitle}"`)
+                // Create new section
+                const newSection: ConversationSection = {
+                  id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+                  title: sectionTitle,
+                  content: lastSection,
+                  status: 'generating',
+                  messageIds: []
+                }
+
+                dispatch({
+                  type: 'CREATE_SECTION',
+                  conversationId: conversation.id,
+                  section: newSection
+                })
+              } else {
+                // Update existing section
+                dispatch({
+                  type: 'UPDATE_SECTION',
+                  conversationId: conversation.id,
+                  sectionId: existingSection.id,
+                  updates: { content: lastSection, status: 'generating' }
+                })
               }
-
-              dispatch({
-                type: 'CREATE_SECTION',
-                conversationId: conversation.id,
-                section: newSection
-              })
-            } else {
-              // Update existing section
-              dispatch({
-                type: 'UPDATE_SECTION',
-                conversationId: conversation.id,
-                sectionId: existingSection.id,
-                updates: { content: lastSection, status: 'generating' }
-              })
             }
           }
         }
@@ -387,15 +415,52 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           message: assistantMessage
         })
 
-        // Mark all sections as completed
-        conversation.sections.forEach(section => {
+        // Mark sections as completed
+        if (request.regenerate && request.sectionId) {
+          // For regeneration, only mark the specific section as completed
           dispatch({
             type: 'UPDATE_SECTION',
             conversationId: conversation.id,
-            sectionId: section.id,
+            sectionId: request.sectionId,
             updates: { status: 'completed' }
           })
-        })
+        } else {
+          // For new generation, mark all sections as completed
+          conversation.sections.forEach(section => {
+            dispatch({
+              type: 'UPDATE_SECTION',
+              conversationId: conversation.id,
+              sectionId: section.id,
+              updates: { status: 'completed' }
+            })
+          })
+
+          // Check for sections under 400 words and automatically regenerate them
+          const shortSections = conversation.sections.filter(section => {
+            const wordCount = section.content.split(/\s+/).length
+            return wordCount < 400
+          })
+
+          if (shortSections.length > 0) {
+            Logger.log('Generation', `Found ${shortSections.length} section(s) under 400 words, automatically regenerating`)
+            
+            // Regenerate the first short section (to avoid overwhelming the system)
+            const firstShortSection = shortSections[0]
+            Logger.log('Generation', `Auto-regenerating section: "${firstShortSection.title}" (${firstShortSection.content.split(/\s+/).length} words)`)
+            
+            // Use setTimeout to avoid blocking the current completion
+            setTimeout(() => {
+              generateScript({
+                prompt: `Regenerate the "${firstShortSection.title}" section to be at least 400 words`,
+                conversationId: conversation.id,
+                sectionId: firstShortSection.id,
+                regenerate: true
+              }).catch(error => {
+                Logger.error('Generation', 'Auto-regeneration failed', error)
+              })
+            }, 1000) // 1 second delay to let UI update
+          }
+        }
 
         dispatch({
           type: 'SET_CONVERSATION_STATUS',

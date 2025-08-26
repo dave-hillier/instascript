@@ -75,8 +75,26 @@ export const ScriptPage = () => {
     }
   }
 
-  const sections = parseContentSections(displayContent)
   const isGenerating = currentGeneration && currentGeneration.conversationId === conversation?.id && !currentGeneration.isComplete
+  
+  // Use conversation sections if available, otherwise parse from content
+  const sections = conversation && conversation.sections.length > 0 
+    ? conversation.sections.map(section => {
+        // During regeneration, show streaming content for the section being regenerated
+        if (isGenerating && currentGeneration?.sectionId === section.id) {
+          return {
+            id: section.id,
+            title: section.title,
+            content: currentGeneration.content || section.content
+          }
+        }
+        return {
+          id: section.id,
+          title: section.title,
+          content: section.content
+        }
+      })
+    : parseContentSections(displayContent)
   
   if (!script) {
     return (
