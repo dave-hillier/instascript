@@ -1,16 +1,17 @@
 import { useReducer, useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Sun, Moon, Monitor, Settings, ArrowLeft, Bell } from 'lucide-react'
+import { Settings, ArrowLeft, Bell } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useAppContext } from './hooks/useAppContext'
 import { useJobQueue } from './hooks/useJobQueue'
+import { SettingsModal } from './components/SettingsModal'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
 
-type ThemeAction = { type: 'CYCLE_THEME' }
+type ThemeAction = { type: 'SET_THEME'; theme: Theme }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
 
 type UIState = { 
@@ -161,12 +162,8 @@ function NotificationBell() {
 
 const uiReducer = (state: UIState, action: UIAction): UIState => {
   switch (action.type) {
-    case 'CYCLE_THEME': {
-      const themeOrder: Theme[] = ['light', 'dark', 'system']
-      const currentIndex = themeOrder.indexOf(state.theme)
-      const nextIndex = (currentIndex + 1) % themeOrder.length
-      return { ...state, theme: themeOrder[nextIndex] }
-    }
+    case 'SET_THEME':
+      return { ...state, theme: action.theme }
     case 'TOGGLE_SETTINGS_MODAL':
       return { ...state, showSettingsModal: !state.showSettingsModal }
     default:
@@ -178,7 +175,6 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state } = useAppContext()
-  const modalRef = useRef<HTMLDialogElement>(null)
   
   const { value: savedTheme, setValue: setSavedTheme } = useLocalStorage<Theme>('theme', 'system')
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
@@ -188,8 +184,6 @@ function AppContent() {
   
   const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('OPENAI_API_KEY', '')
   const { value: apiProvider, setValue: setApiProvider } = useLocalStorage<'openai' | 'mock'>('apiProvider', 'mock')
-  const [tempApiKey, setTempApiKey] = useState('')
-  const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>('mock')
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -224,34 +218,24 @@ function AppContent() {
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
   const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
 
-  const handleSaveSettings = () => {
-    if (tempApiKey.trim()) {
-      setApiKey(tempApiKey.trim())
+  const handleSaveSettings = (newApiKey: string, newApiProvider: 'openai' | 'mock') => {
+    if (newApiKey.trim()) {
+      setApiKey(newApiKey.trim())
     }
-    setApiProvider(tempApiProvider)
-    modalRef.current?.close()
-    uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
+    setApiProvider(newApiProvider)
   }
 
   const handleOpenSettings = () => {
-    setTempApiKey(apiKey || '')
-    setTempApiProvider(apiProvider || 'mock')
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
   const handleCloseModal = () => {
-    modalRef.current?.close()
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
-  // Open/close modal based on state
-  useEffect(() => {
-    if (uiState.showSettingsModal) {
-      modalRef.current?.showModal()
-    } else {
-      modalRef.current?.close()
-    }
-  }, [uiState.showSettingsModal])
+  const handleThemeChange = (newTheme: Theme) => {
+    uiDispatch({ type: 'SET_THEME', theme: newTheme })
+  }
 
 
   return (
@@ -291,15 +275,6 @@ function AppContent() {
           >
             <Settings size={18} />
           </button>
-          <button 
-            onClick={() => uiDispatch({ type: 'CYCLE_THEME' })}
-            aria-label={`Theme: ${uiState.theme}. Click to switch to ${uiState.theme === 'light' ? 'dark' : uiState.theme === 'dark' ? 'system' : 'light'} mode`}
-            type="button"
-          >
-            {uiState.theme === 'light' ? <Sun size={18} /> : 
-             uiState.theme === 'dark' ? <Moon size={18} /> : 
-             <Monitor size={18} />}
-          </button>
         </nav>
       </header>
       
@@ -310,80 +285,15 @@ function AppContent() {
         </Routes>
       </main>
 
-      <dialog 
-        ref={modalRef}
-        aria-labelledby="settings-title"
-        onClick={(e) => {
-          if (e.target === modalRef.current) {
-            handleCloseModal()
-          }
-        }}
-      >
-        <header>
-          <h2 id="settings-title">Settings</h2>
-          <button 
-            onClick={handleCloseModal}
-            aria-label="Close settings"
-            type="button"
-          >
-            ×
-          </button>
-        </header>
-        <form onSubmit={(e) => { e.preventDefault(); handleSaveSettings(); }}>
-          <fieldset>
-            <legend className="sr-only">API Configuration</legend>
-            
-            <label htmlFor="api-provider">API Provider</label>
-            <select 
-              id="api-provider"
-              value={tempApiProvider}
-              onChange={(e) => setTempApiProvider(e.target.value as 'openai' | 'mock')}
-              aria-describedby="api-provider-help"
-            >
-              <option value="mock">Mock API (for testing)</option>
-              <option value="openai">OpenAI</option>
-            </select>
-            <p id="api-provider-help">
-              Use Mock API for testing or OpenAI for real script generation
-            </p>
-
-            {tempApiProvider === 'openai' && (
-              <>
-                <label htmlFor="api-key">OpenAI API Key</label>
-                <input 
-                  type="password" 
-                  id="api-key" 
-                  placeholder="Enter your OpenAI API key"
-                  value={tempApiKey}
-                  onChange={(e) => setTempApiKey(e.target.value)}
-                  aria-describedby={apiKey ? "api-key-status" : "api-key-help"}
-                  required
-                />
-                <p id="api-key-help">
-                  Get your API key from the OpenAI dashboard
-                </p>
-                {apiKey && (
-                  <p id="api-key-status" role="status">API key is currently saved</p>
-                )}
-              </>
-            )}
-          </fieldset>
-        </form>
-        <footer>
-          <button 
-            onClick={handleCloseModal}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button 
-            onClick={handleSaveSettings}
-            type="button"
-          >
-            Save
-          </button>
-        </footer>
-      </dialog>
+      <SettingsModal
+        isOpen={uiState.showSettingsModal}
+        onClose={handleCloseModal}
+        theme={uiState.theme}
+        onThemeChange={handleThemeChange}
+        apiKey={apiKey || ''}
+        apiProvider={apiProvider || 'mock'}
+        onSave={handleSaveSettings}
+      />
     </div>
   )
 }

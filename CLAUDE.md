@@ -32,6 +32,13 @@
 - Include appropriate ARIA attributes and roles for accessibility
 - Use proper heading hierarchy and landmark elements
 
+## CSS Standards
+
+- Prefer semantic CSS selectors over conditional classes
+- Use CSS pseudo-selectors (`:first-child`, `:last-child`, `:nth-child`) instead of JavaScript-generated classes
+- Target elements by semantic attributes (`div[role="group"]`) rather than adding extra CSS classes
+- Keep component markup clean by letting CSS handle styling logic
+
 ## Icon Standards
 
 - Use Lucide React icons exclusively
