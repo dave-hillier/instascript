@@ -4,8 +4,7 @@ import type { Conversation, Message, ConversationSection, GenerationRequest, Gen
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
-import { serviceRegistry } from '../services/serviceRegistry'
-import type { APIProvider } from '../services/apiService'
+import { useServices } from './ServiceProvider'
 import type { ExampleScript } from '../services/vectorStore'
 import { useJobQueue } from '../hooks/useJobQueue'
 import { messageBus } from '../services/messageBus'
@@ -151,10 +150,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   })
 
   const { value: storedConversations, setValue: setStoredConversations, isLoaded } = useLocalStorage<Conversation[]>('conversations', [])
-  const { value: apiKey } = useLocalStorage<string>('apiKey', '')
-  const { value: apiProvider } = useLocalStorage<APIProvider>('apiProvider', 'mock')
-  const apiService = serviceRegistry.getAPIService()
-  const exampleService = serviceRegistry.getExampleService()
+  const { value: apiProvider } = useLocalStorage<string>('apiProvider', 'mock')
+  const { apiService, exampleService } = useServices()
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
   const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
@@ -260,11 +257,6 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       subscriptions.forEach(sub => sub.unsubscribe())
     }
   }, [handleRegenerateSectionRequest, handleAutoRegenerationCheck])
-
-  // Update service provider configuration when settings change
-  useEffect(() => {
-    serviceRegistry.updateProvider(apiProvider || 'mock', apiKey || undefined)
-  }, [apiProvider, apiKey])
 
   // Load conversations from localStorage
   useEffect(() => {
