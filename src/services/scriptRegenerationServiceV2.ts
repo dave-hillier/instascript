@@ -46,15 +46,13 @@ export class ScriptRegenerationServiceV2 {
   }
 
   private handleScriptGenerationCompleted(conversationId: string, scriptId: string): void {
-    console.log('[ScriptRegenerationServiceV2] Script generation completed, checking for auto-regeneration', {
+    console.log('[ScriptRegenerationServiceV2] Script generation completed', {
       conversationId,
       scriptId
     })
 
-    // Trigger auto-regeneration check via direct handler call
-    if (this.autoRegenerationHandler) {
-      this.autoRegenerationHandler(conversationId)
-    }
+    // Auto-regeneration will be triggered by ConversationProvider after sections are marked as completed
+    console.log('[ScriptRegenerationServiceV2] Auto-regeneration will be triggered after sections are completed')
   }
 
   private handleSectionRegenerationCompleted(conversationId: string, scriptId: string, sectionId: string): void {
@@ -213,8 +211,23 @@ export class ScriptRegenerationServiceV2 {
       conversationId: conversation.id 
     })
     
-    // Use pure selector to get sections needing regeneration
-    const sectionsToRegenerate = getSectionsNeedingRegeneration(state, conversation, existingJobs)
+    // Use pure selector to analyze all sections (not just those needing regeneration)
+    const allSectionAnalyses = analyzeSections(state, conversation, existingJobs)
+    const sectionsToRegenerate = allSectionAnalyses.filter(analysis => analysis.needsRegeneration)
+    
+    console.log('[ScriptRegenerationServiceV2] Section analysis results:', {
+      totalSections: conversation.sections.length,
+      allSections: allSectionAnalyses.map(s => ({
+        title: s.sectionTitle,
+        status: conversation.sections.find(section => section.id === s.sectionId)?.status,
+        wordCount: s.wordCount,
+        needsRegeneration: s.needsRegeneration,
+        reason: s.reason,
+        attempts: s.attempts
+      })),
+      minimumWordCount: state.rules.minimumWordCount,
+      maxAttempts: state.rules.maxAutoRegenerationAttempts
+    })
     
     if (sectionsToRegenerate.length > 0) {
       console.log('[ScriptRegenerationServiceV2] Auto-regeneration analysis complete', {

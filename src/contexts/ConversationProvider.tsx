@@ -191,13 +191,35 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   // Handle auto-regeneration check request from service
   const handleAutoRegenerationCheck = useCallback((conversationId: string) => {
-    console.log('[ConversationProvider] Handling auto-regeneration check request', { conversationId })
+    console.log('[ConversationProvider] Handling auto-regeneration check request', { 
+      conversationId,
+      stateConversationCount: state.conversations.length,
+      stateConversationIds: state.conversations.map(c => c.id),
+      hasPendingConversation: !!pendingConversationRef.current,
+      pendingConversationId: pendingConversationRef.current?.id
+    })
     
-    const conversation = state.conversations.find(c => c.id === conversationId)
+    // Check both state conversations and pending conversation
+    let conversation = state.conversations.find(c => c.id === conversationId)
+    if (!conversation && pendingConversationRef.current?.id === conversationId) {
+      conversation = pendingConversationRef.current
+      console.log('[ConversationProvider] Found conversation in pending reference', { conversationId })
+    }
+    
     if (!conversation) {
-      console.warn('[ConversationProvider] Conversation not found for auto-regeneration check', { conversationId })
+      console.warn('[ConversationProvider] Conversation not found for auto-regeneration check', { 
+        conversationId,
+        stateConversationIds: state.conversations.map(c => c.id),
+        pendingConversationId: pendingConversationRef.current?.id
+      })
       return
     }
+    
+    console.log('[ConversationProvider] Found conversation for auto-regeneration', {
+      conversationId: conversation.id,
+      sectionsCount: conversation.sections.length,
+      sectionTitles: conversation.sections.map(s => s.title)
+    })
     
     // Use the new reducer-based regeneration service
     scriptRegenerationServiceV2.handleAutoRegenerationCheck(
@@ -276,10 +298,14 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           })
         })
         
-        // Auto-regeneration check will be triggered by the service after section completion events
+        // Trigger auto-regeneration check now that sections are completed
+        console.log('[ConversationProvider] Sections marked as completed, triggering auto-regeneration check', { conversationId: conversation.id })
+        setTimeout(() => {
+          handleAutoRegenerationCheck(conversation.id)
+        }, 100) // Small delay to ensure state updates have propagated
       }
     })
-  }, [state.conversations, jobQueue.isLeader, state.currentGeneration, dispatch])
+  }, [state.conversations, jobQueue.isLeader, state.currentGeneration, dispatch, handleAutoRegenerationCheck])
 
 
   const getConversationByScriptId = useCallback((scriptId: string): Conversation | undefined => {
@@ -585,6 +611,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           })
         } else {
           // For initial script generation, notify script completion
+          // Note: Auto-regeneration will be triggered after sections are marked as completed
           messageBus.publish('SCRIPT_GENERATION_COMPLETED', {
             conversationId: conversation.id,
             scriptId: conversation.scriptId
