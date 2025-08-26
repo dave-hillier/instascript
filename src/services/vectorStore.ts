@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { CONTEXT_LIMITS } from '../utils/contextWindow';
 
 export interface ExampleScript {
   content: string
@@ -115,7 +116,7 @@ export class VectorStoreService {
    * @param limit Maximum number of examples to retrieve
    * @returns Array of relevant example scripts
    */
-  async searchExamples(query: string, limit: number = 3): Promise<ExampleScript[]> {
+  async searchExamples(query: string, limit: number = CONTEXT_LIMITS.DEFAULT_EXAMPLES): Promise<ExampleScript[]> {
     try {
       const storeId = await this.initializeStore()
       if (!storeId) {

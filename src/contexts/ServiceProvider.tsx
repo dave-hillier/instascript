@@ -1,16 +1,11 @@
-import { createContext, useContext, useRef, useEffect } from 'react'
+import { useRef, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { APIService } from '../services/apiService'
 import { ExampleService } from '../services/exampleService'
 import type { APIProvider } from '../services/apiService'
 import { useLocalStorage } from '../hooks/useLocalStorage'
-
-type ServiceContextType = {
-  apiService: APIService
-  exampleService: ExampleService
-}
-
-const ServiceContext = createContext<ServiceContextType | null>(null)
+import { ServiceContext } from './ServiceContext'
+import type { ServiceContextType } from './ServiceContext'
 
 type ServiceProviderProps = {
   children: ReactNode
@@ -45,10 +40,3 @@ export function ServiceProvider({ children }: ServiceProviderProps) {
   )
 }
 
-export function useServices(): ServiceContextType {
-  const context = useContext(ServiceContext)
-  if (!context) {
-    throw new Error('useServices must be used within a ServiceProvider')
-  }
-  return context
-}

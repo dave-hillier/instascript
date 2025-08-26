@@ -72,7 +72,7 @@ export class OpenAIService {
     try {
       // Use the Responses API for streaming responses
       const stream = await this.client.responses.create({
-        model: 'gpt-5',
+        model: 'gpt-5-mini-2025-08-07',//'gpt-5',
         input: messages,
         stream: true,
       })

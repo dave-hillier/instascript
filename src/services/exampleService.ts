@@ -2,6 +2,7 @@ import { VectorStoreService } from './vectorStore'
 import { MockVectorStoreService } from './mockVectorStore'
 import type { ExampleScript } from './vectorStore'
 import type { APIProvider } from './apiService'
+import { CONTEXT_LIMITS } from '../utils/contextWindow'
 
 /**
  * ExampleService provides access to hypnosis script examples from either:
@@ -40,7 +41,7 @@ export class ExampleService {
     }
   }
 
-  async searchExamples(query: string, limit: number = 3): Promise<ExampleScript[]> {
+  async searchExamples(query: string, limit: number = CONTEXT_LIMITS.DEFAULT_EXAMPLES): Promise<ExampleScript[]> {
     // Searching examples
     
     try {

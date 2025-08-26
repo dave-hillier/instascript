@@ -4,8 +4,10 @@ import type { Conversation, Message, ConversationSection, GenerationRequest, Gen
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
-import { useServices } from './ServiceProvider'
+import { useServices } from '../hooks/useServices'
 import type { ExampleScript } from '../services/vectorStore'
+import { getRecommendedExampleCount } from '../utils/contextWindow'
+import { PromptService } from '../services/prompts'
 import { useJobQueue } from '../hooks/useJobQueue'
 import { messageBus } from '../services/messageBus'
 import { scriptRegenerationService } from '../services/scriptRegenerationService'
@@ -400,10 +402,16 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       if (!request.regenerate && exampleService.isConfigured()) {
         console.time('Example Retrieval')
         try {
-          examples = await exampleService.searchExamples(request.prompt, 3)
+          // Calculate optimal number of examples based on context window
+          const systemPrompt = PromptService.getSystemPrompt()
+          const conversationTokens = conversation ? conversation.messages.reduce((total, msg) => total + msg.content.length, 0) : 0
+          const optimalExampleCount = getRecommendedExampleCount(systemPrompt, Math.ceil(conversationTokens / 4))
+          
+          examples = await exampleService.searchExamples(request.prompt, optimalExampleCount)
           console.timeEnd('Example Retrieval')
           console.debug('Retrieved examples', {
-            count: examples.length,
+            requestedCount: optimalExampleCount,
+            actualCount: examples.length,
             sizes: examples.map(e => (e.content.length < 1024 ? `${e.content.length}B` : e.content.length < 1024 * 1024 ? `${(e.content.length / 1024).toFixed(1)}KB` : `${(e.content.length / (1024 * 1024)).toFixed(2)}MB`))
           })
         } catch (error) {

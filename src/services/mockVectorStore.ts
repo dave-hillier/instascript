@@ -1,4 +1,5 @@
 import type { ExampleScript } from './vectorStore'
+import { CONTEXT_LIMITS } from '../utils/contextWindow'
 
 export class MockVectorStoreService {
   private mockExamples: ExampleScript[] = [
@@ -120,7 +121,7 @@ You carry this sense of ease and comfort with you throughout your day.`,
    * @param limit Maximum number of examples to retrieve
    * @returns Array of relevant example scripts
    */
-  async searchExamples(query: string, limit: number = 3): Promise<ExampleScript[]> {
+  async searchExamples(query: string, limit: number = CONTEXT_LIMITS.DEFAULT_EXAMPLES): Promise<ExampleScript[]> {
     // Simulate network delay
     await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300))
 

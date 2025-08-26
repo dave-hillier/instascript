@@ -1,5 +1,4 @@
 # TODO
 
-- [ ] Job queue for regeneration
+- [ ] use interface instead of api service
 - [ ] Check for abuse of react primatives, side effects etc
-- [ ] remove the logger in favour of console itself.
