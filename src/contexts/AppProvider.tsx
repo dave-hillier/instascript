@@ -1,7 +1,6 @@
 import { useReducer, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import type { Script } from '../types/script'
-import { mockScripts } from '../data/mockScripts'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { AppContext } from './AppContext'
 import type { AppContextType } from './AppContext'
@@ -71,15 +70,13 @@ export const AppProvider = ({ children }: AppProviderProps) => {
 
   const { value: storedScripts, setValue: setStoredScripts, isLoaded } = useLocalStorage<Script[]>('scripts', [])
 
-  // Load initial scripts from localStorage or use mock data (only once)
+  // Load initial scripts from localStorage (only once)
   useEffect(() => {
     if (isLoaded && state.scripts.length === 0) {
       if (storedScripts && storedScripts.length > 0) {
         dispatch({ type: 'LOAD_SCRIPTS', scripts: storedScripts })
-      } else {
-        dispatch({ type: 'LOAD_SCRIPTS', scripts: mockScripts })
-        setStoredScripts(mockScripts)
       }
+      // No longer loading mock scripts - app starts with empty script list
     }
   }, [isLoaded]) // Only depend on isLoaded
 
