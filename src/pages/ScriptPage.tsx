@@ -163,22 +163,18 @@ export const ScriptPage = () => {
                   }
                   return line.trim() ? (
                     <p key={index}>{line}</p>
-                  ) : (
-                    <br key={index} />
-                  )
+                  ) : null
                 })}
               </div>
             </section>
           ))
         ) : displayContent ? (
           // Fallback for content without clear sections
-          displayContent.split('\n').map((paragraph: string, index: number) => (
+          displayContent.split('\n').map((paragraph: string, index: number) => 
             paragraph.trim() ? (
               <p key={index}>{paragraph}</p>
-            ) : (
-              <br key={index} />
-            )
-          ))
+            ) : null
+          )
         ) : (
           <p>No content yet. Script is being generated...</p>
         )}
