@@ -217,16 +217,24 @@ export class ScriptRegenerationServiceV2 {
     
     console.log('[ScriptRegenerationServiceV2] Section analysis results:', {
       totalSections: conversation.sections.length,
-      allSections: allSectionAnalyses.map(s => ({
-        title: s.sectionTitle,
-        status: conversation.sections.find(section => section.id === s.sectionId)?.status,
-        wordCount: s.wordCount,
-        needsRegeneration: s.needsRegeneration,
-        reason: s.reason,
-        attempts: s.attempts
-      })),
       minimumWordCount: state.rules.minimumWordCount,
       maxAttempts: state.rules.maxAutoRegenerationAttempts
+    })
+    
+    // Log each section individually for better visibility
+    allSectionAnalyses.forEach((analysis, index) => {
+      const section = conversation.sections.find(s => s.id === analysis.sectionId)
+      console.log(`[ScriptRegenerationServiceV2] Section ${index + 1}:`, {
+        title: analysis.sectionTitle,
+        sectionId: analysis.sectionId,
+        status: section?.status,
+        wordCount: analysis.wordCount,
+        contentLength: section?.content?.length || 0,
+        contentPreview: section?.content?.substring(0, 100) + '...',
+        needsRegeneration: analysis.needsRegeneration,
+        reason: analysis.reason,
+        attempts: analysis.attempts
+      })
     })
     
     if (sectionsToRegenerate.length > 0) {

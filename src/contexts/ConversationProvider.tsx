@@ -159,6 +159,12 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
   const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
+  const currentStateRef = useRef<ConversationState>(state)
+  
+  // Update the current state ref whenever state changes
+  useEffect(() => {
+    currentStateRef.current = state
+  }, [state])
   
   // Job queue integration
   const jobQueue = useJobQueue()
@@ -190,17 +196,21 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   }, [jobQueue])
 
   // Handle auto-regeneration check request from service
-  const handleAutoRegenerationCheck = useCallback((conversationId: string) => {
+  const handleAutoRegenerationCheck = useCallback((conversationId: string, currentState?: ConversationState) => {
+    // Use current state if provided, otherwise use the closure state
+    const stateToUse = currentState || state
+    
     console.log('[ConversationProvider] Handling auto-regeneration check request', { 
       conversationId,
-      stateConversationCount: state.conversations.length,
-      stateConversationIds: state.conversations.map(c => c.id),
+      stateConversationCount: stateToUse.conversations.length,
+      stateConversationIds: stateToUse.conversations.map(c => c.id),
       hasPendingConversation: !!pendingConversationRef.current,
-      pendingConversationId: pendingConversationRef.current?.id
+      pendingConversationId: pendingConversationRef.current?.id,
+      usingCurrentState: !!currentState
     })
     
     // Check both state conversations and pending conversation
-    let conversation = state.conversations.find(c => c.id === conversationId)
+    let conversation = stateToUse.conversations.find(c => c.id === conversationId)
     if (!conversation && pendingConversationRef.current?.id === conversationId) {
       conversation = pendingConversationRef.current
       console.log('[ConversationProvider] Found conversation in pending reference', { conversationId })
@@ -209,7 +219,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     if (!conversation) {
       console.warn('[ConversationProvider] Conversation not found for auto-regeneration check', { 
         conversationId,
-        stateConversationIds: state.conversations.map(c => c.id),
+        stateConversationIds: stateToUse.conversations.map(c => c.id),
         pendingConversationId: pendingConversationRef.current?.id
       })
       return
@@ -218,7 +228,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     console.log('[ConversationProvider] Found conversation for auto-regeneration', {
       conversationId: conversation.id,
       sectionsCount: conversation.sections.length,
-      sectionTitles: conversation.sections.map(s => s.title)
+      sectionTitles: conversation.sections.map(s => s.title),
+      sectionStatuses: conversation.sections.map(s => `${s.title}: ${s.status}`)
     })
     
     // Use the new reducer-based regeneration service
@@ -288,8 +299,13 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       
       if (generatingSections.length > 0 && !isCurrentlyGenerating) {
         console.log('[ConversationProvider]', `Found ${generatingSections.length} generating sections that should be completed`)
-        generatingSections.forEach(section => {
-          console.log('[ConversationProvider] Marking section as completed', { sectionId: section.id, title: section.title })
+        generatingSections.forEach((section, index) => {
+          console.log(`[ConversationProvider] Marking section ${index + 1} as completed`, { 
+            sectionId: section.id, 
+            title: section.title,
+            currentStatus: section.status,
+            wordCount: section.content?.split(/\s+/).filter(word => word.length > 0).length || 0
+          })
           dispatch({
             type: 'UPDATE_SECTION',
             conversationId: conversation.id,
@@ -299,10 +315,22 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         })
         
         // Trigger auto-regeneration check now that sections are completed
-        console.log('[ConversationProvider] Sections marked as completed, triggering auto-regeneration check', { conversationId: conversation.id })
+        console.log('[ConversationProvider] Sections marked as completed, triggering auto-regeneration check', { 
+          conversationId: conversation.id,
+          sectionsMarkedAsCompleted: generatingSections.length
+        })
+        
+        // Use a longer delay and multiple checks to ensure state updates have propagated
         setTimeout(() => {
-          handleAutoRegenerationCheck(conversation.id)
-        }, 100) // Small delay to ensure state updates have propagated
+          console.log('[ConversationProvider] First auto-regeneration check attempt')
+          handleAutoRegenerationCheck(conversation.id, currentStateRef.current)
+        }, 200)
+        
+        // Backup check in case the first one runs too early
+        setTimeout(() => {
+          console.log('[ConversationProvider] Second auto-regeneration check attempt (backup)')
+          handleAutoRegenerationCheck(conversation.id, currentStateRef.current)
+        }, 1000)
       }
     })
   }, [state.conversations, jobQueue.isLeader, state.currentGeneration, dispatch, handleAutoRegenerationCheck])
