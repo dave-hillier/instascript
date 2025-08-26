@@ -369,13 +369,21 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       let conversation: Conversation | undefined
       
       if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
-        console.log('Using pending conversation', { id: request.conversationId })
         conversation = pendingConversationRef.current
+        console.log('Using pending conversation', { 
+          id: request.conversationId, 
+          messages: conversation.messages.length, 
+          sections: conversation.sections.length 
+        })
         pendingConversationRef.current = null // Clear the pending conversation
       } else if (request.conversationId) {
         conversation = state.conversations.find(c => c.id === request.conversationId)
         if (conversation) {
-          console.log('Found existing conversation', { id: request.conversationId })
+          console.log('Found existing conversation', { 
+            id: request.conversationId, 
+            messages: conversation.messages.length, 
+            sections: conversation.sections.length 
+          })
         }
       }
 

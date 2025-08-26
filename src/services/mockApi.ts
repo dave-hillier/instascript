@@ -167,7 +167,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
 
     // Log examples usage (in real implementation, examples would influence content generation)
     if (examples && examples.length > 0) {
-      // Using examples to inform generation
+      console.log(`Using ${examples.length} examples to inform generation:`, examples.map(e => e.metadata?.filename || 'unknown'))
     }
 
     // Simulate initial API processing delay
