@@ -1,5 +1,4 @@
 import { useRef, useEffect, useState } from 'react'
-import { Sun, Moon, Monitor } from 'lucide-react'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -53,21 +52,6 @@ export const SettingsModal = ({
     onClose()
   }
 
-  const getThemeIcon = (themeType: Theme) => {
-    switch (themeType) {
-      case 'light': return <Sun size={16} />
-      case 'dark': return <Moon size={16} />
-      case 'system': return <Monitor size={16} />
-    }
-  }
-
-  const getThemeLabel = (themeType: Theme) => {
-    switch (themeType) {
-      case 'light': return 'Light'
-      case 'dark': return 'Dark'
-      case 'system': return 'System'
-    }
-  }
 
   return (
     <dialog 
@@ -95,25 +79,19 @@ export const SettingsModal = ({
           <legend className="sr-only">Theme Settings</legend>
           
           <label htmlFor="theme-selector">Theme</label>
-          <div 
-            role="group" 
-            aria-labelledby="theme-selector" 
-            id="theme-options"
+          <select 
+            id="theme-selector"
+            value={theme}
+            onChange={(e) => onThemeChange(e.target.value as Theme)}
+            aria-describedby="theme-help"
           >
-            {(['light', 'dark', 'system'] as Theme[]).map((themeType) => (
-              <button
-                key={themeType}
-                type="button"
-                onClick={() => onThemeChange(themeType)}
-                aria-pressed={theme === themeType}
-                className={theme === themeType ? 'active' : ''}
-                aria-label={`Set theme to ${getThemeLabel(themeType)}`}
-              >
-                {getThemeIcon(themeType)}
-                <span>{getThemeLabel(themeType)}</span>
-              </button>
-            ))}
-          </div>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="system">System</option>
+          </select>
+          <p id="theme-help">
+            Choose your preferred color theme or use system settings
+          </p>
         </fieldset>
 
         <fieldset>
