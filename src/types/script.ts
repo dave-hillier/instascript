@@ -8,4 +8,5 @@ export interface Script {
   status?: 'draft' | 'complete' | 'in-progress'
   length?: string
   comments?: number
+  conversationId?: string
 }

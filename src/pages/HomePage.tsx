@@ -1,17 +1,64 @@
 import { ArrowUp } from 'lucide-react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { useAppContext } from '../hooks/useAppContext'
+import { useConversationContext } from '../hooks/useConversationContext'
 import { ScriptList } from '../components/ScriptList'
+import type { Script } from '../types/script'
 
 type Tab = 'scripts' | 'archive'
 
 export const HomePage = () => {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { activeScripts, archivedScripts } = useAppContext()
+  const [prompt, setPrompt] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
+  const navigate = useNavigate()
+  
+  const { activeScripts, archivedScripts, dispatch: appDispatch } = useAppContext()
+  const { createConversation, generateScript } = useConversationContext()
   
   const activeTab = (searchParams.get('state') === 'archived' ? 'archive' : 'scripts') as Tab
-
   const filteredScripts = activeTab === 'scripts' ? activeScripts : archivedScripts
+
+  const handleGenerate = async () => {
+    if (!prompt.trim() || isGenerating) return
+    
+    setIsGenerating(true)
+    
+    try {
+      // Create new script entry
+      const scriptId = `script_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      const script: Script = {
+        id: scriptId,
+        title: prompt.slice(0, 50) + (prompt.length > 50 ? '...' : ''),
+        content: '',
+        createdAt: new Date().toLocaleDateString(),
+        isArchived: false,
+        status: 'in-progress'
+      }
+
+      // Create conversation
+      const conversation = createConversation(scriptId, prompt)
+      script.conversationId = conversation.id
+
+      // Add script to app state
+      appDispatch({ type: 'ADD_SCRIPT', script })
+
+      // Start generation
+      await generateScript({
+        prompt,
+        conversationId: conversation.id
+      })
+
+      // Navigate to the script page to show generation progress
+      navigate(`/script/${scriptId}`)
+      
+    } catch (error) {
+      console.error('Failed to generate script:', error)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   return (
     <>
@@ -20,16 +67,24 @@ export const HomePage = () => {
       </section>
       
       <section>
-        <form>
+        <form onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}>
           <textarea 
             placeholder="Describe a script to generate"
             aria-label="Script description"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            disabled={isGenerating}
           />
           <div>
             <div>
             </div>
             <div>
-              <button type="submit">
+              <button 
+                type="button"
+                onClick={handleGenerate}
+                disabled={!prompt.trim() || isGenerating}
+                aria-label={isGenerating ? "Generating script..." : "Generate script"}
+              >
                 <ArrowUp size={24} />
               </button>
             </div>

@@ -47,7 +47,9 @@ function AppContent() {
   })
   
   const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('apiKey', '')
+  const { value: apiProvider, setValue: setApiProvider } = useLocalStorage<'openai' | 'mock'>('apiProvider', 'mock')
   const [tempApiKey, setTempApiKey] = useState('')
+  const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>('mock')
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -86,12 +88,14 @@ function AppContent() {
     if (tempApiKey.trim()) {
       setApiKey(tempApiKey.trim())
     }
+    setApiProvider(tempApiProvider)
     modalRef.current?.close()
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
   const handleOpenSettings = () => {
     setTempApiKey(apiKey || '')
+    setTempApiProvider(apiProvider || 'mock')
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
@@ -187,17 +191,40 @@ function AppContent() {
         <form onSubmit={(e) => { e.preventDefault(); handleSaveSettings(); }}>
           <fieldset>
             <legend className="sr-only">API Configuration</legend>
-            <label htmlFor="api-key">API Key</label>
-            <input 
-              type="password" 
-              id="api-key" 
-              placeholder="Enter your API key"
-              value={tempApiKey}
-              onChange={(e) => setTempApiKey(e.target.value)}
-              aria-describedby={apiKey ? "api-key-status" : undefined}
-            />
-            {apiKey && (
-              <p id="api-key-status" role="status">API key is currently saved</p>
+            
+            <label htmlFor="api-provider">API Provider</label>
+            <select 
+              id="api-provider"
+              value={tempApiProvider}
+              onChange={(e) => setTempApiProvider(e.target.value as 'openai' | 'mock')}
+              aria-describedby="api-provider-help"
+            >
+              <option value="mock">Mock API (for testing)</option>
+              <option value="openai">OpenAI</option>
+            </select>
+            <p id="api-provider-help">
+              Use Mock API for testing or OpenAI for real script generation
+            </p>
+
+            {tempApiProvider === 'openai' && (
+              <>
+                <label htmlFor="api-key">OpenAI API Key</label>
+                <input 
+                  type="password" 
+                  id="api-key" 
+                  placeholder="Enter your OpenAI API key"
+                  value={tempApiKey}
+                  onChange={(e) => setTempApiKey(e.target.value)}
+                  aria-describedby={apiKey ? "api-key-status" : "api-key-help"}
+                  required
+                />
+                <p id="api-key-help">
+                  Get your API key from the OpenAI dashboard
+                </p>
+                {apiKey && (
+                  <p id="api-key-status" role="status">API key is currently saved</p>
+                )}
+              </>
             )}
           </fieldset>
         </form>
