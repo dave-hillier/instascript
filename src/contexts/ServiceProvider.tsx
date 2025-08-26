@@ -24,7 +24,7 @@ export function ServiceProvider({ children }: ServiceProviderProps) {
   const servicesRef = useRef<ServiceContextType | undefined>(undefined)
   
   if (!servicesRef.current) {
-    console.log('[ServiceProvider] Creating service instances')
+    console.log('Creating service instances')
     servicesRef.current = {
       apiService: new APIService(apiProvider || 'mock', apiKey || undefined),
       exampleService: new ExampleService(apiProvider || 'mock', apiKey || undefined)
@@ -33,7 +33,7 @@ export function ServiceProvider({ children }: ServiceProviderProps) {
   
   // Update service configuration when settings change
   useEffect(() => {
-    console.log('[ServiceProvider] Updating service configuration', { provider: apiProvider, hasApiKey: !!apiKey })
+    console.log('Updating service configuration', { provider: apiProvider, hasApiKey: !!apiKey })
     servicesRef.current!.apiService.setProvider(apiProvider || 'mock', apiKey || undefined)
     servicesRef.current!.exampleService.setProvider(apiProvider || 'mock', apiKey || undefined)
   }, [apiProvider, apiKey])

@@ -20,7 +20,7 @@ export class JobCoordinator {
     // Start leader election process
     this.startLeaderElection()
     
-    console.log('[JobCoordinator] Initialized')
+    console.log('Initialized')
   }
 
   private startLeaderElection(): void {
@@ -46,7 +46,7 @@ export class JobCoordinator {
     if (this.isLeader) return
     
     this.isLeader = true
-    console.log('[JobCoordinator] Became leader')
+    console.log('Became leader')
     
     // Set leader info in localStorage
     this.setLeaderInfo()
@@ -67,7 +67,7 @@ export class JobCoordinator {
     if (!this.isLeader) return
     
     this.isLeader = false
-    console.log('[JobCoordinator] Became follower')
+    console.log('Became follower')
     
     // Stop heartbeat
     if (this.heartbeatInterval) {
@@ -114,7 +114,7 @@ export class JobCoordinator {
 
   private handleMessage(event: MessageEvent<JobQueueMessage>): void {
     const message = event.data
-    console.log('[JobCoordinator] Received message', { type: message.type, isLeader: this.isLeader })
+    console.log('Received message', { type: message.type, isLeader: this.isLeader })
     
     switch (message.type) {
       case 'queue-sync':
@@ -150,7 +150,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(updatedJobs)
     
-    console.log('[JobCoordinator] Job added', { jobId: job.id, type: job.type })
+    console.log('Job added', { jobId: job.id, type: job.type })
     this.broadcast({ type: 'job-added', jobId: job.id, job })
   }
 
@@ -166,7 +166,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(updatedJobs)
     
-    console.log('[JobCoordinator] Job updated', { jobId, updates })
+    console.log('Job updated', { jobId, updates })
     const updatedJob = updatedJobs.find(j => j.id === jobId)
     this.broadcast({ 
       type: 'job-updated', 
@@ -183,7 +183,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(updatedJobs)
     
-    console.log('[JobCoordinator] Job removed', { jobId })
+    console.log('Job removed', { jobId })
     this.broadcast({ type: 'job-updated', jobId })
   }
 
@@ -200,7 +200,7 @@ export class JobCoordinator {
     try {
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify(jobs))
     } catch (error) {
-      console.error('[JobCoordinator] Failed to save jobs', error)
+      console.error('Failed to save jobs', error)
     }
   }
 
@@ -214,7 +214,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(activeJobs)
     
-    console.log('[JobCoordinator] Cleared completed jobs')
+    console.log('Cleared completed jobs')
     this.broadcast({ type: 'queue-sync', jobs: activeJobs })
   }
 
@@ -239,6 +239,6 @@ export class JobCoordinator {
       clearInterval(this.leaderCheckInterval)
     }
     
-    console.log('[JobCoordinator] Destroyed')
+    console.log('Destroyed')
   }
 }

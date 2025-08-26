@@ -63,7 +63,7 @@ export async function performVectorSearch(
     
     return results;
   } catch (error) {
-    console.error('[VectorStore] Vector search error', error);
+    console.error('Vector search error', error);
     return [];
   }
 }
@@ -74,7 +74,7 @@ export async function findVectorStoreByName(openai: OpenAI, storeName: string): 
     const store = stores.data.find(s => s.name === storeName);
     return store?.id || null;
   } catch (error) {
-    console.error('[VectorStore] Error finding vector store', error);
+    console.error('Error finding vector store', error);
     return null;
   }
 }
@@ -101,9 +101,9 @@ export class VectorStoreService {
 
     this.storeId = await findVectorStoreByName(this.client, this.storeName)
     if (!this.storeId) {
-      console.warn('[VectorStore]', `Vector store '${this.storeName}' not found`)
+      console.warn(`Vector store '${this.storeName}' not found`)
     } else {
-      console.log('[VectorStore]', `Connected to vector store: ${this.storeName}`, { storeId: this.storeId })
+      console.log(`Connected to vector store: ${this.storeName}`, { storeId: this.storeId })
     }
     
     return this.storeId
@@ -119,11 +119,11 @@ export class VectorStoreService {
     try {
       const storeId = await this.initializeStore()
       if (!storeId) {
-        console.warn('[VectorStore] No vector store available, returning empty results')
+        console.warn('No vector store available, returning empty results')
         return []
       }
 
-      console.log('[VectorStore] Performing vector search', { 
+      console.log('Performing vector search', { 
         query: query.substring(0, 50) + (query.length > 50 ? '...' : ''), 
         limit 
       })
@@ -140,10 +140,10 @@ export class VectorStoreService {
         }
       }))
 
-      console.log('[VectorStore]', `Found ${examples.length} example scripts from vector store`)
+      console.log(`Found ${examples.length} example scripts from vector store`)
       return examples
     } catch (error) {
-      console.error('[VectorStore] Vector store search failed', error)
+      console.error('Vector store search failed', error)
       return []
     }
   }

@@ -45,17 +45,17 @@ export class ScriptRegenerationServiceV2 {
   }
 
   private handleScriptGenerationCompleted(conversationId: string, scriptId: string): void {
-    console.log('[ScriptRegenerationServiceV2] Script generation completed', {
+    console.log('Script generation completed', {
       conversationId,
       scriptId
     })
 
     // Auto-regeneration will be triggered by ConversationProvider after sections are marked as completed
-    console.log('[ScriptRegenerationServiceV2] Auto-regeneration will be triggered after sections are completed')
+    console.log('Auto-regeneration will be triggered after sections are completed')
   }
 
   private handleSectionRegenerationCompleted(conversationId: string, scriptId: string, sectionId: string): void {
-    console.log('[ScriptRegenerationServiceV2] Section regeneration completed, checking for additional auto-regeneration', {
+    console.log('Section regeneration completed, checking for additional auto-regeneration', {
       conversationId,
       scriptId,
       sectionId
@@ -124,7 +124,7 @@ export class ScriptRegenerationServiceV2 {
     const firstSection = sortedSections[0]
     const sectionKey = createSectionKey(conversation.scriptId, firstSection.sectionId)
 
-    console.log('[ScriptRegenerationServiceV2] Requesting next auto-regeneration (sequential)', {
+    console.log('Requesting next auto-regeneration (sequential)', {
       totalSectionsNeedingRegen: sortedSections.length,
       currentSection: firstSection.sectionTitle,
       wordCount: firstSection.wordCount,
@@ -141,7 +141,7 @@ export class ScriptRegenerationServiceV2 {
       })
     }
 
-    console.log('[ScriptRegenerationServiceV2] Queueing next section for regeneration', {
+    console.log('Queueing next section for regeneration', {
       sectionId: firstSection.sectionId,
       sectionTitle: firstSection.sectionTitle,
       wordCount: firstSection.wordCount,
@@ -185,7 +185,7 @@ export class ScriptRegenerationServiceV2 {
       })
     }
 
-    console.log('[ScriptRegenerationServiceV2] Requesting manual regeneration', {
+    console.log('Requesting manual regeneration', {
       sectionId,
       sectionTitle
     })
@@ -206,7 +206,7 @@ export class ScriptRegenerationServiceV2 {
     conversation: Conversation,
     existingJobs: Job[]
   ): void {
-    console.log('[ScriptRegenerationServiceV2] Handling auto-regeneration check request', { 
+    console.log('Handling auto-regeneration check request', { 
       conversationId: conversation.id 
     })
     
@@ -214,7 +214,7 @@ export class ScriptRegenerationServiceV2 {
     const allSectionAnalyses = analyzeSections(state, conversation, existingJobs)
     const sectionsToRegenerate = allSectionAnalyses.filter(analysis => analysis.needsRegeneration)
     
-    console.log('[ScriptRegenerationServiceV2] Section analysis results:', {
+    console.log('Section analysis results:', {
       totalSections: conversation.sections.length,
       minimumWordCount: state.rules.minimumWordCount,
       maxAttempts: state.rules.maxAutoRegenerationAttempts
@@ -223,7 +223,7 @@ export class ScriptRegenerationServiceV2 {
     // Log each section individually for better visibility
     allSectionAnalyses.forEach((analysis, index) => {
       const section = conversation.sections.find(s => s.id === analysis.sectionId)
-      console.log(`[ScriptRegenerationServiceV2] Section ${index + 1}:`, {
+      console.log(`Section ${index + 1}:`, {
         title: analysis.sectionTitle,
         sectionId: analysis.sectionId,
         status: section?.status,
@@ -237,7 +237,7 @@ export class ScriptRegenerationServiceV2 {
     })
     
     if (sectionsToRegenerate.length > 0) {
-      console.log('[ScriptRegenerationServiceV2] Auto-regeneration analysis complete', {
+      console.log('Auto-regeneration analysis complete', {
         totalSections: conversation.sections.length,
         needingRegeneration: sectionsToRegenerate.length,
         sections: sectionsToRegenerate.map(s => ({ 
@@ -249,7 +249,7 @@ export class ScriptRegenerationServiceV2 {
       
       this.requestRegenerations(conversation, sectionsToRegenerate)
     } else {
-      console.log('[ScriptRegenerationServiceV2] No sections need auto-regeneration', {
+      console.log('No sections need auto-regeneration', {
         totalSections: conversation.sections.length
       })
     }
@@ -265,7 +265,7 @@ export class ScriptRegenerationServiceV2 {
         rules: newRules
       })
     }
-    console.log('[ScriptRegenerationServiceV2] Rules updated', newRules)
+    console.log('Rules updated', newRules)
   }
 
   /**

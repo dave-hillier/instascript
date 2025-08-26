@@ -81,7 +81,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     // Handle leadership changes
     coordinator.onLeadershipChange((leaderStatus: boolean) => {
       setIsLeader(leaderStatus)
-      console.log('[JobQueueProvider]', `Leadership changed: ${leaderStatus ? 'leader' : 'follower'}`)
+      console.log(`Leadership changed: ${leaderStatus ? 'leader' : 'follower'}`)
     })
     
     // Load initial jobs
@@ -93,7 +93,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
       job.status === 'queued' || job.status === 'processing'
     )
     if (pendingJobs.length > 0) {
-      console.log('[JobQueueProvider]', `Found ${pendingJobs.length} pending job(s) on app load`)
+      console.log(`Found ${pendingJobs.length} pending job(s) on app load`)
     }
     
     return () => {
@@ -108,7 +108,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     const subscriptions = [
       // Listen for job updates to notify other parts of the system
       messageBus.subscribe('JOB_STATUS_CHANGED', (payload) => {
-        console.log('[JobQueueProvider] Job status changed via message bus', payload)
+        console.log('Job status changed via message bus', payload)
       })
     ]
     
@@ -123,7 +123,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
   const addJob = useCallback((jobData: Omit<Job, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => {
     const coordinator = coordinatorRef.current
     if (!coordinator) {
-      console.error('[JobQueueProvider] No coordinator available')
+      console.error('No coordinator available')
       return
     }
     
@@ -136,7 +136,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     } as Job
     
     coordinator.addJob(job)
-    console.log('[JobQueueProvider]', `Added job: ${job.type} for script ${job.scriptId}`)
+    console.log(`Added job: ${job.type} for script ${job.scriptId}`)
     
     // Notify via message bus
     messageBus.publish('JOB_STATUS_CHANGED', {

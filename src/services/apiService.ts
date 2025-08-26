@@ -16,9 +16,9 @@ export class APIService {
     
     if (provider === 'openai' && apiKey) {
       this.openaiService = new OpenAIService(apiKey)
-      console.log('[APIService] Initialized with OpenAI provider')
+      console.log('Initialized with OpenAI provider')
     } else {
-      console.log('[APIService] Initialized with Mock provider')
+      console.log('Initialized with Mock provider')
     }
   }
 
@@ -28,9 +28,9 @@ export class APIService {
     
     if (provider === 'openai' && apiKey) {
       this.openaiService = new OpenAIService(apiKey)
-      console.log('[APIService]', `Provider switched from ${previousProvider} to OpenAI`)
+      console.log(`Provider switched from ${previousProvider} to OpenAI`)
     } else {
-      console.log('[APIService]', `Provider switched from ${previousProvider} to Mock`)
+      console.log(`Provider switched from ${previousProvider} to Mock`)
     }
   }
 
@@ -40,13 +40,13 @@ export class APIService {
     examples?: ExampleScript[]
   ): AsyncGenerator<string, void, unknown> {
     const usingProvider = this.provider === 'openai' && this.openaiService ? 'OpenAI' : 'Mock'
-    console.log('[APIService]', `Generating script using ${usingProvider} provider`)
+    console.log(`Generating script using ${usingProvider} provider`)
     
     if (this.provider === 'openai' && this.openaiService) {
       yield* this.openaiService.generateScript(request, conversation, examples)
     } else {
       if (this.provider === 'openai' && !this.openaiService) {
-        console.warn('[APIService] OpenAI provider selected but not configured, falling back to Mock')
+        console.warn('OpenAI provider selected but not configured, falling back to Mock')
       }
       yield* this.mockService.generateScript(request, conversation, examples)
     }
@@ -54,7 +54,7 @@ export class APIService {
 
   isConfigured(): boolean {
     const configured = this.provider === 'mock' || (this.provider === 'openai' && this.openaiService !== null)
-    console.log('[APIService]', `Configuration check: ${configured ? 'configured' : 'not configured'}`)
+    console.log(`Configuration check: ${configured ? 'configured' : 'not configured'}`)
     return configured
   }
 }

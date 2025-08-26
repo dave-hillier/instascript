@@ -89,7 +89,7 @@ export class OpenAIService {
         }
       }
     } catch (error) {
-      console.error('OpenAI generation error:', error)
+      console.error('Generation error:', error)
       throw error
     }
   }
