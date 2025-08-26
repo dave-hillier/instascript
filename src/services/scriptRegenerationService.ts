@@ -12,7 +12,7 @@ import {
  * Pure service class that coordinates regeneration logic using reducer state
  * No internal mutable state - all state lives in RegenerationProvider
  */
-export class ScriptRegenerationServiceV2 {
+export class ScriptRegenerationService {
   private dispatch: ((action: RegenerationAction) => void) | null = null
   private autoRegenerationHandler: ((conversationId: string) => void) | null = null
 
@@ -289,4 +289,4 @@ export class ScriptRegenerationServiceV2 {
 }
 
 // Single instance for the entire app
-export const scriptRegenerationServiceV2 = new ScriptRegenerationServiceV2()
+export const scriptRegenerationService = new ScriptRegenerationService()

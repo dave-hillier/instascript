@@ -214,12 +214,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     // Stream chunks with realistic delays
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]
-      const progress = ((i + 1) / chunks.length * 100).toFixed(1)
-      
-      // Log progress every 25%
-      if (i === 0 || (i + 1) % Math.ceil(chunks.length / 4) === 0) {
-        // Progress tracking
-      }
+      // Progress tracking removed - handled at API service layer
       
       yield chunk
       

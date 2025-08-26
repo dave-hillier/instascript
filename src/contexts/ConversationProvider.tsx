@@ -8,7 +8,7 @@ import { useServices } from './ServiceProvider'
 import type { ExampleScript } from '../services/vectorStore'
 import { useJobQueue } from '../hooks/useJobQueue'
 import { messageBus } from '../services/messageBus'
-import { scriptRegenerationServiceV2 } from '../services/scriptRegenerationServiceV2'
+import { scriptRegenerationService } from '../services/scriptRegenerationService'
 import { useRegeneration } from '../hooks/useRegeneration'
 import type { GenerateScriptJob, RegenerateSectionJob } from '../types/job'
 import type { MessageSubscription } from '../services/messageBus'
@@ -229,7 +229,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     })
     
     // Use the new reducer-based regeneration service
-    scriptRegenerationServiceV2.handleAutoRegenerationCheck(
+    scriptRegenerationService.handleAutoRegenerationCheck(
       regenerationState, 
       conversation, 
       jobQueue.state.jobs
@@ -238,8 +238,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   
   // Set up the service with the dispatch function and auto-regeneration handler
   useEffect(() => {
-    scriptRegenerationServiceV2.setDispatch(regenerationDispatch)
-    scriptRegenerationServiceV2.setAutoRegenerationHandler(handleAutoRegenerationCheck)
+    scriptRegenerationService.setDispatch(regenerationDispatch)
+    scriptRegenerationService.setAutoRegenerationHandler(handleAutoRegenerationCheck)
   }, [regenerationDispatch, handleAutoRegenerationCheck])
 
   // Setup message bus subscriptions

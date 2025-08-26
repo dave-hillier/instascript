@@ -4,7 +4,7 @@ import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { useJobQueue } from '../hooks/useJobQueue'
-import { scriptRegenerationServiceV2 } from '../services/scriptRegenerationServiceV2'
+import { scriptRegenerationService } from '../services/scriptRegenerationService'
 import type { Script } from '../types/script'
 
 export const ScriptPage = () => {
@@ -67,7 +67,7 @@ export const ScriptPage = () => {
     if (!script || !conversation) return
     
     // Use the regeneration service to handle the request
-    scriptRegenerationServiceV2.requestManualRegeneration(
+    scriptRegenerationService.requestManualRegeneration(
       script.id,
       sectionId,
       sectionTitle,
