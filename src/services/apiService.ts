@@ -16,21 +16,20 @@ export class APIService {
     
     if (provider === 'openai' && apiKey) {
       this.openaiService = new OpenAIService(apiKey)
-      console.log('Initialized with OpenAI provider')
+      // Initialized with OpenAI provider
     } else {
-      console.log('Initialized with Mock provider')
+      // Initialized with Mock provider
     }
   }
 
   setProvider(provider: APIProvider, apiKey?: string): void {
-    const previousProvider = this.provider
     this.provider = provider
     
     if (provider === 'openai' && apiKey) {
       this.openaiService = new OpenAIService(apiKey)
-      console.log(`Provider switched from ${previousProvider} to OpenAI`)
+      console.debug('Provider switched to OpenAI')
     } else {
-      console.log(`Provider switched from ${previousProvider} to Mock`)
+      console.debug('Provider switched to Mock')
     }
   }
 
@@ -39,8 +38,7 @@ export class APIService {
     conversation?: Conversation,
     examples?: ExampleScript[]
   ): AsyncGenerator<string, void, unknown> {
-    const usingProvider = this.provider === 'openai' && this.openaiService ? 'OpenAI' : 'Mock'
-    console.log(`Generating script using ${usingProvider} provider`)
+    // Generating script
     
     if (this.provider === 'openai' && this.openaiService) {
       yield* this.openaiService.generateScript(request, conversation, examples)
@@ -54,7 +52,7 @@ export class APIService {
 
   isConfigured(): boolean {
     const configured = this.provider === 'mock' || (this.provider === 'openai' && this.openaiService !== null)
-    console.log(`Configuration check: ${configured ? 'configured' : 'not configured'}`)
+    // Configuration checked
     return configured
   }
 }

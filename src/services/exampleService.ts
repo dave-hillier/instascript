@@ -23,42 +23,37 @@ export class ExampleService {
     
     if (provider === 'openai' && apiKey) {
       this.vectorStoreService = new VectorStoreService(apiKey)
-      console.log('Initialized with OpenAI provider')
+      // Initialized with OpenAI provider
     } else {
-      console.log('Initialized with Mock provider')
+      // Initialized with Mock provider
     }
   }
 
   setProvider(provider: APIProvider, apiKey?: string): void {
-    const previousProvider = this.provider
     this.provider = provider
     
     if (provider === 'openai' && apiKey) {
       this.vectorStoreService = new VectorStoreService(apiKey)
-      console.log(`Provider switched from ${previousProvider} to OpenAI`)
+      console.debug('Provider switched to OpenAI')
     } else {
-      console.log(`Provider switched from ${previousProvider} to Mock`)
+      console.debug('Provider switched to Mock')
     }
   }
 
   async searchExamples(query: string, limit: number = 3): Promise<ExampleScript[]> {
-    const usingProvider = this.provider === 'openai' && this.vectorStoreService ? 'OpenAI' : 'Mock'
-    console.log(`Searching examples using ${usingProvider} provider`, {
-      query: query.substring(0, 50) + (query.length > 50 ? '...' : ''),
-      limit
-    })
+    // Searching examples
     
     try {
       if (this.provider === 'openai' && this.vectorStoreService) {
         const examples = await this.vectorStoreService.searchExamples(query, limit)
-        console.log(`Retrieved ${examples.length} examples from OpenAI`)
+        console.debug(`Retrieved ${examples.length} examples`)
         return examples
       } else {
         if (this.provider === 'openai' && !this.vectorStoreService) {
           console.warn('OpenAI provider selected but not configured, falling back to Mock')
         }
         const examples = await this.mockVectorStoreService.searchExamples(query, limit)
-        console.log(`Retrieved ${examples.length} examples from Mock`)
+        console.debug(`Retrieved ${examples.length} examples`)
         return examples
       }
     } catch (error) {
@@ -69,7 +64,7 @@ export class ExampleService {
 
   isConfigured(): boolean {
     const configured = this.provider === 'mock' || (this.provider === 'openai' && this.vectorStoreService !== null)
-    console.log(`Configuration check: ${configured ? 'configured' : 'not configured'}`)
+    // Configuration checked
     return configured
   }
 

@@ -20,7 +20,7 @@ export class JobCoordinator {
     // Start leader election process
     this.startLeaderElection()
     
-    console.log('Initialized')
+    // Job coordinator initialized
   }
 
   private startLeaderElection(): void {
@@ -46,7 +46,7 @@ export class JobCoordinator {
     if (this.isLeader) return
     
     this.isLeader = true
-    console.log('Became leader')
+    console.debug('Became leader')
     
     // Set leader info in localStorage
     this.setLeaderInfo()
@@ -67,7 +67,7 @@ export class JobCoordinator {
     if (!this.isLeader) return
     
     this.isLeader = false
-    console.log('Became follower')
+    console.debug('Became follower')
     
     // Stop heartbeat
     if (this.heartbeatInterval) {
@@ -114,7 +114,7 @@ export class JobCoordinator {
 
   private handleMessage(event: MessageEvent<JobQueueMessage>): void {
     const message = event.data
-    console.log('Received message', { type: message.type, isLeader: this.isLeader })
+    // Message received
     
     switch (message.type) {
       case 'queue-sync':
@@ -150,7 +150,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(updatedJobs)
     
-    console.log('Job added', { jobId: job.id, type: job.type })
+    console.debug('Job added', job.id)
     this.broadcast({ type: 'job-added', jobId: job.id, job })
   }
 
@@ -166,7 +166,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(updatedJobs)
     
-    console.log('Job updated', { jobId, updates })
+    console.debug('Job updated', jobId)
     const updatedJob = updatedJobs.find(j => j.id === jobId)
     this.broadcast({ 
       type: 'job-updated', 
@@ -183,7 +183,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(updatedJobs)
     
-    console.log('Job removed', { jobId })
+    console.debug('Job removed', jobId)
     this.broadcast({ type: 'job-updated', jobId })
   }
 
@@ -214,7 +214,7 @@ export class JobCoordinator {
     // Immediately sync to local state
     this.onJobUpdate?.(activeJobs)
     
-    console.log('Cleared completed jobs')
+    console.debug('Cleared completed jobs')
     this.broadcast({ type: 'queue-sync', jobs: activeJobs })
   }
 
@@ -239,6 +239,6 @@ export class JobCoordinator {
       clearInterval(this.leaderCheckInterval)
     }
     
-    console.log('Destroyed')
+    // Job coordinator destroyed
   }
 }

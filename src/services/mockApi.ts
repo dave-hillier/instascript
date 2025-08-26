@@ -5,7 +5,7 @@ export class MockAPIService {
   private async delay(min: number, max?: number, reason?: string): Promise<void> {
     const ms = max ? Math.random() * (max - min) + min : min
     if (reason) {
-      console.log(`${reason} (${ms.toFixed(0)}ms)`)
+      // Simulated delay
     }
     await new Promise(resolve => setTimeout(resolve, ms))
   }
@@ -163,15 +163,11 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     examples?: ExampleScript[]
   ): AsyncGenerator<string, void, unknown> {
     console.group('MockAPI Generation')
-    console.log('Starting mock generation', {
-      prompt: request.prompt.substring(0, 50) + '...',
-      hasExamples: examples && examples.length > 0,
-      regenerate: request.regenerate
-    })
+    // Starting generation
 
     // Log examples usage (in real implementation, examples would influence content generation)
     if (examples && examples.length > 0) {
-      console.log(`Using ${examples.length} example(s) to inform generation`)
+      // Using examples to inform generation
     }
 
     // Simulate initial API processing delay
@@ -183,10 +179,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     if (request.regenerate && request.sectionId && conversation) {
       const section = conversation.sections.find(s => s.id === request.sectionId)
       if (section) {
-        console.log('Regenerating section', { 
-          sectionId: request.sectionId, 
-          originalTitle: section.title 
-        })
+        console.debug('Regenerating section', request.sectionId)
         
         // Generate expanded content and ensure it meets word count requirements
         content = this.generateExpandedSectionContent(section.title)

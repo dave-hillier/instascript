@@ -571,7 +571,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         // Mark sections as completed
         if (request.regenerate && request.sectionId) {
           // For regeneration, only mark the specific section as completed
-          console.log('🎯 SECTION-UPDATE: Marking regenerated section as completed:', request.sectionId)
+          console.debug('Section marked completed', request.sectionId)
           dispatch({
             type: 'UPDATE_SECTION',
             conversationId: conversation.id,
@@ -584,8 +584,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           // Parse sections from the accumulated content to ensure we get all sections created during streaming
           const sectionMatches = accumulatedContent.match(/##\s+(.+?)(?=\n##|\n$|$)/gs) || []
           
-          console.log('🎯 SECTION-UPDATE: Parsing sections from accumulated content')
-          console.log('🎯 SECTION-UPDATE: Found', sectionMatches.length, 'section matches in content')
+          // Parsing sections from content
+          // Found section matches
           
           // Create a list of section titles that should be completed
           const sectionTitlesToComplete = sectionMatches.map(match => {
@@ -593,18 +593,18 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
             return titleMatch ? titleMatch[1].trim() : ''
           }).filter(title => title !== '')
           
-          console.log('🎯 SECTION-UPDATE: Section titles to complete:', sectionTitlesToComplete)
+          // Processing section titles
           
           // Get the latest conversation state to find section IDs
           const latestConversation = state.conversations.find(c => c.id === conversation.id) || conversation
           
-          console.log('🎯 SECTION-UPDATE: Latest conversation has', latestConversation.sections.length, 'sections')
+          // Checking conversation sections
           
           // Mark sections as completed by matching titles
           sectionTitlesToComplete.forEach(sectionTitle => {
             const section = latestConversation.sections.find(s => s.title === sectionTitle)
             if (section) {
-              console.log('🎯 SECTION-UPDATE: Marking section as completed:', section.id, section.title)
+              console.debug('Section completed', section.id)
               dispatch({
                 type: 'UPDATE_SECTION',
                 conversationId: conversation.id,
@@ -612,7 +612,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
                 updates: { status: 'completed' }
               })
             } else {
-              console.log('🎯 SECTION-UPDATE: Could not find section for title:', sectionTitle)
+              // Could not find section for title
             }
           })
 

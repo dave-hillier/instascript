@@ -103,7 +103,7 @@ export class VectorStoreService {
     if (!this.storeId) {
       console.warn(`Vector store '${this.storeName}' not found`)
     } else {
-      console.log(`Connected to vector store: ${this.storeName}`, { storeId: this.storeId })
+      console.debug('Vector store connected', this.storeName)
     }
     
     return this.storeId
@@ -123,10 +123,7 @@ export class VectorStoreService {
         return []
       }
 
-      console.log('Performing vector search', { 
-        query: query.substring(0, 50) + (query.length > 50 ? '...' : ''), 
-        limit 
-      })
+      // Performing vector search
 
       const searchResults = await performVectorSearch(this.client, storeId, query, limit, 'markdown')
       
@@ -140,7 +137,7 @@ export class VectorStoreService {
         }
       }))
 
-      console.log(`Found ${examples.length} example scripts from vector store`)
+      console.debug(`Found ${examples.length} examples`)
       return examples
     } catch (error) {
       console.error('Vector store search failed', error)

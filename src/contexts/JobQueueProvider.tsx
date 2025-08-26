@@ -81,7 +81,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     // Handle leadership changes
     coordinator.onLeadershipChange((leaderStatus: boolean) => {
       setIsLeader(leaderStatus)
-      console.log(`Leadership changed: ${leaderStatus ? 'leader' : 'follower'}`)
+      console.debug(`Leadership: ${leaderStatus ? 'leader' : 'follower'}`)
     })
     
     // Load initial jobs
@@ -93,7 +93,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
       job.status === 'queued' || job.status === 'processing'
     )
     if (pendingJobs.length > 0) {
-      console.log(`Found ${pendingJobs.length} pending job(s) on app load`)
+      // Found pending jobs on load
     }
     
     return () => {
@@ -107,8 +107,8 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
   useEffect(() => {
     const subscriptions = [
       // Listen for job updates to notify other parts of the system
-      messageBus.subscribe('JOB_STATUS_CHANGED', (payload) => {
-        console.log('Job status changed via message bus', payload)
+      messageBus.subscribe('JOB_STATUS_CHANGED', () => {
+        // Job status changed via message bus
       })
     ]
     
@@ -123,7 +123,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
   const addJob = useCallback((jobData: Omit<Job, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => {
     const coordinator = coordinatorRef.current
     if (!coordinator) {
-      console.error('No coordinator available')
+      console.error('Job coordinator not available')
       return
     }
     
@@ -136,7 +136,7 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     } as Job
     
     coordinator.addJob(job)
-    console.log(`Added job: ${job.type} for script ${job.scriptId}`)
+    console.debug('Job added', job.id)
     
     // Notify via message bus
     messageBus.publish('JOB_STATUS_CHANGED', {
