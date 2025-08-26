@@ -70,22 +70,16 @@ export class OpenAIService {
     }
 
     try {
-      // Use the Responses API for structured streaming responses
-      const stream = await this.client.chat.completions.create({
+      // Use the Responses API for streaming responses
+      const stream = await this.client.responses.create({
         model: 'gpt-5',
-        messages,
+        input: messages,
         stream: true,
-        response_format: {
-          type: 'text'
-        },
-        temperature: 0.7,
-        max_tokens: 2000,
       })
 
       for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content
-        if (content) {
-          yield content
+        if (chunk.type === 'response.output_text.delta') {
+          yield chunk.delta
         }
       }
     } catch (error) {
