@@ -19,6 +19,7 @@ export interface ConversationSection {
 export interface Conversation {
   id: string
   scriptId: string
+  title?: string
   messages: Message[]
   sections: ConversationSection[]
   status: 'idle' | 'generating' | 'completed' | 'error'

@@ -16,6 +16,7 @@ type ConversationAction =
   | { type: 'ADD_MESSAGE'; conversationId: string; message: Message }
   | { type: 'UPDATE_MESSAGE'; conversationId: string; messageId: string; content: string }
   | { type: 'SET_CONVERSATION_STATUS'; conversationId: string; status: Conversation['status'] }
+  | { type: 'SET_CONVERSATION_TITLE'; conversationId: string; title: string }
   | { type: 'CREATE_SECTION'; conversationId: string; section: ConversationSection }
   | { type: 'UPDATE_SECTION'; conversationId: string; sectionId: string; updates: Partial<ConversationSection> }
   | { type: 'SET_GENERATION_PROGRESS'; progress: GenerationProgress }
@@ -75,6 +76,16 @@ const conversationReducer = (state: ConversationState, action: ConversationActio
         conversations: state.conversations.map(conv =>
           conv.id === action.conversationId
             ? { ...conv, status: action.status, updatedAt: Date.now() }
+            : conv
+        )
+      }
+    
+    case 'SET_CONVERSATION_TITLE':
+      return {
+        ...state,
+        conversations: state.conversations.map(conv =>
+          conv.id === action.conversationId
+            ? { ...conv, title: action.title, updatedAt: Date.now() }
             : conv
         )
       }
@@ -171,10 +182,10 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   const createConversation = useCallback((scriptId: string, initialPrompt: string): Conversation => {
     const conversation: Conversation = {
-      id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `conv_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
       scriptId,
       messages: [{
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
         role: 'user',
         content: initialPrompt,
         timestamp: Date.now()
@@ -281,7 +292,22 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         accumulatedContent += chunk
         chunkCount++
 
+        // Extract title from accumulated content if we haven't set it yet
+        if (conversation && !conversation.title) {
+          const titleMatch = accumulatedContent.match(/^#\s+(.+?)(?=\n|$)/m)
+          if (titleMatch) {
+            const title = titleMatch[1].trim()
+            dispatch({
+              type: 'SET_CONVERSATION_TITLE',
+              conversationId: conversation.id,
+              title
+            })
+            Logger.log('Generation', `Script title detected: "${title}"`)
+          }
+        }
+
         // Check if we've completed a section (next section started)
+        // Skip the main title (single #) and only process sections (##)
         const sectionMatches = accumulatedContent.match(/##\s+(.+?)(?=\n##|\n$|$)/gs)
         if (sectionMatches && sectionMatches.length > 0) {
           const lastSection = sectionMatches[sectionMatches.length - 1]
@@ -295,7 +321,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
               Logger.log('Generation', `New section detected: "${sectionTitle}"`)
               // Create new section
               const newSection: ConversationSection = {
-                id: `section_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
                 title: sectionTitle,
                 content: lastSection,
                 status: 'generating',
@@ -349,7 +375,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       if (conversation) {
         // Add assistant message with generated content
         const assistantMessage: Message = {
-          id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
           role: 'assistant',
           content: accumulatedContent,
           timestamp: Date.now()
