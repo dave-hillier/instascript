@@ -4,8 +4,7 @@ import type { Conversation, Message, ConversationSection, GenerationRequest, Gen
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
-import { APIService } from '../services/apiService'
-import { ExampleService } from '../services/exampleService'
+import { serviceRegistry } from '../services/serviceRegistry'
 import type { APIProvider } from '../services/apiService'
 import type { ExampleScript } from '../services/vectorStore'
 import { useJobQueue } from '../hooks/useJobQueue'
@@ -154,8 +153,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const { value: storedConversations, setValue: setStoredConversations, isLoaded } = useLocalStorage<Conversation[]>('conversations', [])
   const { value: apiKey } = useLocalStorage<string>('apiKey', '')
   const { value: apiProvider } = useLocalStorage<APIProvider>('apiProvider', 'mock')
-  const apiServiceRef = useRef<APIService>(new APIService('mock'))
-  const exampleServiceRef = useRef<ExampleService>(new ExampleService('mock'))
+  const apiService = serviceRegistry.getAPIService()
+  const exampleService = serviceRegistry.getExampleService()
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
   const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
@@ -262,10 +261,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     }
   }, [handleRegenerateSectionRequest, handleAutoRegenerationCheck])
 
-  // Update API and example services when settings change
+  // Update service provider configuration when settings change
   useEffect(() => {
-    apiServiceRef.current.setProvider(apiProvider || 'mock', apiKey || undefined)
-    exampleServiceRef.current.setProvider(apiProvider || 'mock', apiKey || undefined)
+    serviceRegistry.updateProvider(apiProvider || 'mock', apiKey || undefined)
   }, [apiProvider, apiKey])
 
   // Load conversations from localStorage
@@ -405,10 +403,10 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
       // Retrieve relevant examples for the initial prompt (not for regeneration)
       let examples: ExampleScript[] = []
-      if (!request.regenerate && exampleServiceRef.current.isConfigured()) {
+      if (!request.regenerate && exampleService.isConfigured()) {
         console.time('Example Retrieval')
         try {
-          examples = await exampleServiceRef.current.searchExamples(request.prompt, 3)
+          examples = await exampleService.searchExamples(request.prompt, 3)
           console.timeEnd('Example Retrieval')
           console.log('[Generation] Retrieved examples', {
             count: examples.length,
@@ -455,7 +453,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       console.time('Streaming Duration')
 
       // Generate content using the API service
-      for await (const chunk of apiServiceRef.current.generateScript(request, conversation, examples)) {
+      for await (const chunk of apiService.generateScript(request, conversation, examples)) {
         if (firstChunkTime === null) {
           firstChunkTime = Date.now()
           const timeToFirstChunk = firstChunkTime - startTime

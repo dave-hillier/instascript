@@ -4,7 +4,6 @@ import type { RegenerationState, RegenerationAction, SectionAnalysis } from '../
 import { messageBus } from './messageBus'
 import { 
   analyzeSections, 
-  getSectionsNeedingRegeneration,
   createSectionKey,
   getRegenerationStats 
 } from '../selectors/regenerationSelectors'
