@@ -1,4 +1,4 @@
-import type { Job, JobQueueMessage, JobCoordinatorOptions } from '../types/job'
+import type { Job, JobQueueMessage } from '../types/job'
 import { Logger } from '../utils/logger'
 
 export class JobCoordinator {
@@ -14,9 +14,7 @@ export class JobCoordinator {
   private readonly HEARTBEAT_INTERVAL = 2000
   private readonly LEADER_TIMEOUT = 5000
 
-  constructor(
-    _options: JobCoordinatorOptions = {}
-  ) {
+  constructor() {
     this.channel = new BroadcastChannel('job-queue-channel')
     this.channel.addEventListener('message', this.handleMessage.bind(this))
     

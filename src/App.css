@@ -566,3 +566,232 @@ dialog footer button:first-child {
   background-color: rgba(239, 68, 68, 0.1);
   color: #ef4444;
 }
+
+/* Notification Bell Styles */
+.notification-bell {
+  position: relative;
+}
+
+.notification-bell > button {
+  position: relative;
+  background: none;
+  border: none;
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+  color: inherit;
+}
+
+[data-theme="dark"] .notification-bell > button:hover {
+  background-color: #333;
+}
+
+[data-theme="light"] .notification-bell > button:hover {
+  background-color: #f5f5f5;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background-color: #ef4444;
+  color: white;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.notification-bell menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  list-style: none;
+}
+
+[data-theme="dark"] .notification-bell menu {
+  background-color: #2a2a2a;
+  border-color: #333;
+}
+
+[data-theme="light"] .notification-bell menu {
+  background-color: #ffffff;
+  border-color: #e5e7eb;
+}
+
+.notification-bell menu header {
+  padding: 12px 16px;
+  border-bottom: 1px solid;
+  border-top: none;
+}
+
+[data-theme="dark"] .notification-bell menu header {
+  border-bottom-color: #333;
+}
+
+[data-theme="light"] .notification-bell menu header {
+  border-bottom-color: #e5e7eb;
+}
+
+.notification-bell menu h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.notification-bell menu > div[role="status"] {
+  padding: 16px;
+  text-align: center;
+  color: #6b7280;
+}
+
+.notification-bell menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.notification-bell menu li {
+  padding: 12px 16px;
+  border-bottom: 1px solid;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+[data-theme="dark"] .notification-bell menu li {
+  border-bottom-color: #333;
+}
+
+[data-theme="light"] .notification-bell menu li {
+  border-bottom-color: #e5e7eb;
+}
+
+.notification-bell menu li span[class^="status-"] {
+  font-size: 12px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
+.notification-bell menu li .status-processing {
+  color: #3b82f6;
+}
+
+.notification-bell menu li .status-completed {
+  color: #10b981;
+}
+
+.notification-bell menu li .status-failed {
+  color: #ef4444;
+}
+
+.notification-bell menu li .status-queued {
+  color: #6b7280;
+}
+
+.notification-bell menu li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-bell menu h4 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 4px 0;
+}
+
+.notification-bell menu li p {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 0 0 4px 0;
+}
+
+.notification-bell menu li p[role="alert"] {
+  font-size: 11px;
+  color: #ef4444;
+}
+
+.notification-bell menu time {
+  font-size: 11px;
+}
+
+.notification-bell menu li > button {
+  font-size: 10px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: white;
+  margin-left: 4px;
+}
+
+.notification-bell menu li > button:first-of-type {
+  background-color: #3b82f6;
+}
+
+.notification-bell menu li > button:first-of-type:hover {
+  background-color: #2563eb;
+}
+
+.notification-bell menu li > button:last-of-type {
+  background-color: #6b7280;
+}
+
+.notification-bell menu li > button:last-of-type:hover {
+  background-color: #4b5563;
+}
+
+.notification-bell menu footer {
+  padding: 8px 16px;
+  border-top: 1px solid;
+}
+
+[data-theme="dark"] .notification-bell menu footer {
+  border-top-color: #333;
+}
+
+[data-theme="light"] .notification-bell menu footer {
+  border-top-color: #e5e7eb;
+}
+
+.notification-bell menu footer button {
+  font-size: 12px;
+  color: #6b7280;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  width: 100%;
+  text-align: left;
+}
+
+[data-theme="dark"] .notification-bell menu footer button:hover {
+  color: #9ca3af;
+}
+
+[data-theme="light"] .notification-bell menu footer button:hover {
+  color: #374151;
+}
