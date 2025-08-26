@@ -4,13 +4,16 @@ import './index.css'
 import App from './App.tsx'
 import { AppProvider } from './contexts/AppProvider.tsx'
 import { ConversationProvider } from './contexts/ConversationProvider.tsx'
+import { JobQueueProvider } from './contexts/JobQueueProvider.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppProvider>
-      <ConversationProvider>
-        <App />
-      </ConversationProvider>
+      <JobQueueProvider>
+        <ConversationProvider>
+          <App />
+        </ConversationProvider>
+      </JobQueueProvider>
     </AppProvider>
   </StrictMode>,
 )

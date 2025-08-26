@@ -9,6 +9,8 @@ import { ExampleService } from '../services/exampleService'
 import type { APIProvider } from '../services/apiService'
 import type { ExampleScript } from '../services/vectorStore'
 import { Logger } from '../utils/logger'
+import { useJobQueue } from '../hooks/useJobQueue'
+import type { GenerateScriptJob, RegenerateSectionJob } from '../types/job'
 
 type ConversationAction = 
   | { type: 'LOAD_CONVERSATIONS'; conversations: Conversation[] }
@@ -152,6 +154,10 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const apiServiceRef = useRef<APIService>(new APIService('mock'))
   const exampleServiceRef = useRef<ExampleService>(new ExampleService('mock'))
   const pendingConversationRef = useRef<Conversation | null>(null)
+  const lastStuckCheckRef = useRef<number>(0)
+  
+  // Job queue integration
+  const jobQueue = useJobQueue()
 
   // Update API and example services when settings change
   useEffect(() => {
@@ -175,6 +181,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       }
     }
   }, [state.conversations, isLoaded, storedConversations, setStoredConversations])
+
 
   const getConversationByScriptId = useCallback((scriptId: string): Conversation | undefined => {
     return state.conversations.find(conv => conv.scriptId === scriptId)
@@ -435,30 +442,46 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
             })
           })
 
-          // Check for sections under 400 words and automatically regenerate them
-          const shortSections = conversation.sections.filter(section => {
-            const wordCount = section.content.split(/\s+/).length
-            return wordCount < 400
-          })
+          // Get the latest conversation state to check for short sections
+          const latestConversation = state.conversations.find(c => c.id === conversation.id)
+          if (latestConversation) {
+            Logger.log('Generation', `Checking for short sections. Total sections: ${latestConversation.sections.length}`)
+            
+            // Check for sections under 400 words and automatically queue regeneration jobs
+            const shortSections = latestConversation.sections.filter(section => {
+              const wordCount = section.content.split(/\s+/).length
+              Logger.log('Generation', `Section "${section.title}": ${wordCount} words`)
+              return wordCount < 400
+            })
 
-          if (shortSections.length > 0) {
-            Logger.log('Generation', `Found ${shortSections.length} section(s) under 400 words, automatically regenerating`)
-            
-            // Regenerate the first short section (to avoid overwhelming the system)
-            const firstShortSection = shortSections[0]
-            Logger.log('Generation', `Auto-regenerating section: "${firstShortSection.title}" (${firstShortSection.content.split(/\s+/).length} words)`)
-            
-            // Use setTimeout to avoid blocking the current completion
-            setTimeout(() => {
-              generateScript({
-                prompt: `Regenerate the "${firstShortSection.title}" section to be at least 400 words`,
-                conversationId: conversation.id,
-                sectionId: firstShortSection.id,
-                regenerate: true
-              }).catch(error => {
-                Logger.error('Generation', 'Auto-regeneration failed', error)
+            if (shortSections.length > 0) {
+              Logger.log('Generation', `Found ${shortSections.length} section(s) under 400 words, queueing auto-regeneration`)
+              
+              // Queue regeneration jobs for all short sections
+              shortSections.forEach(shortSection => {
+                const wordCount = shortSection.content.split(/\s+/).length
+                Logger.log('Generation', `Queueing auto-regeneration for section: "${shortSection.title}" (${wordCount} words)`)
+                
+                const jobData: Omit<RegenerateSectionJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
+                  type: 'regenerate-section',
+                  scriptId: latestConversation.scriptId,
+                  title: `Auto-regenerate ${shortSection.title}`,
+                  sectionId: shortSection.id,
+                  sectionTitle: shortSection.title,
+                  conversationId: latestConversation.id,
+                  prompt: `Regenerate the "${shortSection.title}" section to be at least 400 words`
+                }
+                
+                // Use setTimeout to avoid blocking the current completion
+                setTimeout(() => {
+                  jobQueue.addJob(jobData)
+                }, 500) // Short delay to let UI update
               })
-            }, 1000) // 1 second delay to let UI update
+            } else {
+              Logger.log('Generation', 'No sections under 400 words found')
+            }
+          } else {
+            Logger.warn('Generation', 'Could not find latest conversation state for auto-regeneration check')
           }
         }
 
@@ -506,6 +529,101 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       })
     }
   }, [state.conversations])
+
+  // Job processing - only if we're the leader
+  useEffect(() => {
+    if (!jobQueue.isLeader) return
+    
+    // On first load, reset any jobs stuck in processing state
+    const resetStuckJobs = () => {
+      const now = Date.now()
+      const maxProcessingTime = 10 * 60 * 1000 // 10 minutes
+      
+      const stuckJobs = jobQueue.state.jobs.filter(job => {
+        if (job.status !== 'processing') return false
+        const processingTime = now - job.updatedAt
+        return processingTime > maxProcessingTime
+      })
+      
+      stuckJobs.forEach(job => {
+        const processingTime = Math.round((now - job.updatedAt) / 1000)
+        Logger.warn('ConversationProvider', `Resetting stuck job: ${job.id} (was processing for ${processingTime}s)`)
+        jobQueue.updateJob(job.id, { 
+          status: 'queued',
+          error: undefined 
+        })
+      })
+      
+      if (stuckJobs.length > 0) {
+        Logger.log('ConversationProvider', `Reset ${stuckJobs.length} stuck job(s)`)
+      }
+    }
+    
+    // Reset stuck jobs immediately when becoming leader
+    resetStuckJobs()
+    
+    const processJobs = async () => {
+      // Check for stuck jobs periodically (every 5 minutes)
+      const now = Date.now()
+      if (now - lastStuckCheckRef.current > 5 * 60 * 1000) {
+        resetStuckJobs()
+        lastStuckCheckRef.current = now
+      }
+      
+      const processingJob = jobQueue.state.jobs.find(job => job.status === 'processing')
+      if (processingJob) {
+        // Already processing a job
+        return
+      }
+      
+      const queuedJob = jobQueue.state.jobs.find(job => job.status === 'queued')
+      if (!queuedJob) {
+        // No jobs to process
+        return
+      }
+      
+      Logger.log('ConversationProvider', `Processing job: ${queuedJob.id} (${queuedJob.type})`)
+      
+      try {
+        // Mark job as processing
+        jobQueue.updateJob(queuedJob.id, { status: 'processing' })
+        
+        if (queuedJob.type === 'generate-script') {
+          const job = queuedJob as GenerateScriptJob
+          const request: GenerationRequest = {
+            prompt: job.prompt,
+            conversationId: job.conversationId
+          }
+          await generateScript(request)
+        } else if (queuedJob.type === 'regenerate-section') {
+          const job = queuedJob as RegenerateSectionJob
+          const request: GenerationRequest = {
+            prompt: job.prompt,
+            conversationId: job.conversationId,
+            sectionId: job.sectionId,
+            regenerate: true
+          }
+          await generateScript(request)
+        }
+        
+        // Mark job as completed
+        jobQueue.updateJob(queuedJob.id, { status: 'completed' })
+        Logger.log('ConversationProvider', `Job completed: ${queuedJob.id}`)
+        
+      } catch (error) {
+        Logger.error('ConversationProvider', `Job failed: ${queuedJob.id}`, error)
+        jobQueue.updateJob(queuedJob.id, { 
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+      }
+    }
+    
+    // Start processing immediately, then set interval
+    processJobs()
+    const interval = setInterval(processJobs, 1000)
+    return () => clearInterval(interval)
+  }, [jobQueue.isLeader, jobQueue.state.jobs, jobQueue.updateJob, generateScript])
 
   const contextValue: ConversationContextType = {
     state,

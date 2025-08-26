@@ -3,13 +3,16 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
+import { useJobQueue } from '../hooks/useJobQueue'
 import type { Script } from '../types/script'
+import type { RegenerateSectionJob } from '../types/job'
 
 export const ScriptPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  const { state: conversationState, getConversationByScriptId, generateScript } = useConversationContext()
+  const { state: conversationState, getConversationByScriptId } = useConversationContext()
+  const { addJob, state: jobQueueState } = useJobQueue()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -60,22 +63,48 @@ export const ScriptPage = () => {
     })
   }
 
-  const handleRegenerateSection = async (sectionId: string, sectionTitle: string) => {
+  const handleRegenerateSection = (sectionId: string, sectionTitle: string) => {
     if (!script || !conversation) return
     
     try {
-      await generateScript({
-        prompt: `Regenerate the "${sectionTitle}" section`,
+      // Add regeneration job to queue
+      const jobData: Omit<RegenerateSectionJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
+        type: 'regenerate-section',
+        scriptId: script.id,
+        title: `Regenerate ${sectionTitle}`,
+        sectionId: sectionId,
+        sectionTitle: sectionTitle,
         conversationId: conversation.id,
-        sectionId,
-        regenerate: true
-      })
+        prompt: `Regenerate the "${sectionTitle}" section`
+      }
+      
+      addJob(jobData)
     } catch (error) {
-      console.error('Failed to regenerate section:', error)
+      console.error('Failed to queue section regeneration:', error)
     }
   }
 
   const isGenerating = currentGeneration && currentGeneration.conversationId === conversation?.id && !currentGeneration.isComplete
+  
+  // Check if any jobs are currently running for this script
+  const hasActiveJobs = jobQueueState.jobs.some(job => 
+    job.scriptId === script?.id && 
+    (job.status === 'queued' || job.status === 'processing')
+  )
+  
+  // Check if a section is currently being regenerated
+  const isSectionRegenerating = (sectionId: string) => {
+    return jobQueueState.jobs.some(job => 
+      job.type === 'regenerate-section' && 
+      job.sectionId === sectionId && 
+      (job.status === 'queued' || job.status === 'processing')
+    )
+  }
+  
+  // Check if regenerate buttons should be disabled
+  const shouldDisableRegenerate = (sectionId: string) => {
+    return hasActiveJobs || isSectionRegenerating(sectionId)
+  }
   
   // Use conversation sections if available, otherwise parse from content
   const sections = conversation && conversation.sections.length > 0 
@@ -133,12 +162,15 @@ export const ScriptPage = () => {
                 {script.status !== 'in-progress' && conversation && (
                   <button
                     onClick={() => handleRegenerateSection(section.id, section.title)}
-                    disabled={!!isGenerating}
-                    aria-label={`Regenerate ${section.title} section`}
+                    disabled={shouldDisableRegenerate(section.id)}
+                    aria-label={`${shouldDisableRegenerate(section.id) ? (hasActiveJobs ? 'Job in progress' : 'Regenerating') : 'Regenerate'} ${section.title} section`}
                     type="button"
                   >
                     <RotateCcw size={16} />
-                    Regenerate
+                    {shouldDisableRegenerate(section.id) ? 
+                      (hasActiveJobs ? 'Job queued...' : 'Regenerating...') : 
+                      'Regenerate'
+                    }
                   </button>
                 )}
               </header>

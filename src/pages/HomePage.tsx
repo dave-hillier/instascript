@@ -3,27 +3,27 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
+import { useJobQueue } from '../hooks/useJobQueue'
 import { ScriptList } from '../components/ScriptList'
 import type { Script } from '../types/script'
+import type { GenerateScriptJob } from '../types/job'
 
 type Tab = 'scripts' | 'archive'
 
 export const HomePage = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
-  const [isGenerating, setIsGenerating] = useState(false)
   const navigate = useNavigate()
   
   const { activeScripts, archivedScripts, dispatch: appDispatch } = useAppContext()
-  const { createConversation, generateScript } = useConversationContext()
+  const { createConversation } = useConversationContext()
+  const { addJob } = useJobQueue()
   
   const activeTab = (searchParams.get('state') === 'archived' ? 'archive' : 'scripts') as Tab
   const filteredScripts = activeTab === 'scripts' ? activeScripts : archivedScripts
 
   const handleGenerate = async () => {
-    if (!prompt.trim() || isGenerating) return
-    
-    setIsGenerating(true)
+    if (!prompt.trim()) return
     
     try {
       // Create new script entry
@@ -44,19 +44,25 @@ export const HomePage = () => {
       // Add script to app state
       appDispatch({ type: 'ADD_SCRIPT', script })
 
-      // Navigate to the script page immediately after creation
-      navigate(`/script/${scriptId}`)
-
-      // Start generation
-      await generateScript({
-        prompt,
+      // Add job to queue instead of immediate generation
+      const jobData: Omit<GenerateScriptJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
+        type: 'generate-script',
+        scriptId: scriptId,
+        title: script.title,
+        prompt: prompt,
         conversationId: conversation.id
-      })
+      }
+      
+      addJob(jobData)
+
+      // Navigate to the script page
+      navigate(`/script/${scriptId}`)
+      
+      // Clear the prompt
+      setPrompt('')
       
     } catch (error) {
-      console.error('Failed to generate script:', error)
-    } finally {
-      setIsGenerating(false)
+      console.error('Failed to queue script generation:', error)
     }
   }
 
@@ -73,7 +79,6 @@ export const HomePage = () => {
             aria-label="Script description"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            disabled={isGenerating}
           />
           <div>
             <div>
@@ -82,8 +87,8 @@ export const HomePage = () => {
               <button 
                 type="button"
                 onClick={handleGenerate}
-                disabled={!prompt.trim() || isGenerating}
-                aria-label={isGenerating ? "Generating script..." : "Generate script"}
+                disabled={!prompt.trim()}
+                aria-label="Generate script"
               >
                 <ArrowUp size={24} />
               </button>

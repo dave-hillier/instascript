@@ -1,8 +1,9 @@
 import { useReducer, useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Sun, Moon, Monitor, Settings, ArrowLeft } from 'lucide-react'
+import { Sun, Moon, Monitor, Settings, ArrowLeft, Bell } from 'lucide-react'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useAppContext } from './hooks/useAppContext'
+import { useJobQueue } from './hooks/useJobQueue'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import './App.css'
@@ -18,6 +19,228 @@ type UIState = {
 }
 
 type UIAction = ThemeAction | ModalAction
+
+// Notification Bell Component
+function NotificationBell() {
+  const { state, retryJob, removeJob, clearCompletedJobs } = useJobQueue()
+  const [showDropdown, setShowDropdown] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  
+  const activeJobs = state.jobs.filter(job => 
+    job.status === 'queued' || job.status === 'processing'
+  )
+  const completedJobs = state.jobs.filter(job => job.status === 'completed')
+  const failedJobs = state.jobs.filter(job => job.status === 'failed')
+  const totalActiveJobs = activeJobs.length
+  
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+  
+  const formatJobTitle = (job: any) => {
+    if (job.type === 'generate-script') {
+      return job.title || 'Generate Script'
+    }
+    return `Regenerate ${job.sectionTitle || 'Section'}`
+  }
+  
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'processing': return '#3b82f6'
+      case 'completed': return '#10b981'
+      case 'failed': return '#ef4444'
+      default: return '#6b7280'
+    }
+  }
+  
+  return (
+    <div style={{ position: 'relative' }} ref={dropdownRef}>
+      <button
+        onClick={() => setShowDropdown(!showDropdown)}
+        aria-label={`Notifications (${totalActiveJobs} active jobs)`}
+        type="button"
+        style={{ position: 'relative' }}
+      >
+        <Bell size={18} />
+        {totalActiveJobs > 0 && (
+          <span
+            style={{
+              position: 'absolute',
+              top: '-6px',
+              right: '-6px',
+              background: '#ef4444',
+              color: 'white',
+              borderRadius: '50%',
+              width: '16px',
+              height: '16px',
+              fontSize: '10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 'bold'
+            }}
+            aria-hidden="true"
+          >
+            {totalActiveJobs}
+          </span>
+        )}
+      </button>
+      
+      {showDropdown && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            right: '0',
+            marginTop: '8px',
+            width: '320px',
+            maxHeight: '400px',
+            overflowY: 'auto',
+            background: 'var(--background-color, white)',
+            border: '1px solid var(--border-color, #e5e7eb)',
+            borderRadius: '8px',
+            boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
+            zIndex: 50
+          }}
+          role="menu"
+          aria-label="Job notifications"
+        >
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-color, #e5e7eb)' }}>
+            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '600' }}>Script Jobs</h3>
+          </div>
+          
+          <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+            {state.jobs.length === 0 ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted, #6b7280)' }}>
+                No jobs yet
+              </div>
+            ) : (
+              [...activeJobs, ...completedJobs, ...failedJobs].map(job => (
+                <div
+                  key={job.id}
+                  style={{
+                    padding: '12px 16px',
+                    borderBottom: '1px solid var(--border-color, #e5e7eb)',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '12px'
+                  }}
+                  role="menuitem"
+                >
+                  <div
+                    style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      background: getStatusColor(job.status),
+                      marginTop: '6px',
+                      flexShrink: 0
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>
+                      {formatJobTitle(job)}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted, #6b7280)', marginBottom: '4px' }}>
+                      {job.status === 'processing' ? 'In progress...' : 
+                       job.status === 'completed' ? 'Completed' :
+                       job.status === 'failed' ? 'Failed' : 'Queued'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted, #6b7280)' }}>
+                      {new Date(job.createdAt).toLocaleTimeString()}
+                    </div>
+                    {job.error && (
+                      <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '4px' }}>
+                        {job.error}
+                      </div>
+                    )}
+                    
+                    {/* Action buttons for failed or completed jobs */}
+                    {(job.status === 'failed' || job.status === 'completed') && (
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        {job.status === 'failed' && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              retryJob(job.id)
+                            }}
+                            style={{
+                              fontSize: '10px',
+                              padding: '4px 8px',
+                              background: '#3b82f6',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
+                            }}
+                            type="button"
+                          >
+                            Retry
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeJob(job.id)
+                          }}
+                          style={{
+                            fontSize: '10px',
+                            padding: '4px 8px',
+                            background: '#6b7280',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          
+          {(completedJobs.length > 0 || failedJobs.length > 0) && (
+            <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border-color, #e5e7eb)' }}>
+              <button
+                onClick={() => {
+                  clearCompletedJobs()
+                  setShowDropdown(false)
+                }}
+                style={{
+                  fontSize: '12px',
+                  color: 'var(--text-muted, #6b7280)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '4px 0',
+                  width: '100%',
+                  textAlign: 'left'
+                }}
+                type="button"
+              >
+                Clear completed jobs
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const uiReducer = (state: UIState, action: UIAction): UIState => {
   switch (action.type) {
@@ -143,6 +366,7 @@ function AppContent() {
           </div>
         </div>
         <nav>
+          <NotificationBell />
           <button 
             onClick={handleOpenSettings}
             aria-label="Open settings"
