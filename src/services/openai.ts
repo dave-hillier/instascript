@@ -14,10 +14,10 @@ export class OpenAIService {
     })
   }
 
-  private conversationToMessages(
+  private conversationToResponseInput(
     conversation: Conversation,
     examples?: ExampleScript[]
-  ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  ): OpenAI.Responses.ResponseInputItem[] {
     let systemContent = PromptService.getSystemPrompt()
     
     // Add examples to system prompt if provided
@@ -25,14 +25,14 @@ export class OpenAIService {
       systemContent += ExampleService.formatExamplesForPrompt(examples)
     }
 
-    const systemMessage: OpenAI.Chat.Completions.ChatCompletionSystemMessageParam = {
+    const systemMessage: OpenAI.Responses.ResponseInputItem = {
       role: 'system',
-      content: systemContent
+      content: [{ type: 'input_text', text: systemContent }]
     }
 
-    const conversationMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = conversation.messages.map(msg => ({
+    const conversationMessages: OpenAI.Responses.ResponseInputItem[] = conversation.messages.map(msg => ({
       role: msg.role === 'user' ? 'user' : 'assistant',
-      content: msg.content
+      content: [{ type: 'input_text', text: msg.content }]
     }))
 
     return [systemMessage, ...conversationMessages]
@@ -50,11 +50,11 @@ export class OpenAIService {
       systemPrompt += ExampleService.formatExamplesForPrompt(examples)
     }
 
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = conversation 
-      ? this.conversationToMessages(conversation, examples)
+    const messages: OpenAI.Responses.ResponseInputItem[] = conversation 
+      ? this.conversationToResponseInput(conversation, examples)
       : [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: request.prompt }
+          { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
+          { role: 'user', content: [{ type: 'input_text', text: request.prompt }] }
         ]
 
     // If regenerating a specific section, add the specific regeneration instruction
@@ -64,7 +64,7 @@ export class OpenAIService {
         // Add the specific regeneration instruction
         messages.push({
           role: 'user', 
-          content: PromptService.getSectionRegenerationPrompt(section.title)
+          content: [{ type: 'input_text', text: PromptService.getSectionRegenerationPrompt(section.title) }]
         })
       }
     }
