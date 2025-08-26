@@ -129,9 +129,6 @@ export const SettingsModal = ({
             <option value="mock">Mock API (for testing)</option>
             <option value="openai">OpenAI</option>
           </select>
-          <p id="api-provider-help">
-            Use Mock API for testing or OpenAI for real script generation
-          </p>
 
           {tempApiProvider === 'openai' && (
             <>

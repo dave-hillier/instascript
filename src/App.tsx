@@ -253,8 +253,7 @@ function AppContent() {
             </button>
           )}
           <div>
-            <h1>
-              {!isScriptPage && <span aria-hidden="true">🔮</span>}
+            <h1>          
               {headerTitle}
             </h1>
             {isScriptPage && currentScript && (
