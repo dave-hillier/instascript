@@ -3,6 +3,8 @@ import { Sun, Moon, Monitor } from 'lucide-react'
 
 type Theme = 'light' | 'dark' | 'system'
 
+type Model = 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano'
+
 type SettingsModalProps = {
   isOpen: boolean
   onClose: () => void
@@ -10,7 +12,8 @@ type SettingsModalProps = {
   onThemeChange: (theme: Theme) => void
   apiKey: string
   apiProvider: 'openai' | 'mock'
-  onSave: (apiKey: string, apiProvider: 'openai' | 'mock') => void
+  model: Model
+  onSave: (apiKey: string, apiProvider: 'openai' | 'mock', model: Model) => void
 }
 
 export const SettingsModal = ({
@@ -20,19 +23,22 @@ export const SettingsModal = ({
   onThemeChange,
   apiKey,
   apiProvider,
+  model,
   onSave
 }: SettingsModalProps) => {
   const modalRef = useRef<HTMLDialogElement>(null)
   const [tempApiKey, setTempApiKey] = useState('')
   const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>(apiProvider || 'mock')
+  const [tempModel, setTempModel] = useState<Model>(model || 'gpt-5')
 
   // Initialize temp values when modal opens
   useEffect(() => {
     if (isOpen) {
       setTempApiKey(apiKey || '')
       setTempApiProvider(apiProvider || 'mock')
+      setTempModel(model || 'gpt-5')
     }
-  }, [isOpen, apiKey, apiProvider])
+  }, [isOpen, apiKey, apiProvider, model])
 
   // Open/close modal based on isOpen prop
   useEffect(() => {
@@ -44,7 +50,7 @@ export const SettingsModal = ({
   }, [isOpen])
 
   const handleSave = () => {
-    onSave(tempApiKey.trim(), tempApiProvider)
+    onSave(tempApiKey.trim(), tempApiProvider, tempModel)
     onClose()
   }
 
@@ -129,6 +135,21 @@ export const SettingsModal = ({
             <option value="mock">Mock API (for testing)</option>
             <option value="openai">OpenAI</option>
           </select>
+
+          <label htmlFor="model-selector">Model</label>
+          <select 
+            id="model-selector"
+            value={tempModel}
+            onChange={(e) => setTempModel(e.target.value as Model)}
+            aria-describedby="model-help"
+          >
+            <option value="gpt-5">GPT-5</option>
+            <option value="gpt-5-mini">GPT-5 Mini</option>
+            <option value="gpt-5-nano">GPT-5 Nano</option>
+          </select>
+          <p id="model-help">
+            Choose the model for script generation
+          </p>
 
           {tempApiProvider === 'openai' && (
             <>

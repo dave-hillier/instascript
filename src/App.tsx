@@ -9,6 +9,7 @@ import { ScriptPage } from './pages/ScriptPage'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
+type Model = 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano'
 
 type ThemeAction = { type: 'SET_THEME'; theme: Theme }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
@@ -204,6 +205,15 @@ function AppContent() {
       return 'mock'
     }
   })
+
+  const [model, setModel] = useState<Model>(() => {
+    try {
+      const item = window.localStorage.getItem('model')
+      return item ? JSON.parse(item) : 'gpt-5'
+    } catch {
+      return 'gpt-5'
+    }
+  })
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -246,6 +256,15 @@ function AppContent() {
     }
   }, [apiProvider])
 
+  // Save model when it changes
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('model', JSON.stringify(model))
+    } catch (error) {
+      console.error('Error saving model to localStorage:', error)
+    }
+  }, [model])
+
   // Determine effective theme (resolve 'system' to actual theme)
   const effectiveTheme = uiState.theme === 'system' 
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -258,11 +277,12 @@ function AppContent() {
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
   const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
 
-  const handleSaveSettings = (newApiKey: string, newApiProvider: 'openai' | 'mock') => {
+  const handleSaveSettings = (newApiKey: string, newApiProvider: 'openai' | 'mock', newModel: Model) => {
     if (newApiKey.trim()) {
       setApiKey(newApiKey.trim())
     }
     setApiProvider(newApiProvider)
+    setModel(newModel)
   }
 
   const handleOpenSettings = () => {
@@ -331,6 +351,7 @@ function AppContent() {
         onThemeChange={handleThemeChange}
         apiKey={apiKey || ''}
         apiProvider={apiProvider || 'mock'}
+        model={model || 'gpt-5'}
         onSave={handleSaveSettings}
       />
     </div>

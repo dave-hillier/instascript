@@ -114,11 +114,21 @@ export class OpenAIService implements ScriptGenerationService {
         ? `system-${this.generateCacheKeyHash(systemContent)}`
         : undefined
 
+      // Get model from localStorage with fallback to gpt-5-mini
+      const getModelFromStorage = (): string => {
+        try {
+          const item = window.localStorage.getItem('model')
+          return item ? JSON.parse(item) : 'gpt-5-mini'
+        } catch {
+          return 'gpt-5-mini'
+        }
+      }
+
       const completionsPayload = {
-        model: 'gpt-5-mini',
+        model: getModelFromStorage(),
         messages: messages,
         stream: true,
-        temperature: 1, // Not supported on gpt-5-mini 
+        temperature: 1, // Not supported on gpt-5 
         ...(promptCacheKey && { prompt_cache_key: promptCacheKey })
       }
       
