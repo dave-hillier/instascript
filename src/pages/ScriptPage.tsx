@@ -28,31 +28,13 @@ interface CurrentGeneration {
   sectionTitle?: string
 }
 
-// Simplified script document parsing - inlined all helper functions
-const getScriptDocument = (
-  conversation: RawConversation | undefined,
-  currentGeneration: CurrentGeneration | null
-): ScriptDocument => {
-  // Get current script content
-  const currentScript = conversation?.generations?.[conversation.generations.length - 1]?.response || ''
-  
-  if (!currentScript) {
-    return {
-      sections: [],
-      fullContent: '',
-      isGenerating: false,
-      hasError: !!currentGeneration?.error,
-      errorMessage: currentGeneration?.error
-    }
-  }
-
-  // Parse document header
-  const lines = currentScript.split('\n')
+// Parse sections from script content
+const parseSections = (scriptContent: string): { title?: string; sections: ScriptDocumentSection[] } => {
+  const lines = scriptContent.split('\n')
   const firstLine = lines[0]
   const titleMatch = firstLine.match(/^#\s+(.+)$/)
   const documentTitle = titleMatch ? titleMatch[1].trim() : undefined
 
-  // Parse sections
   const sections: ScriptDocumentSection[] = []
   let currentSectionStart = -1
   let currentSectionTitle = ''
@@ -91,8 +73,53 @@ const getScriptDocument = (
     })
   }
 
+  return { title: documentTitle, sections }
+}
+
+// Improved script document parsing with multi-generation support
+const getScriptDocument = (
+  conversation: RawConversation | undefined,
+  currentGeneration: CurrentGeneration | null
+): ScriptDocument => {
+  if (!conversation?.generations?.length) {
+    return {
+      sections: [],
+      fullContent: '',
+      isGenerating: false,
+      hasError: !!currentGeneration?.error,
+      errorMessage: currentGeneration?.error
+    }
+  }
+
+  // Start with the first generation as the base document
+  const baseGeneration = conversation.generations[0]
+  const { title: documentTitle, sections: baseSections } = parseSections(baseGeneration.response)
+
+  // Apply subsequent generations as section replacements
+  let consolidatedSections = [...baseSections]
+  
+  for (let i = 1; i < conversation.generations.length; i++) {
+    const generation = conversation.generations[i]
+    const { sections: replacementSections } = parseSections(generation.response)
+    
+    // Each subsequent generation should contain only one section
+    for (const replacementSection of replacementSections) {
+      const existingIndex = consolidatedSections.findIndex(
+        section => section.title === replacementSection.title
+      )
+      
+      if (existingIndex >= 0) {
+        // Replace existing section
+        consolidatedSections[existingIndex] = replacementSection
+      } else {
+        // Add new section if not found (shouldn't happen in normal flow)
+        consolidatedSections.push(replacementSection)
+      }
+    }
+  }
+
   // Apply live updates during section regeneration
-  const sectionsWithLiveUpdates = sections.map(section => {
+  const sectionsWithLiveUpdates = consolidatedSections.map(section => {
     const isSectionRegenerating = conversation && currentGeneration && 
       currentGeneration.conversationId === conversation.id && 
       !currentGeneration.isComplete && 
@@ -108,10 +135,16 @@ const getScriptDocument = (
   const isConversationGenerating = conversation && currentGeneration ? 
     currentGeneration.conversationId === conversation.id && !currentGeneration.isComplete : false
 
+  // Reconstruct full content from consolidated sections
+  const fullContent = [
+    documentTitle ? `# ${documentTitle}` : '',
+    ...sectionsWithLiveUpdates.map(section => `## ${section.title}\n${section.content}`)
+  ].filter(Boolean).join('\n\n')
+
   return {
     title: documentTitle,
     sections: sectionsWithLiveUpdates,
-    fullContent: currentScript,
+    fullContent,
     isGenerating: isConversationGenerating,
     hasError: !!currentGeneration?.error,
     errorMessage: currentGeneration?.error
@@ -197,7 +230,7 @@ export const ScriptPage = () => {
             <section key={`section-${index}`}>
               <header>
                 <h2>{section.title}</h2>
-                {script.status !== 'in-progress' && conversation && (
+                {/*script.status !== 'in-progress' &&*/ conversation && (
                   <button
                     onClick={() => handleRegenerateSection(section.title)}
                     disabled={generationState.shouldDisableRegenerate}
