@@ -24,7 +24,7 @@ export const SettingsModal = ({
 }: SettingsModalProps) => {
   const modalRef = useRef<HTMLDialogElement>(null)
   const [tempApiKey, setTempApiKey] = useState('')
-  const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>('mock')
+  const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>(apiProvider || 'mock')
 
   // Initialize temp values when modal opens
   useEffect(() => {
