@@ -326,7 +326,6 @@ function AppContent() {
     uiDispatch({ type: 'SET_THEME', theme: newTheme })
   }
 
-
   return (
     <div data-theme={effectiveTheme}>
       <header role="banner">
@@ -339,17 +338,6 @@ function AppContent() {
               style={{ marginRight: '1rem' }}
             >
               <ArrowLeft size={18} />
-            </button>
-          )}
-          {isCurrentScriptGenerating && (
-            <button 
-              onClick={handleStopGeneration}
-              aria-label="Stop script generation"
-              type="button"
-              className="stop-button"
-              style={{ marginRight: '1rem' }}
-            >
-              <Square size={18} />
             </button>
           )}
           <div>
@@ -366,6 +354,17 @@ function AppContent() {
           </div>
         </div>
         <nav>
+          
+          {isCurrentScriptGenerating && (
+            <button 
+              onClick={handleStopGeneration}
+              aria-label="Stop script generation"
+              type="button"
+              className="stop-button"
+            >
+              <Square size={18} />
+            </button>
+          )}
           <NotificationBell />
           <button 
             onClick={handleOpenSettings}
