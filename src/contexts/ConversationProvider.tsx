@@ -4,6 +4,7 @@ import type { Conversation, Message, ConversationSection, GenerationRequest, Gen
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
+import { useAppContext } from '../hooks/useAppContext'
 import type { ExampleScript } from '../services/vectorStore'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
 import { PromptService } from '../services/prompts'
@@ -182,6 +183,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   const [isLoaded, setIsLoaded] = useState(false)
   const { scriptService, exampleService } = useServices()
+  const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
   const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
@@ -512,7 +514,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         chunkCount++
 
         // Extract title from accumulated content if we haven't set it yet
-        if (conversation && !conversation.title && !titleDetected) {
+        if (conversation && !titleDetected) {
           // Only check for title if we have a complete line (ends with newline or is at end)
           const lines = accumulatedContent.split('\n')
           const firstLine = lines[0]
@@ -522,12 +524,21 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
             const titleMatch = firstLine.match(/^#\s+(.+)$/)
             if (titleMatch) {
               const title = titleMatch[1].trim()
-              dispatch({
-                type: 'SET_CONVERSATION_TITLE',
-                conversationId: conversation.id,
-                title
-              })
-              console.debug(`Script title detected: "${title}"`)
+              // Only set title if it's different from current title
+              if (title !== conversation.title) {
+                dispatch({
+                  type: 'SET_CONVERSATION_TITLE',
+                  conversationId: conversation.id,
+                  title
+                })
+                // Also update the script title
+                appDispatch({
+                  type: 'UPDATE_SCRIPT',
+                  scriptId: conversation.scriptId,
+                  updates: { title }
+                })
+                console.debug(`Script title detected: "${title}"`)
+              }
               titleDetected = true
             }
           }
@@ -555,7 +566,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i]
             
-            // Check if this is a section header
+            // Check if this is a section header (## only, not single #)
             if (line.match(/^##\s+.+/)) {
               // If we had a previous section, process it
               if (currentSectionStart >= 0 && currentSectionTitle && conversation) {

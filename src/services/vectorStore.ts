@@ -84,7 +84,7 @@ export async function findVectorStoreByName(openai: OpenAI, storeName: string): 
 export class VectorStoreService implements ExampleSearchService {
   private client: OpenAI
   private storeId: string | null = null
-  private readonly storeName = 'hypno-default'
+  private readonly storeName = 'hypno-default' // TODO: make configurable
 
   constructor(apiKey: string) {
     this.client = new OpenAI({
