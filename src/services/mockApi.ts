@@ -177,7 +177,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     }
 
     // Simulate initial API processing delay
-    await this.delay(1000, 2500, 'Initial API processing')
+    await this.delay(500, 1500, 'Initial API processing')
     
     // Check for abort after initial delay
     if (abortSignal?.aborted) {
@@ -241,10 +241,10 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       if (i < chunks.length - 1) {
         if (Math.random() < 0.05) {
           // Occasional network delay (5% chance)
-          await this.delay(100, 300, 'Network delay simulation')
+          await this.delay(10, 100, 'Network delay simulation')
         } else if (Math.random() < 0.2) {
           // Slower chunk (20% chance)
-          await this.delay(20, 50)
+          await this.delay(10, 30)
         } else {
           // Normal speed - very fast for word-by-word streaming
           await this.delay(5, 20)

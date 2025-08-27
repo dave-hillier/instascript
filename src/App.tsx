@@ -1,8 +1,7 @@
-import { useReducer, useState, useEffect, useRef } from 'react'
+import { useReducer, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Settings, ArrowLeft, Bell, Square } from 'lucide-react'
+import { Settings, ArrowLeft } from 'lucide-react'
 import { useAppContext } from './hooks/useAppContext'
-import { useJobQueue } from './hooks/useJobQueue'
 import { SettingsModal } from './components/SettingsModal'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
@@ -21,146 +20,6 @@ type UIState = {
 
 type UIAction = ThemeAction | ModalAction
 
-// Notification Bell Component
-function NotificationBell() {
-  const { state, retryJob, removeJob, clearCompletedJobs } = useJobQueue()
-  const [showDropdown, setShowDropdown] = useState(false)
-  const dropdownRef = useRef<HTMLElement>(null)
-  
-  const activeJobs = state.jobs.filter(job => 
-    job.status === 'queued' || job.status === 'processing'
-  )
-  const completedJobs = state.jobs.filter(job => job.status === 'completed')
-  const failedJobs = state.jobs.filter(job => job.status === 'failed')
-  const cancelledJobs = state.jobs.filter(job => job.status === 'cancelled')
-  const totalActiveJobs = activeJobs.length
-  
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDropdown(false)
-      }
-    }
-    
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-  
-  const formatJobTitle = (job: { type: string; title?: string; sectionTitle?: string }) => {
-    if (job.type === 'generate-script') {
-      return job.title || 'Generate Script'
-    }
-    return `Regenerate ${job.sectionTitle || 'Section'}`
-  }
-  
-  return (
-    <aside 
-      className="notification-bell" 
-      ref={dropdownRef}
-      aria-label="Job notifications"
-    >
-      <button
-        onClick={() => setShowDropdown(!showDropdown)}
-        aria-label={`Notifications (${totalActiveJobs} active jobs)`}
-        aria-expanded={showDropdown}
-        aria-haspopup="true"
-        type="button"
-      >
-        <Bell size={18} />
-        {totalActiveJobs > 0 && (
-          <span
-            className="notification-badge"
-            aria-hidden="true"
-          >
-            {totalActiveJobs}
-          </span>
-        )}
-      </button>
-      
-      {showDropdown && (
-        <menu aria-label="Job queue status">
-          <header>
-            <h3>Script Jobs</h3>
-          </header>
-          
-          {state.jobs.length === 0 ? (
-            <div role="status">No jobs yet</div>
-          ) : (
-            <ul role="list">
-              {[...activeJobs, ...completedJobs, ...failedJobs, ...cancelledJobs].map(job => (
-                <li key={job.id} role="listitem">
-                  <span 
-                    className={`status-${job.status}`}
-                    aria-label={`Status: ${job.status}`}
-                  >
-                    ●
-                  </span>
-                  <div>
-                    <h4>{formatJobTitle(job)}</h4>
-                    <p>
-                      {job.status === 'processing' ? 'In progress...' : 
-                       job.status === 'completed' ? 'Completed' :
-                       job.status === 'failed' ? 'Failed' :
-                       job.status === 'cancelled' ? 'Cancelled' : 'Queued'}
-                      {' • '}
-                      <time dateTime={new Date(job.createdAt).toISOString()}>
-                        {new Date(job.createdAt).toLocaleTimeString()}
-                      </time>
-                    </p>
-                    {job.error && (
-                      <p role="alert">{job.error}</p>
-                    )}
-                  </div>
-                  
-                  {job.status === 'failed' && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        retryJob(job.id)
-                      }}
-                      type="button"
-                      aria-label={`Retry ${formatJobTitle(job)}`}
-                    >
-                      Retry
-                    </button>
-                  )}
-                  {(job.status === 'failed' || job.status === 'completed' || job.status === 'cancelled') && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeJob(job.id)
-                      }}
-                      type="button"
-                      aria-label={`Remove ${formatJobTitle(job)}`}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          
-          {(completedJobs.length > 0 || failedJobs.length > 0 || cancelledJobs.length > 0) && (
-            <footer>
-              <button
-                onClick={() => {
-                  clearCompletedJobs()
-                  setShowDropdown(false)
-                }}
-                type="button"
-                aria-label="Clear all completed and failed jobs"
-              >
-                Clear completed jobs
-              </button>
-            </footer>
-          )}
-        </menu>
-      )}
-    </aside>
-  )
-}
 
 const uiReducer = (state: UIState, action: UIAction): UIState => {
   switch (action.type) {
@@ -177,7 +36,6 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  const { state: jobQueueState, cancelJobsForScript } = useJobQueue()
   
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
     theme: (() => {
@@ -280,16 +138,6 @@ function AppContent() {
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
   const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
   
-  // Check if current script is generating
-  const isCurrentScriptGenerating = scriptId && jobQueueState.jobs.some(job => 
-    job.scriptId === scriptId && (job.status === 'queued' || job.status === 'processing')
-  )
-  
-  const handleStopGeneration = () => {
-    if (scriptId) {
-      cancelJobsForScript(scriptId)
-    }
-  }
 
   const handleSaveSettings = (newApiKey: string, newApiProvider: 'openai' | 'mock', newModel: Model) => {
     if (newApiKey.trim()) {
@@ -354,18 +202,6 @@ function AppContent() {
           </div>
         </div>
         <nav>
-          
-          {isCurrentScriptGenerating && (
-            <button 
-              onClick={handleStopGeneration}
-              aria-label="Stop script generation"
-              type="button"
-              className="stop-button"
-            >
-              <Square size={18} />
-            </button>
-          )}
-          <NotificationBell />
           <button 
             onClick={handleOpenSettings}
             aria-label="Open settings"

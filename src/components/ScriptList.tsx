@@ -1,7 +1,6 @@
-import { Archive, Trash2, Square } from 'lucide-react'
+import { Archive, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAppContext } from '../hooks/useAppContext'
-import { useJobQueue } from '../hooks/useJobQueue'
 import type { Script } from '../types/script'
 
 type ScriptListProps = {
@@ -12,7 +11,6 @@ type ScriptListProps = {
 export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) => {
   const navigate = useNavigate()
   const { state: appState, dispatch: appDispatch } = useAppContext()
-  const { state: jobQueueState, cancelJobsForScript } = useJobQueue()
 
   const handleArchiveScript = (scriptId: string) => {
     appDispatch({ type: 'ARCHIVE_SCRIPT', scriptId })
@@ -24,19 +22,9 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
     }
   }
 
-  const isScriptGenerating = (scriptId: string) => {
-    return jobQueueState.jobs.some(job => 
-      job.scriptId === scriptId && (job.status === 'queued' || job.status === 'processing')
-    )
-  }
-
-  const handleStopGeneration = (scriptId: string) => {
-    cancelJobsForScript(scriptId)
-  }
 
   const renderScriptItem = (script: Script) => {
     const isHovered = appState.hoveredScript === script.id
-    const isGenerating = isScriptGenerating(script.id)
     
     return (
       <li 
@@ -60,31 +48,16 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
           <h3>{script.title}</h3>
           <div>{script.createdAt} · Generated Markdown</div>
         </div>
-        {!isGenerating && !isHovered && script.comments && (
+        {!isHovered && script.comments && (
           <div aria-label={`${script.comments} comments`}>{script.comments}</div>
         )}
-        {!isGenerating && !isHovered && script.status && (
+        {!isHovered && script.status && (
           <div aria-label={`Status: ${script.status}`}>{script.status}</div>
         )}
-        {!isGenerating && !isHovered && script.length && (
+        {!isHovered && script.length && (
           <div aria-label={`Script length: ${script.length}`}>{script.length}</div>
         )}
-        {isGenerating && (
-          <div className="script-actions">
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                handleStopGeneration(script.id)
-              }}
-              aria-label="Stop script generation"
-              type="button"
-              className="stop-button"
-            >
-              <Square size={16} />
-            </button>
-          </div>
-        )}
-        {!isGenerating && isHovered && (
+        {isHovered && (
           <div className="script-actions">
             <button
               onClick={() => handleArchiveScript(script.id)}

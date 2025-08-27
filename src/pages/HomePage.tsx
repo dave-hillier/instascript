@@ -3,10 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
-import { useJobQueue } from '../hooks/useJobQueue'
 import { ScriptList } from '../components/ScriptList'
 import type { Script } from '../types/script'
-import type { GenerateScriptJob } from '../types/job'
 
 type Tab = 'scripts' | 'archive'
 
@@ -16,8 +14,7 @@ export const HomePage = () => {
   const navigate = useNavigate()
   
   const { activeScripts, archivedScripts, dispatch: appDispatch } = useAppContext()
-  const { createConversation } = useConversationContext()
-  const { addJob } = useJobQueue()
+  const { createConversation, generateScript } = useConversationContext()
   
   const activeTab = (searchParams.get('state') === 'archived' ? 'archive' : 'scripts') as Tab
   const filteredScripts = activeTab === 'scripts' ? activeScripts : archivedScripts
@@ -44,22 +41,17 @@ export const HomePage = () => {
       // Add script to app state
       appDispatch({ type: 'ADD_SCRIPT', script })
 
-      // Add job to queue instead of immediate generation
-      const jobData: Omit<GenerateScriptJob, 'id' | 'createdAt' | 'updatedAt' | 'status'> = {
-        type: 'generate-script',
-        scriptId: scriptId,
-        title: script.title,
-        prompt: prompt,
-        conversationId: conversation.id
-      }
-      
-      addJob(jobData)
-
       // Navigate to the script page
       navigate(`/script/${scriptId}`)
       
       // Clear the prompt
       setPrompt('')
+
+      // Start generation directly (no job queue)
+      await generateScript({
+        prompt: prompt,
+        conversationId: conversation.id
+      })
       
     } catch (error) {
       console.error('Failed to queue script generation:', error)

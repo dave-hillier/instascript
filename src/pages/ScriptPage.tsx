@@ -1,17 +1,15 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, RotateCcw, Square } from 'lucide-react'
+import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
-import { useJobQueue } from '../hooks/useJobQueue'
 import type { Script } from '../types/script'
 
 export const ScriptPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  const { state: conversationState, getConversationByScriptId } = useConversationContext()
-  const { state: jobQueueState, cancelJobsForScript, addJob } = useJobQueue()
+  const { state: conversationState, getConversationByScriptId, generateScript } = useConversationContext()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -62,45 +60,28 @@ export const ScriptPage = () => {
     })
   }
 
-  const handleRegenerateSection = (sectionId: string, sectionTitle: string) => {
+  const handleRegenerateSection = async (sectionId: string, sectionTitle: string) => {
     if (!script || !conversation) return
     
-    // Create regeneration job directly via job queue
-    const jobData = {
-      type: 'regenerate-section' as const,
-      scriptId: script.id,
-      title: `Regenerate ${sectionTitle}`,
-      sectionId: sectionId,
-      sectionTitle: sectionTitle,
-      conversationId: conversation.id,
-      prompt: `Regenerate the "${sectionTitle}" section to be at least 400 words`
+    try {
+      // Start regeneration directly (no job queue)
+      await generateScript({
+        prompt: `Regenerate the "${sectionTitle}" section to be at least 400 words`,
+        conversationId: conversation.id,
+        sectionId: sectionId,
+        regenerate: true
+      })
+    } catch (error) {
+      console.error('Error regenerating section:', error)
     }
-    
-    addJob(jobData)
-  }
-
-  const isScriptGenerating = () => {
-    if (!script) return false
-    return jobQueueState.jobs.some(job => 
-      job.scriptId === script.id && (job.status === 'queued' || job.status === 'processing')
-    )
-  }
-
-  const handleStopGeneration = () => {
-    if (!script) return
-    cancelJobsForScript(script.id)
   }
 
   const isGenerating = currentGeneration && currentGeneration.conversationId === conversation?.id && !currentGeneration.isComplete
-  const isGeneratingFromJobs = isScriptGenerating()
   
   // Check if a section is currently being regenerated
   const isSectionRegenerating = (sectionId: string) => {
-    return jobQueueState.jobs.some(job => 
-      job.type === 'regenerate-section' && 
-      job.sectionId === sectionId && 
-      (job.status === 'queued' || job.status === 'processing')
-    )
+    // With direct generation, check if current generation is for this section
+    return isGenerating && currentGeneration?.sectionId === sectionId
   }
   
   // Check if regenerate buttons should be disabled (only disable the specific section)
@@ -146,17 +127,19 @@ export const ScriptPage = () => {
     
   return (
     <section>
-      {(isGenerating || isGeneratingFromJobs) && (
+      {isGenerating && (
         <div role="status" aria-live="polite">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <p>{isGenerating ? 'Generating script...' : 'Preparing to generate script...'}</p>
+            <p>Generating script...</p>
             <button
-              onClick={handleStopGeneration}
+              onClick={() => {
+                // Stop generation by navigating away or show message
+                console.log('Generation stopping not implemented yet')
+              }}
               aria-label="Stop script generation"
               type="button"
               className="stop-button-with-text"
             >
-              <Square size={16} />
               Stop
             </button>
           </div>
@@ -175,7 +158,7 @@ export const ScriptPage = () => {
                 {script.status !== 'in-progress' && conversation && (
                   <button
                     onClick={() => handleRegenerateSection(section.id, section.title)}
-                    disabled={shouldDisableRegenerate(section.id)}
+                    disabled={shouldDisableRegenerate(section.id) || false}
                     aria-label={`${shouldDisableRegenerate(section.id) ? 'Regenerating' : 'Regenerate'} ${section.title} section`}
                     type="button"
                   >
