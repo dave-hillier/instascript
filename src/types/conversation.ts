@@ -3,8 +3,12 @@
 export interface GenerationRequest {
   prompt: string
   conversationId?: string
-  regenerate?: boolean
-  sectionTitle?: string
+}
+
+export interface RegenerationRequest {
+  prompt: string
+  conversationId: string
+  sectionTitle: string
 }
 
 export interface GenerationProgress {

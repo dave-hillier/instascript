@@ -1,4 +1,4 @@
-import type { RawConversation, GenerationRequest, ChatMessage } from '../types/conversation'
+import type { RawConversation, GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
@@ -11,6 +11,11 @@ export interface RawScriptServices {
       request: GenerationRequest, 
       messages?: ChatMessage[], 
       examples?: ExampleScript[], 
+      abortSignal?: AbortSignal
+    ): AsyncIterable<string>
+    regenerateSection(
+      request: RegenerationRequest,
+      messages: ChatMessage[],
       abortSignal?: AbortSignal
     ): AsyncIterable<string>
     getLastRequestMessages?(): ChatMessage[] // New method to get the messages that were sent
@@ -78,11 +83,11 @@ export class RawScriptGenerationOrchestrator {
     return Math.round(bytes / (1024 * 1024)) + 'MB'
   }
 
-  private setupGeneration(request: GenerationRequest, sectionTitle?: string): void {
+  private setupGeneration(conversationId: string, sectionTitle?: string): void {
     // Start generation progress tracking
     this.callbacks.dispatch({
       type: 'SET_GENERATION_PROGRESS',
-      conversationId: request.conversationId || '',
+      conversationId: conversationId,
       isComplete: false,
       sectionTitle: sectionTitle
     })
@@ -159,70 +164,28 @@ export class RawScriptGenerationOrchestrator {
       if (!conversation) {
         throw new Error('Conversation is required for generation')
       }
-
-      // Use explicit section title from request
-      const sectionTitle = request.sectionTitle
       
-      this.setupGeneration(request, sectionTitle)
+      this.setupGeneration(conversation.id)
       
-      let messages: ChatMessage[]
-      let examples: ExampleScript[] = []
+      // For new generation, retrieve examples and build fresh messages
+      const examples = await this.retrieveExamples(request, conversation)
       
-      // For section regeneration, build complete conversation history from all generations
-      if (request.regenerate && sectionTitle && conversation.generations.length > 0) {
-        messages = []
-        
-        // Build complete conversation history from all generations
-        for (let i = 0; i < conversation.generations.length; i++) {
-          const generation = conversation.generations[i]
-          
-          // Add all messages from this generation (system, user, any intermediate messages)
-          messages.push(...generation.messages)
-          
-          // Add the assistant response for this generation
-          if (generation.response) {
-            messages.push({
-              role: 'assistant',
-              content: generation.response
-            })
-          }
-        }
-        
-        // Add the new regeneration request
-        messages.push({
-          role: 'user',
-          content: request.prompt
-        })
-        
-        console.log('Built complete conversation history for section regeneration:', {
-          totalGenerations: conversation.generations.length,
-          totalMessages: messages.length,
-          messageTypes: messages.map(m => m.role)
-        })
-      } else {
-        // For new generation, retrieve examples and build fresh messages
-        examples = await this.retrieveExamples(request, conversation)
-        
-        // We'll capture the messages from the service after generation starts
-        messages = [] // Will be populated by the service
-      }
-      
-      // Start the generation with the messages array
+      // Start the generation with empty messages array (will be populated by the service)
       this.callbacks.dispatch({
         type: 'START_GENERATION',
         conversationId: conversation.id,
-        messages: messages
+        messages: []
       })
       
-      // Call the script service directly with messages
+      // Call the script service for initial generation
       const stream = this.services.scriptService.generateScript(
         request,
-        messages,
+        [],
         examples,
         abortSignal
       )
       
-      await this.processStream(stream, conversation.id, abortSignal, sectionTitle)
+      await this.processStream(stream, conversation.id, abortSignal)
       
     } catch (error) {
       console.error('Script generation error:', error)
@@ -236,6 +199,75 @@ export class RawScriptGenerationOrchestrator {
           error: error instanceof Error ? error.message : 'Unknown error'
         })
       }
+      
+      throw error
+    }
+  }
+
+  async regenerateSection(
+    request: RegenerationRequest,
+    conversation: RawConversation,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    try {
+      this.setupGeneration(conversation.id, request.sectionTitle)
+      
+      // Build complete conversation history from all generations
+      const messages: ChatMessage[] = []
+      
+      for (let i = 0; i < conversation.generations.length; i++) {
+        const generation = conversation.generations[i]
+        
+        // Add all messages from this generation (system, user, any intermediate messages)
+        messages.push(...generation.messages)
+        
+        // Add the assistant response for this generation
+        if (generation.response) {
+          messages.push({
+            role: 'assistant',
+            content: generation.response
+          })
+        }
+      }
+      
+      // Add the new regeneration request
+      messages.push({
+        role: 'user',
+        content: request.prompt
+      })
+      
+      console.log('Built complete conversation history for section regeneration:', {
+        totalGenerations: conversation.generations.length,
+        totalMessages: messages.length,
+        messageTypes: messages.map(m => m.role)
+      })
+      
+      // Start the generation with the complete messages array
+      this.callbacks.dispatch({
+        type: 'START_GENERATION',
+        conversationId: conversation.id,
+        messages: messages
+      })
+      
+      // Call the script service for section regeneration
+      const stream = this.services.scriptService.regenerateSection(
+        request,
+        messages,
+        abortSignal
+      )
+      
+      await this.processStream(stream, conversation.id, abortSignal, request.sectionTitle)
+      
+    } catch (error) {
+      console.error('Section regeneration error:', error)
+      
+      // Ensure error is reported in generation progress
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId: conversation.id,
+        isComplete: true,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
       
       throw error
     }

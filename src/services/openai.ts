@@ -1,5 +1,5 @@
 import OpenAI from 'openai'
-import type { GenerationRequest, ChatMessage } from '../types/conversation'
+import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
 import type { ExampleScript } from './vectorStore'
 import type { ScriptGenerationService } from './scriptGenerationService'
@@ -59,9 +59,7 @@ export class OpenAIService implements ScriptGenerationService {
   ): AsyncGenerator<string, void, unknown> {
     console.debug('OpenAIService.generateScript called', {
       messagesCount: messages?.length || 0,
-      examplesCount: examples?.length || 0,
-      regenerate: request.regenerate,
-      sectionTitle: request.sectionTitle
+      examplesCount: examples?.length || 0
     })
     
     let finalMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
@@ -76,10 +74,31 @@ export class OpenAIService implements ScriptGenerationService {
       finalMessages.push({ role: 'user', content: request.prompt })
     }
 
+    yield* this.streamCompletion(finalMessages, abortSignal)
+  }
+
+  async *regenerateSection(
+    request: RegenerationRequest,
+    messages: ChatMessage[],
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
+    console.debug('OpenAIService.regenerateSection called', {
+      messagesCount: messages.length,
+      sectionTitle: request.sectionTitle
+    })
+    
+    const finalMessages = this.chatMessagesToOpenAI(messages)
+    yield* this.streamCompletion(finalMessages, abortSignal)
+  }
+
+  private async *streamCompletion(
+    messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam>,
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
     try {
       // Generate a prompt cache key based on system message (which includes examples)
       // This ensures requests with the same examples get cached together
-      const systemMessage = finalMessages.find(msg => msg.role === 'system')
+      const systemMessage = messages.find(msg => msg.role === 'system')
       const systemContent = systemMessage?.content
       const promptCacheKey = systemContent && typeof systemContent === 'string'
         ? `system-${this.generateCacheKeyHash(systemContent)}`
@@ -87,7 +106,7 @@ export class OpenAIService implements ScriptGenerationService {
 
       const completionsPayload = {
         model: getModel(),
-        messages: finalMessages,
+        messages: messages,
         stream: true,
         temperature: 1, // Not supported on gpt-5 
         ...(promptCacheKey && { prompt_cache_key: promptCacheKey })
@@ -99,7 +118,7 @@ export class OpenAIService implements ScriptGenerationService {
         ...completionsPayload,
         promptCacheKey,
         systemMessageLength: systemMessage?.content?.length || 0,
-        totalMessages: finalMessages.length,
+        totalMessages: messages.length,
         hasAbortSignal: !!abortSignal
       })
       

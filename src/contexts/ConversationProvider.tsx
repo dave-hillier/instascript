@@ -1,6 +1,6 @@
 import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { RawConversation, GenerationRequest } from '../types/conversation'
+import type { RawConversation, GenerationRequest, RegenerationRequest } from '../types/conversation'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
@@ -51,6 +51,27 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     await orchestrator.generateScript(request, conversation, abortSignal)
   }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
 
+  const regenerateSection = useCallback(async (request: RegenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
+    // Find conversation in current state
+    const conversation = state.conversations.find(c => c.id === request.conversationId)
+    if (!conversation) {
+      throw new Error(`Conversation ${request.conversationId} not found`)
+    }
+
+    const services: RawScriptServices = {
+      scriptService,
+      exampleService
+    }
+
+    const callbacks: RawGenerationCallbacks = {
+      dispatch,
+      appDispatch
+    }
+
+    const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
+    await orchestrator.regenerateSection(request, conversation, abortSignal)
+  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
+
 
   // Initial load from localStorage
   useEffect(() => {
@@ -86,7 +107,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     dispatch,
     getConversationByScriptId,
     createConversation,
-    generateScript
+    generateScript,
+    regenerateSection
   }
 
   return (

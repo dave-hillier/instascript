@@ -17,7 +17,7 @@ export const ScriptPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  const { state: conversationState, getConversationByScriptId, generateScript } = useConversationContext()
+  const { state: conversationState, getConversationByScriptId, regenerateSection } = useConversationContext()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -59,10 +59,9 @@ export const ScriptPage = () => {
       // Use the simple section regeneration template
       const prompt = getSectionRegenerationPrompt(sectionTitle)
       
-      await generateScript({
+      await regenerateSection({
         prompt,
         conversationId: conversation.id,
-        regenerate: true,
         sectionTitle: sectionTitle
       })
     } catch (error) {

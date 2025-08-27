@@ -69,6 +69,17 @@ export const isConversationGenerating = (
 }
 
 /**
+ * Check if conversation is generating initial content (not regenerating a specific section)
+ */
+export const isGeneratingInitialContent = (
+  conversation: RawConversation | undefined,
+  currentGeneration: { conversationId: string; isComplete: boolean; sectionTitle?: string } | null
+): boolean => {
+  if (!isConversationGenerating(conversation, currentGeneration)) return false
+  return !currentGeneration?.sectionTitle
+}
+
+/**
  * Check if a specific section is being regenerated
  */
 export const isSectionRegenerating = (
@@ -78,4 +89,15 @@ export const isSectionRegenerating = (
 ): boolean => {
   if (!isConversationGenerating(conversation, currentGeneration)) return false
   return currentGeneration?.sectionTitle === sectionTitle
+}
+
+/**
+ * Get the section title being regenerated, if any
+ */
+export const getRegeneratingSectionTitle = (
+  conversation: RawConversation | undefined,
+  currentGeneration: { conversationId: string; isComplete: boolean; sectionTitle?: string } | null
+): string | null => {
+  if (!isConversationGenerating(conversation, currentGeneration)) return null
+  return currentGeneration?.sectionTitle || null
 }

@@ -1,4 +1,4 @@
-import type { GenerationRequest, ChatMessage } from '../types/conversation'
+import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
 import type { ScriptGenerationService } from './scriptGenerationService'
 
@@ -50,26 +50,6 @@ export class MockAPIService implements ScriptGenerationService {
     }
     
     return chunks
-  }
-  private generateEvenLongerContent(sectionTitle: string): string {
-    // Generate even longer content to ensure 400+ words
-    const title = sectionTitle.replace(/^## /, '')
-    
-    return `## ${title}
-
-Welcome to this comprehensive and deeply enriching section, carefully crafted to provide profound therapeutic benefits that extend far beyond this single session. As you continue on this transformative journey of personal growth, healing, and self-discovery, allow yourself to fully embrace the remarkable power of this present moment. Each word you hear, each gentle breath you take, each subtle sensation you experience throughout your being is guiding you systematically toward a more balanced, centered, and harmonious state of existence.
-
-In this sacred space of deep relaxation and heightened inner awareness, your subconscious mind becomes naturally and effortlessly receptive to positive change, healing suggestions, and transformative insights. You may begin to notice, perhaps with a sense of pleasant surprise, how magnificently your body responds as it begins to release layers of accumulated tension, starting from the very crown of your head and flowing like liquid golden light through every fiber, every cell, every molecule of your being.
-
-This gentle, warming wave of profound relaxation moves gracefully down through your forehead, softening the delicate muscles around your eyes, releasing any tightness in your temples, relaxing your jaw completely, and dissolving any stored tension that may have been held in your neck and shoulders. As this beautiful sensation continues its healing journey throughout your entire body, you become increasingly aware of your innate, natural capacity for healing, renewal, and positive transformation.
-
-Your breathing naturally becomes deeper, more rhythmic, and increasingly peaceful with each passing moment. Each inhalation brings in fresh, revitalizing energy and pure vitality, while each exhalation gently releases any lingering stress, worry, anxiety, or negativity that no longer serves your highest good and well-being. This natural rhythm of breathing connects you to the fundamental life force that flows through all living things.
-
-Within this sanctuary of profound inner peace and tranquility, your mind naturally and effortlessly begins to organize, process, and integrate the day's experiences with remarkable clarity and wisdom. You may discover that solutions to challenges and concerns begin to emerge with surprising clarity, as if your inner wisdom and intuitive knowledge is finally free to express itself without the interference of daily distractions, concerns, and mental chatter.
-
-The therapeutic benefits and positive changes from this experience extend far beyond this single session, creating lasting, meaningful transformations in how you perceive yourself, interact with others, and navigate through the world around you. With each passing moment, you are actively building new neural pathways that support greater confidence, enhanced resilience, inner strength, and emotional balance.
-
-These positive changes become more deeply embedded and integrated into your being with each practice, creating a solid, unshakeable foundation for ongoing personal growth, emotional well-being, and life satisfaction. As this enriching section draws to a gentle and peaceful close, take a moment to truly appreciate the profound and meaningful work you have accomplished here today.`
   }
 
   private generateExpandedSectionContent(sectionTitle: string): string {
@@ -185,33 +165,11 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       return
     }
 
-    // Get the appropriate content based on the request
-    let content: string
-    
-    if (request.regenerate && request.sectionTitle) {
-      console.debug('Regenerating section', request.sectionTitle)
-      
-      // Generate expanded content and ensure it meets word count requirements
-      content = this.generateExpandedSectionContent(request.sectionTitle)
-      const wordCount = content.split(/\s+/).length
-      
-      console.debug('Generated expanded content', {
-        wordCount,
-        meetsRequirement: wordCount >= 400
-      })
-      
-      // If content is still under 400 words, generate additional content
-      if (wordCount < 400) {
-        console.debug('Content under 400 words, expanding further')
-        content = this.generateEvenLongerContent(request.sectionTitle)
-      }
-    } else {
-      // Regular generation - use prompt from request or extract from messages
-      const prompt = request.prompt || (messages && messages.length > 0 
-        ? messages[messages.length - 1]?.content || 'Generate a hypnosis script'
-        : 'Generate a hypnosis script')
-      content = this.generateScriptContent(prompt)
-    }
+    // Regular generation - use prompt from request or extract from messages
+    const prompt = request.prompt || (messages && messages.length > 0 
+      ? messages[messages.length - 1]?.content || 'Generate a hypnosis script'
+      : 'Generate a hypnosis script')
+    const content = this.generateScriptContent(prompt)
 
     const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
     console.debug('Content prepared', {
@@ -257,5 +215,60 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     }
 
     // Streaming complete
+  }
+
+  async *regenerateSection(
+    request: RegenerationRequest,
+    _messages: ChatMessage[],
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
+    console.debug('Mock regenerateSection called', { sectionTitle: request.sectionTitle })
+
+    // Simulate initial API processing delay
+    await this.delay(500, 1500, 'Section regeneration processing')
+    
+    // Check for abort after initial delay
+    if (abortSignal?.aborted) {
+      console.debug('Mock section regeneration aborted after initial delay')
+      return
+    }
+
+    // Generate expanded content for the specific section
+    const content = this.generateExpandedSectionContent(request.sectionTitle)
+    const wordCount = content.split(/\s+/).length
+    
+    console.debug('Generated section regeneration content', {
+      sectionTitle: request.sectionTitle,
+      wordCount,
+      meetsRequirement: wordCount >= 400
+    })
+
+    // Stream the regenerated content
+    const chunks = this.splitIntoRealisticChunks(content)
+    console.debug('Starting regeneration streaming', { totalChunks: chunks.length })
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      yield chunk
+      
+      // Variable delays for realistic streaming
+      if (i < chunks.length - 1) {
+        if (Math.random() < 0.05) {
+          await this.delay(10, 100, 'Network delay simulation')
+        } else if (Math.random() < 0.2) {
+          await this.delay(10, 30)
+        } else {
+          await this.delay(5, 20)
+        }
+        
+        // Check for abort after delay
+        if (abortSignal?.aborted) {
+          console.debug('Mock section regeneration aborted during streaming')
+          return
+        }
+      }
+    }
+
+    console.debug('Section regeneration streaming complete')
   }
 }
