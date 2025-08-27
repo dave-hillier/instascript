@@ -47,9 +47,9 @@ const getScriptDocument = (
   }
 
   // Parse document header
-  const lines = currentScript.split('\\n')
+  const lines = currentScript.split('\n')
   const firstLine = lines[0]
-  const titleMatch = firstLine.match(/^#\\s+(.+)$/)
+  const titleMatch = firstLine.match(/^#\s+(.+)$/)
   const documentTitle = titleMatch ? titleMatch[1].trim() : undefined
 
   // Parse sections
@@ -60,11 +60,11 @@ const getScriptDocument = (
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     
-    if (line.match(/^##\\s+/)) {
+    if (line.match(/^##\s+/)) {
       // Complete previous section
       if (currentSectionStart >= 0 && currentSectionTitle) {
-        const sectionContent = lines.slice(currentSectionStart + 1, i).join('\\n').trim()
-        const wordCount = sectionContent.trim().split(/\\s+/).filter(word => word.length > 0).length
+        const sectionContent = lines.slice(currentSectionStart + 1, i).join('\n').trim()
+        const wordCount = sectionContent.trim().split(/\s+/).filter(word => word.length > 0).length
         sections.push({
           id: `section_${currentSectionTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
           title: currentSectionTitle,
@@ -75,14 +75,14 @@ const getScriptDocument = (
       
       // Start new section
       currentSectionStart = i
-      currentSectionTitle = line.match(/##\\s+(.+?)$/)?.[1]?.trim() || ''
+      currentSectionTitle = line.match(/##\s+(.+?)$/)?.[1]?.trim() || ''
     }
   }
   
   // Handle last section
   if (currentSectionStart >= 0 && currentSectionTitle) {
-    const sectionContent = lines.slice(currentSectionStart + 1).join('\\n').trim()
-    const wordCount = sectionContent.trim().split(/\\s+/).filter(word => word.length > 0).length
+    const sectionContent = lines.slice(currentSectionStart + 1).join('\n').trim()
+    const wordCount = sectionContent.trim().split(/\s+/).filter(word => word.length > 0).length
     sections.push({
       id: `section_${currentSectionTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
       title: currentSectionTitle,
@@ -130,10 +130,9 @@ export const ScriptPage = () => {
   
   // Get structured document and generation state
   const document = getScriptDocument(conversation, currentGeneration)
-  const isGenerating = conversation && currentGeneration ? currentGeneration.conversationId === conversation.id && !currentGeneration.isComplete : false
   const generationState = {
-    isGenerating,
-    shouldDisableRegenerate: isGenerating,
+    isGenerating: document.isGenerating,
+    shouldDisableRegenerate: document.isGenerating,
     error: currentGeneration?.error
   }
 
