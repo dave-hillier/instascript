@@ -1,22 +1,22 @@
 import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Conversation, GenerationRequest } from '../types/conversation'
+import type { RawConversation, GenerationRequest } from '../types/conversation'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
 import { useAppContext } from '../hooks/useAppContext'
 
 // Extracted modules
-import { conversationReducer } from '../reducers/conversationReducer'
-import { getStoredConversations, setStoredConversations } from '../services/conversationStorage'
-import { ScriptGenerationOrchestrator, type ScriptServices, type GenerationCallbacks } from '../services/scriptGenerationOrchestrator'
+import { rawConversationReducer } from '../reducers/rawConversationReducer'
+import { getStoredConversations, setStoredConversations, createRawConversation } from '../services/conversationStorage'
+import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 
 type ConversationProviderProps = {
   children: ReactNode
 }
 
 export const ConversationProvider = ({ children }: ConversationProviderProps) => {
-  const [state, dispatch] = useReducer(conversationReducer, {
+  const [state, dispatch] = useReducer(rawConversationReducer, {
     conversations: [],
     currentGeneration: null
   })
@@ -24,11 +24,11 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const [isLoaded, setIsLoaded] = useState(false)
   const { scriptService, exampleService } = useServices()
   const { dispatch: appDispatch } = useAppContext()
-  const pendingConversationRef = useRef<Conversation | null>(null)
+  const pendingConversationRef = useRef<RawConversation | null>(null)
   // Direct script generation without job processing
   const generateScript = useCallback(async (request: GenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
     // Find conversation - first check pending, then current state
-    let conversation: Conversation | undefined
+    let conversation: RawConversation | undefined
     
     if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
       conversation = pendingConversationRef.current
@@ -37,20 +37,17 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       conversation = state.conversations.find(c => c.id === request.conversationId)
     }
 
-    const services: ScriptServices = {
+    const services: RawScriptServices = {
       scriptService,
       exampleService
     }
 
-    const callbacks: GenerationCallbacks = {
+    const callbacks: RawGenerationCallbacks = {
       dispatch,
-      appDispatch,
-      onRegenerationCheck: () => {
-        // Auto-regeneration is handled at the page level
-      }
+      appDispatch
     }
 
-    const orchestrator = new ScriptGenerationOrchestrator(services, callbacks)
+    const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
     await orchestrator.generateScript(request, conversation, abortSignal)
   }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
 
@@ -72,25 +69,12 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   }, [state.conversations, isLoaded])
 
 
-  const getConversationByScriptId = useCallback((scriptId: string): Conversation | undefined => {
+  const getConversationByScriptId = useCallback((scriptId: string): RawConversation | undefined => {
     return state.conversations.find(conv => conv.scriptId === scriptId)
   }, [state.conversations])
 
-  const createConversation = useCallback((scriptId: string, initialPrompt: string): Conversation => {
-    const conversation: Conversation = {
-      id: `conv_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-      scriptId,
-      messages: [{
-        id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-        role: 'user',
-        content: initialPrompt,
-        timestamp: Date.now()
-      }],
-      sections: [],
-      status: 'idle',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
+  const createConversation = useCallback((scriptId: string, _initialPrompt: string): RawConversation => {
+    const conversation = createRawConversation(scriptId)
     
     pendingConversationRef.current = conversation
     dispatch({ type: 'CREATE_CONVERSATION', conversation })
