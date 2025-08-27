@@ -1,7 +1,8 @@
 import type { ExampleScript } from './vectorStore'
+import type { ExampleSearchService } from './exampleSearchService'
 import { CONTEXT_LIMITS } from '../utils/contextWindow'
 
-export class MockVectorStoreService {
+export class MockVectorStoreService implements ExampleSearchService {
   private mockExamples: ExampleScript[] = [
     {
       content: `# Confidence Building Script

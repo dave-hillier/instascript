@@ -1,8 +1,6 @@
 import { useRef, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import { APIService } from '../services/apiService'
-import { ExampleService } from '../services/exampleService'
-import type { APIProvider } from '../services/apiService'
+import { ServiceFactory, type APIProvider } from '../services/serviceFactory'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { ServiceContext } from './ServiceContext'
 import type { ServiceContextType } from './ServiceContext'
@@ -18,20 +16,22 @@ export function ServiceProvider({ children }: ServiceProviderProps) {
   // Create services only once using refs
   const servicesRef = useRef<ServiceContextType | undefined>(undefined)
   
-  if (!servicesRef.current) {
-    // Creating service instances
-    servicesRef.current = {
-      apiService: new APIService(apiProvider || 'mock', apiKey || undefined),
-      exampleService: new ExampleService(apiProvider || 'mock', apiKey || undefined)
-    }
-  }
-  
-  // Update service configuration when settings change
+  // Recreate services when provider or apiKey changes
   useEffect(() => {
     console.debug('Service configuration updated', { provider: apiProvider })
-    servicesRef.current!.apiService.setProvider(apiProvider || 'mock', apiKey || undefined)
-    servicesRef.current!.exampleService.setProvider(apiProvider || 'mock', apiKey || undefined)
+    servicesRef.current = {
+      scriptService: ServiceFactory.createScriptService(apiProvider || 'mock', apiKey || undefined),
+      exampleService: ServiceFactory.createExampleService(apiProvider || 'mock', apiKey || undefined)
+    }
   }, [apiProvider, apiKey])
+
+  // Initialize services on first render
+  if (!servicesRef.current) {
+    servicesRef.current = {
+      scriptService: ServiceFactory.createScriptService(apiProvider || 'mock', apiKey || undefined),
+      exampleService: ServiceFactory.createExampleService(apiProvider || 'mock', apiKey || undefined)
+    }
+  }
   
   return (
     <ServiceContext.Provider value={servicesRef.current}>

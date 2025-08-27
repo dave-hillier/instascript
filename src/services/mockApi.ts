@@ -1,7 +1,8 @@
 import type { GenerationRequest, Conversation } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
+import type { ScriptGenerationService } from './scriptGenerationService'
 
-export class MockAPIService {
+export class MockAPIService implements ScriptGenerationService {
   private async delay(min: number, max?: number, reason?: string): Promise<void> {
     const ms = max ? Math.random() * (max - min) + min : min
     if (reason) {

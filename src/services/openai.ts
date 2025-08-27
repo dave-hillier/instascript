@@ -1,10 +1,11 @@
 import OpenAI from 'openai'
 import type { GenerationRequest, Conversation } from '../types/conversation'
 import { PromptService } from './prompts'
-import { ExampleService } from './exampleService'
 import type { ExampleScript } from './vectorStore'
+import type { ScriptGenerationService } from './scriptGenerationService'
+import { formatExamplesForPrompt } from './exampleSearchService'
 
-export class OpenAIService {
+export class OpenAIService implements ScriptGenerationService {
   private client: OpenAI
 
   constructor(apiKey: string) {
@@ -22,7 +23,7 @@ export class OpenAIService {
     
     // Add examples to system prompt if provided
     if (examples && examples.length > 0) {
-      systemContent += ExampleService.formatExamplesForPrompt(examples)
+      systemContent += formatExamplesForPrompt(examples)
     }
 
     const systemMessage: OpenAI.Responses.ResponseInputItem = {
@@ -47,7 +48,7 @@ export class OpenAIService {
     
     // Add examples to system prompt if provided
     if (examples && examples.length > 0) {
-      systemPrompt += ExampleService.formatExamplesForPrompt(examples)
+      systemPrompt += formatExamplesForPrompt(examples)
     }
 
     const messages: OpenAI.Responses.ResponseInputItem[] = conversation 

@@ -1,10 +1,10 @@
 import { createContext } from 'react'
-import type { APIService } from '../services/apiService'
-import type { ExampleService } from '../services/exampleService'
+import type { ScriptGenerationService } from '../services/scriptGenerationService'
+import type { ExampleSearchService } from '../services/exampleSearchService'
 
 export type ServiceContextType = {
-  apiService: APIService
-  exampleService: ExampleService
+  scriptService: ScriptGenerationService
+  exampleService: ExampleSearchService
 }
 
 export const ServiceContext = createContext<ServiceContextType | null>(null)

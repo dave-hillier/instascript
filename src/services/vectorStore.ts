@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { CONTEXT_LIMITS } from '../utils/contextWindow';
+import type { ExampleSearchService } from './exampleSearchService';
 
 export interface ExampleScript {
   content: string
@@ -80,7 +81,7 @@ export async function findVectorStoreByName(openai: OpenAI, storeName: string): 
   }
 }
 
-export class VectorStoreService {
+export class VectorStoreService implements ExampleSearchService {
   private client: OpenAI
   private storeId: string | null = null
   private readonly storeName = 'hypno-default'

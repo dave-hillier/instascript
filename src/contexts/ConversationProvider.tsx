@@ -153,7 +153,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   const { value: storedConversations, setValue: setStoredConversations, isLoaded } = useLocalStorage<Conversation[]>('conversations', [])
   const { value: apiProvider } = useLocalStorage<string>('apiProvider', 'mock')
-  const { apiService, exampleService } = useServices()
+  const { scriptService, exampleService } = useServices()
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
   const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
@@ -399,7 +399,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
       // Retrieve relevant examples for the initial prompt (not for regeneration)
       let examples: ExampleScript[] = []
-      if (!request.regenerate && exampleService.isConfigured()) {
+      if (!request.regenerate) {
         console.time('Example Retrieval')
         try {
           // Calculate optimal number of examples based on context window
@@ -454,8 +454,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       console.debug('Starting streaming...')
       console.time('Streaming Duration')
 
-      // Generate content using the API service
-      for await (const chunk of apiService.generateScript(request, conversation, examples)) {
+      // Generate content using the script service
+      for await (const chunk of scriptService.generateScript(request, conversation, examples)) {
         if (firstChunkTime === null) {
           firstChunkTime = Date.now()
           const timeToFirstChunk = firstChunkTime - startTime
