@@ -230,7 +230,7 @@ export const ScriptPage = () => {
             <section key={`section-${index}`}>
               <header>
                 <h2>{section.title}</h2>
-                {/*script.status !== 'in-progress' &&*/ conversation && (
+                {!generationState.shouldDisableRegenerate && conversation && (
                   <button
                     onClick={() => handleRegenerateSection(section.title)}
                     disabled={generationState.shouldDisableRegenerate}
