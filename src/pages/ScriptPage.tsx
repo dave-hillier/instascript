@@ -1,10 +1,16 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
-import { deriveConversationState, composeFullDocument } from '../utils/responseParser'
-import { getSectionContext, extractSectionContent } from '../utils/sectionRegeneration'
+import { deriveConversationState } from '../utils/responseParser'
+import { 
+  composeCurrentScript, 
+  getCurrentScriptSections,
+  isConversationGenerating,
+  isSectionRegenerating
+} from '../utils/scriptComposition'
+import { getSectionRegenerationPrompt } from '../services/prompts'
 import type { Script } from '../types/script'
 
 export const ScriptPage = () => {
@@ -17,25 +23,17 @@ export const ScriptPage = () => {
   const conversation = script ? getConversationByScriptId(script.id) : undefined
   const currentGeneration = conversationState.currentGeneration
   
-  const [displayContent, setDisplayContent] = useState('')
-
-  // Compose the full document from all generations at render time
-  const composedDocument = conversation ? composeFullDocument(conversation) : ''
-  const conversationDocument = conversation ? deriveConversationState(conversation) : null
-
-  // Update display content based on generation progress or existing content
-  useEffect(() => {
-    if (currentGeneration && currentGeneration.conversationId === conversation?.id) {
-      setDisplayContent(currentGeneration.content || composedDocument || script?.content || '')
-    } else {
-      setDisplayContent(composedDocument || script?.content || '')
-    }
-  }, [currentGeneration, composedDocument, script?.content, conversation?.id])
+  // Compose the current script state from raw conversation
+  const currentScript = composeCurrentScript(conversation)
+  const conversationDocument = currentScript ? deriveConversationState({ 
+    id: '', scriptId: '', generations: [{ messages: [], response: currentScript, timestamp: 0 }], 
+    createdAt: 0, updatedAt: 0 
+  }) : null
 
   // Update script content when generation completes
   useEffect(() => {
     if (script && conversation && currentGeneration?.isComplete && currentGeneration.conversationId === conversation.id) {
-      const finalContent = currentGeneration.content || ''
+      const finalContent = composeCurrentScript(conversation)
       if (finalContent && finalContent !== script.content) {
         dispatch({
           type: 'UPDATE_SCRIPT',
@@ -53,59 +51,13 @@ export const ScriptPage = () => {
   // For now, we disable auto-regeneration as it requires more complex logic
   // to determine which sections need regeneration from raw responses
 
-  const parseContentSections = (content: string) => {
-    if (!content) return []
-    
-    const sections = content.split(/(?=^##\s)/gm).filter(section => section.trim())
-    return sections.map((sectionContent, index) => {
-      const titleMatch = sectionContent.match(/^##\s+(.+?)(?=\n|$)/)
-      const title = titleMatch ? titleMatch[1].trim() : `Section ${index + 1}`
-      const id = `section_${title.toLowerCase().replace(/[^a-z0-9]/g, '_')}`
-      
-      return {
-        id,
-        title,
-        content: sectionContent.trim()
-      }
-    })
-  }
 
   const handleRegenerateSection = async (sectionTitle: string) => {
     if (!script || !conversation) return
     
     try {
-      // Get context about the section and document
-      const currentDocument = composeFullDocument(conversation)
-      const context = getSectionContext(currentDocument, sectionTitle)
-      const currentSectionContent = extractSectionContent(currentDocument, sectionTitle)
-      
-      // Build context-aware prompt for just the section content
-      let prompt = `Generate content for the "${sectionTitle}" section of a hypnosis script`
-      
-      if (context.documentTitle) {
-        prompt += ` titled "${context.documentTitle}"`
-      }
-      
-      prompt += `. Make it at least 400 words and ensure it's engaging and effective.`
-      
-      // Add context about neighboring sections
-      if (context.allSectionTitles.length > 1) {
-        const otherSections = context.allSectionTitles.filter(title => title !== sectionTitle)
-        prompt += ` The script has these other sections: ${otherSections.join(', ')}.`
-        
-        if (context.sectionIndex > 0) {
-          prompt += ` This section comes after "${context.allSectionTitles[context.sectionIndex - 1]}".`
-        }
-        if (context.sectionIndex < context.allSectionTitles.length - 1) {
-          prompt += ` This section comes before "${context.allSectionTitles[context.sectionIndex + 1]}".`
-        }
-      }
-      
-      prompt += ` Focus on creating compelling, effective hypnotic content for just this section. Do not include section headers (##) in your response - just the content.`
-      
-      if (currentSectionContent) {
-        prompt += ` Current content to improve: "${currentSectionContent.substring(0, 300)}${currentSectionContent.length > 300 ? '...' : ''}"`
-      }
+      // Use the simple section regeneration template
+      const prompt = getSectionRegenerationPrompt(sectionTitle)
       
       await generateScript({
         prompt,
@@ -118,21 +70,22 @@ export const ScriptPage = () => {
     }
   }
 
-  const isGenerating = currentGeneration && currentGeneration.conversationId === conversation?.id && !currentGeneration.isComplete
-  const isRegeneratingSection = isGenerating && currentGeneration?.sectionTitle
-  
-  // With the new architecture, we disable all regeneration during generation
+  const isGenerating = isConversationGenerating(conversation, currentGeneration)
   const shouldDisableRegenerate = isGenerating
   
-  // Use parsed sections from the conversation document or fall back to parsing display content
-  const sections = conversationDocument?.sections || parseContentSections(displayContent)
+  // Get sections from the conversation document or compose from current script
+  const sections = conversationDocument?.sections || getCurrentScriptSections(conversation)
   
-  // During section regeneration, show the streaming content for that section
+  // During section regeneration, show live updates for the regenerating section
   const sectionsWithLiveUpdates = sections.map(section => {
-    if (isRegeneratingSection && currentGeneration?.sectionTitle === section.title) {
+    if (isSectionRegenerating(conversation, section.title, currentGeneration)) {
+      // Get the latest generation's response as the live section content
+      const latestGeneration = conversation?.generations?.[conversation.generations.length - 1]
+      const liveContent = latestGeneration?.response || ''
+      
       return {
         ...section,
-        content: currentGeneration.content || section.content
+        content: liveContent // Show the live content directly for the section being regenerated
       }
     }
     return section
@@ -209,9 +162,9 @@ export const ScriptPage = () => {
               </div>
             </section>
           ))
-        ) : displayContent ? (
+        ) : currentScript ? (
           // Fallback for content without clear sections
-          displayContent.split('\n').map((paragraph: string, index: number) => 
+          currentScript.split('\n').map((paragraph: string, index: number) => 
             paragraph.trim() ? (
               <p key={index}>{paragraph}</p>
             ) : null

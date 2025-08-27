@@ -1,4 +1,4 @@
-import type { GenerationRequest, Conversation } from '../types/conversation'
+import type { GenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
 import type { ScriptGenerationService } from './scriptGenerationService'
 
@@ -165,7 +165,7 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
 
   async *generateScript(
     request: GenerationRequest,
-    conversation?: Conversation,
+    messages?: ChatMessage[],
     examples?: ExampleScript[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
@@ -188,31 +188,29 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     // Get the appropriate content based on the request
     let content: string
     
-    if (request.regenerate && request.sectionId && conversation) {
-      const section = conversation.sections.find(s => s.id === request.sectionId)
-      if (section) {
-        console.debug('Regenerating section', request.sectionId)
-        
-        // Generate expanded content and ensure it meets word count requirements
-        content = this.generateExpandedSectionContent(section.title)
-        const wordCount = content.split(/\s+/).length
-        
-        console.debug('Generated expanded content', {
-          wordCount,
-          meetsRequirement: wordCount >= 400
-        })
-        
-        // If content is still under 400 words, generate additional content
-        if (wordCount < 400) {
-          console.debug('Content under 400 words, expanding further')
-          content = this.generateEvenLongerContent(section.title)
-        }
-      } else {
-        console.warn('Section not found for regeneration', { sectionId: request.sectionId })
-        content = this.generateScriptContent(request.prompt)
+    if (request.regenerate && request.sectionTitle) {
+      console.debug('Regenerating section', request.sectionTitle)
+      
+      // Generate expanded content and ensure it meets word count requirements
+      content = this.generateExpandedSectionContent(request.sectionTitle)
+      const wordCount = content.split(/\s+/).length
+      
+      console.debug('Generated expanded content', {
+        wordCount,
+        meetsRequirement: wordCount >= 400
+      })
+      
+      // If content is still under 400 words, generate additional content
+      if (wordCount < 400) {
+        console.debug('Content under 400 words, expanding further')
+        content = this.generateEvenLongerContent(request.sectionTitle)
       }
     } else {
-      content = this.generateScriptContent(request.prompt)
+      // Regular generation - use prompt from request or extract from messages
+      const prompt = request.prompt || (messages && messages.length > 0 
+        ? messages[messages.length - 1]?.content || 'Generate a hypnosis script'
+        : 'Generate a hypnosis script')
+      content = this.generateScriptContent(prompt)
     }
 
     const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`

@@ -103,25 +103,17 @@ export const getLatestContent = (conversation: RawConversation | undefined): str
   return latestGeneration?.response || ''
 }
 
-/**
- * Compose all generations into a single document at render time
- * This combines all generations into one coherent document
- */
-export const composeFullDocument = (conversation: RawConversation | undefined): string => {
-  if (!conversation || !conversation.generations || conversation.generations.length === 0) return ''
-  
-  // For now, simply use the latest generation's response
-  // In the future, this could intelligently merge multiple generations
-  const latestGeneration = conversation.generations[conversation.generations.length - 1]
-  return latestGeneration?.response || ''
-}
 
 /**
  * Derive current conversation state from raw conversation
  * This returns the parsed version of the composed document
  */
 export const deriveConversationState = (conversation: RawConversation | undefined): ConversationDocument | null => {
-  const composedDocument = composeFullDocument(conversation)
+  if (!conversation || !conversation.generations || conversation.generations.length === 0) return null
+  
+  const latestGeneration = conversation.generations[conversation.generations.length - 1]
+  const composedDocument = latestGeneration?.response || ''
+  
   if (!composedDocument) {
     return null
   }
@@ -129,21 +121,6 @@ export const deriveConversationState = (conversation: RawConversation | undefine
   return parseConversationDocument(composedDocument)
 }
 
-/**
- * Get all section titles from the latest generation
- */
-export const getCurrentSectionTitles = (conversation: RawConversation | undefined): string[] => {
-  const document = deriveConversationState(conversation)
-  return document ? document.sections.map(section => section.title) : []
-}
-
-/**
- * Get document title from the latest generation
- */
-export const getCurrentDocumentTitle = (conversation: RawConversation | undefined): string | undefined => {
-  const document = deriveConversationState(conversation)
-  return document?.header.title
-}
 
 /**
  * Get the cached tokens from the latest generation for monitoring cache performance

@@ -1,4 +1,4 @@
-import type { GenerationRequest, Conversation } from '../types/conversation'
+import type { GenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
 import type { AppConfig } from './config'
 import { OpenAIService } from './openai'
@@ -12,7 +12,7 @@ import { canUseOpenAI } from './config'
 export async function* generateScript(
   config: AppConfig,
   request: GenerationRequest,
-  conversation?: Conversation,
+  messages?: ChatMessage[],
   examples?: ExampleScript[],
   abortSignal?: AbortSignal
 ): AsyncGenerator<string, void, unknown> {
@@ -24,5 +24,5 @@ export async function* generateScript(
     service = new MockAPIService()
   }
 
-  yield* service.generateScript(request, conversation, examples, abortSignal)
+  yield* service.generateScript(request, messages, examples, abortSignal)
 }

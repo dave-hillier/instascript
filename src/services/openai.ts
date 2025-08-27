@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
-import type { GenerationRequest, Conversation } from '../types/conversation'
-import { getSystemPrompt, getSectionRegenerationPrompt, formatExamplesForPrompt } from './prompts'
+import type { GenerationRequest, ChatMessage } from '../types/conversation'
+import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
 import type { ExampleScript } from './vectorStore'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { getModel } from './config'
@@ -43,73 +43,43 @@ export class OpenAIService implements ScriptGenerationService {
     return instructions
   }
 
-  private conversationToMessages(conversation: Conversation, excludeSystemMessages = false): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
-    // Convert conversation messages to OpenAI chat format
-    const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
-    
-    // Add conversation history
-    for (const msg of conversation.messages) {
-      if (msg.role === 'system' && !excludeSystemMessages) {
-        messages.push({ role: 'system', content: msg.content })
-      } else if (msg.role === 'user') {
-        messages.push({ role: 'user', content: msg.content })
-      } else if (msg.role === 'assistant') {
-        messages.push({ role: 'assistant', content: msg.content })
-      }
-    }
-    
-    console.debug('Built conversation messages:', {
-      originalMessageCount: conversation.messages.length,
-      convertedMessageCount: messages.length,
-      excludedSystemMessages: excludeSystemMessages
-    })
-    
-    return messages
+  private chatMessagesToOpenAI(messages: ChatMessage[]): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
+    // Convert ChatMessage[] to OpenAI chat format
+    return messages.map(msg => ({
+      role: msg.role,
+      content: msg.content
+    }))
   }
 
   async *generateScript(
     request: GenerationRequest,
-    conversation?: Conversation,
+    messages?: ChatMessage[],
     examples?: ExampleScript[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     console.debug('OpenAIService.generateScript called', {
-      hasConversation: !!conversation,
+      messagesCount: messages?.length || 0,
       examplesCount: examples?.length || 0,
       regenerate: request.regenerate,
-      sectionId: request.sectionId
+      sectionTitle: request.sectionTitle
     })
     
-    // Build messages array for chat completions
-    const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
+    let finalMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
     
-    // Add system message with instructions and examples
-    const systemMessage = this.buildInstructions(examples)
-    messages.push({ role: 'system', content: systemMessage })
-    
-    if (conversation && conversation.messages.length > 0) {
-      // Add existing conversation messages, excluding system messages to avoid duplicates
-      // since we're adding our own system message with current examples above
-      const conversationMessages = this.conversationToMessages(conversation, true)
-      messages.push(...conversationMessages)
-      
-      // If regenerating a specific section, add regeneration prompt
-      if (request.regenerate && request.sectionId) {
-        const section = conversation.sections.find(s => s.id === request.sectionId)
-        if (section) {
-          const regenerationPrompt = getSectionRegenerationPrompt(section.title)
-          messages.push({ role: 'user', content: regenerationPrompt })
-        }
-      }
+    if (messages && messages.length > 0) {
+      // Use provided messages directly (already includes system + examples + conversation history)
+      finalMessages = this.chatMessagesToOpenAI(messages)
     } else {
-      // For new conversations, add the initial prompt
-      messages.push({ role: 'user', content: request.prompt })
+      // For new conversations, build from scratch
+      const systemMessage = this.buildInstructions(examples)
+      finalMessages.push({ role: 'system', content: systemMessage })
+      finalMessages.push({ role: 'user', content: request.prompt })
     }
 
     try {
       // Generate a prompt cache key based on system message (which includes examples)
       // This ensures requests with the same examples get cached together
-      const systemMessage = messages.find(msg => msg.role === 'system')
+      const systemMessage = finalMessages.find(msg => msg.role === 'system')
       const systemContent = systemMessage?.content
       const promptCacheKey = systemContent && typeof systemContent === 'string'
         ? `system-${this.generateCacheKeyHash(systemContent)}`
@@ -117,7 +87,7 @@ export class OpenAIService implements ScriptGenerationService {
 
       const completionsPayload = {
         model: getModel(),
-        messages: messages,
+        messages: finalMessages,
         stream: true,
         temperature: 1, // Not supported on gpt-5 
         ...(promptCacheKey && { prompt_cache_key: promptCacheKey })
@@ -128,8 +98,8 @@ export class OpenAIService implements ScriptGenerationService {
       console.debug('OpenAI Chat Completions API Request:', {
         ...completionsPayload,
         promptCacheKey,
-        systemMessageLength: systemMessage?.content.length || 0,
-        totalMessages: messages.length,
+        systemMessageLength: systemMessage?.content?.length || 0,
+        totalMessages: finalMessages.length,
         hasAbortSignal: !!abortSignal
       })
       

@@ -73,7 +73,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     return state.conversations.find(conv => conv.scriptId === scriptId)
   }, [state.conversations])
 
-  const createConversation = useCallback((scriptId: string, _initialPrompt: string): RawConversation => {
+  const createConversation = useCallback((scriptId: string): RawConversation => {
     const conversation = createRawConversation(scriptId)
     
     pendingConversationRef.current = conversation

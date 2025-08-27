@@ -6,10 +6,6 @@ import { VectorStoreService } from './vectorStore'
 import { MockVectorStoreService } from './mockVectorStore'
 import { createAppConfig, canUseOpenAI, type AppConfig } from './config'
 
-/**
- * Pure functions to create services based on configuration
- * No internal state or side effects
- */
 
 export function createScriptService(config?: AppConfig): ScriptGenerationService {
   const appConfig = config || createAppConfig()

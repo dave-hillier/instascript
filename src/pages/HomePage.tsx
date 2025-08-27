@@ -35,7 +35,7 @@ export const HomePage = () => {
       }
 
       // Create conversation
-      const conversation = createConversation(scriptId, prompt)
+      const conversation = createConversation(scriptId)
       script.conversationId = conversation.id
 
       // Add script to app state

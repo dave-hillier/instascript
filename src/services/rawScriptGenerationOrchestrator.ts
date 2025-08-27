@@ -1,16 +1,15 @@
-import type { RawConversation, GenerationRequest, Conversation, ChatMessage } from '../types/conversation'
+import type { RawConversation, GenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './vectorStore'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
 import { getSystemPrompt } from './prompts'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
-import { adaptRawToLegacyConversation } from '../utils/conversationAdapter'
 
 export interface RawScriptServices {
   scriptService: {
     generateScript(
       request: GenerationRequest, 
-      conversation?: Conversation, 
+      messages?: ChatMessage[], 
       examples?: ExampleScript[], 
       abortSignal?: AbortSignal
     ): AsyncIterable<string>
@@ -84,7 +83,6 @@ export class RawScriptGenerationOrchestrator {
     this.callbacks.dispatch({
       type: 'SET_GENERATION_PROGRESS',
       conversationId: request.conversationId || '',
-      content: '',
       isComplete: false,
       sectionTitle: sectionTitle
     })
@@ -106,27 +104,17 @@ export class RawScriptGenerationOrchestrator {
         
         accumulatedContent += chunk
         
-        // Update either the full generation or just a specific section
-        if (sectionTitle) {
-          this.callbacks.dispatch({
-            type: 'UPDATE_SECTION_IN_CURRENT_GENERATION',
-            conversationId,
-            sectionTitle,
-            newContent: accumulatedContent
-          })
-        } else {
-          this.callbacks.dispatch({
-            type: 'UPDATE_CURRENT_GENERATION',
-            conversationId,
-            response: accumulatedContent
-          })
-        }
+        // Update the current generation with raw response
+        this.callbacks.dispatch({
+          type: 'UPDATE_CURRENT_GENERATION',
+          conversationId,
+          response: accumulatedContent
+        })
         
         // Update generation progress
         this.callbacks.dispatch({
           type: 'SET_GENERATION_PROGRESS',
           conversationId,
-          content: accumulatedContent,
           isComplete: false,
           sectionTitle
         })
@@ -142,7 +130,6 @@ export class RawScriptGenerationOrchestrator {
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
-        content: accumulatedContent,
         isComplete: true,
         sectionTitle
       })
@@ -154,7 +141,6 @@ export class RawScriptGenerationOrchestrator {
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
-        content: accumulatedContent,
         isComplete: true,
         error: error instanceof Error ? error.message : 'Unknown error',
         sectionTitle
@@ -182,25 +168,37 @@ export class RawScriptGenerationOrchestrator {
       let messages: ChatMessage[]
       let examples: ExampleScript[] = []
       
-      // For section regeneration, reuse the cached messages from the previous generation
+      // For section regeneration, build complete conversation history from all generations
       if (request.regenerate && sectionTitle && conversation.generations.length > 0) {
-        const lastGeneration = conversation.generations[conversation.generations.length - 1]
-        messages = [...lastGeneration.messages] // Clone the cached messages array
+        messages = []
         
-        // Replace the final user message with the section regeneration prompt
-        if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
-          messages[messages.length - 1] = {
-            role: 'user',
-            content: request.prompt
+        // Build complete conversation history from all generations
+        for (let i = 0; i < conversation.generations.length; i++) {
+          const generation = conversation.generations[i]
+          
+          // Add all messages from this generation (system, user, any intermediate messages)
+          messages.push(...generation.messages)
+          
+          // Add the assistant response for this generation
+          if (generation.response) {
+            messages.push({
+              role: 'assistant',
+              content: generation.response
+            })
           }
-        } else {
-          messages.push({
-            role: 'user', 
-            content: request.prompt
-          })
         }
         
-        console.log('Reusing cached messages for section regeneration - should get cache hit!')
+        // Add the new regeneration request
+        messages.push({
+          role: 'user',
+          content: request.prompt
+        })
+        
+        console.log('Built complete conversation history for section regeneration:', {
+          totalGenerations: conversation.generations.length,
+          totalMessages: messages.length,
+          messageTypes: messages.map(m => m.role)
+        })
       } else {
         // For new generation, retrieve examples and build fresh messages
         examples = await this.retrieveExamples(request, conversation)
@@ -216,33 +214,13 @@ export class RawScriptGenerationOrchestrator {
         messages: messages
       })
       
-      // For regeneration, we need to create a custom stream since we're modifying the request
-      let stream: AsyncIterable<string>
-      
-      if (request.regenerate && sectionTitle && messages.length > 0) {
-        // Create a modified conversation with our cached messages for regeneration
-        const tempLegacyConversation = adaptRawToLegacyConversation(conversation)
-        
-        stream = this.services.scriptService.generateScript(
-          request,
-          tempLegacyConversation,
-          examples,
-          abortSignal
-        )
-      } else {
-        // Regular generation
-        const legacyConversation = adaptRawToLegacyConversation(conversation)
-        
-        stream = this.services.scriptService.generateScript(
-          request, 
-          legacyConversation, 
-          examples, 
-          abortSignal
-        )
-        
-        // TODO: Capture the actual messages that were sent by the service
-        // For now, we'll need to modify the service to expose this
-      }
+      // Call the script service directly with messages
+      const stream = this.services.scriptService.generateScript(
+        request,
+        messages,
+        examples,
+        abortSignal
+      )
       
       await this.processStream(stream, conversation.id, abortSignal, sectionTitle)
       
@@ -254,7 +232,6 @@ export class RawScriptGenerationOrchestrator {
         this.callbacks.dispatch({
           type: 'SET_GENERATION_PROGRESS',
           conversationId: conversation.id,
-          content: '',
           isComplete: true,
           error: error instanceof Error ? error.message : 'Unknown error'
         })

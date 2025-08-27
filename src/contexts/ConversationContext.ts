@@ -6,7 +6,7 @@ export type ConversationContextType = {
   state: RawConversationState
   dispatch: (action: RawConversationAction) => void
   getConversationByScriptId: (scriptId: string) => RawConversation | undefined
-  createConversation: (scriptId: string, initialPrompt: string) => RawConversation
+  createConversation: (scriptId: string) => RawConversation
   generateScript: (request: GenerationRequest) => Promise<void>
 }
 
