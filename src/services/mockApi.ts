@@ -3,6 +3,10 @@ import type { ExampleScript } from './vectorStore'
 import type { ScriptGenerationService } from './scriptGenerationService'
 
 export class MockAPIService implements ScriptGenerationService {
+  constructor() {
+    console.warn('MockAPIService is being used - this should only be used for testing!')
+  }
+
   private async delay(min: number, max?: number, reason?: string): Promise<void> {
     const ms = max ? Math.random() * (max - min) + min : min
     if (reason) {
@@ -14,34 +18,35 @@ export class MockAPIService implements ScriptGenerationService {
   private splitIntoRealisticChunks(content: string): string[] {
     const chunks: string[] = []
     
-    // Split by sentences first
-    const sentences = content.match(/[^.!?]+[.!?]+\s*/g) || []
+    // Split content into words while preserving spaces and newlines
+    const tokens = content.match(/\S+|\s+|\n/g) || []
     
-    // Group sentences into chunks of varying sizes to simulate streaming
-    let currentChunk = ''
-    
-    for (const sentence of sentences) {
-      // Randomly decide whether to send this sentence alone or group it
-      const shouldGroup = Math.random() > 0.3
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i]
       
-      if (shouldGroup && currentChunk) {
-        currentChunk += sentence
-        // Send chunk if it's getting long
-        if (currentChunk.length > 150 || Math.random() > 0.7) {
-          chunks.push(currentChunk)
-          currentChunk = ''
+      // Randomly choose streaming granularity
+      const rand = Math.random()
+      
+      if (rand < 0.15) {
+        // 15% chance: Stream character by character for this token
+        for (const char of token) {
+          chunks.push(char)
         }
-      } else if (currentChunk) {
-        chunks.push(currentChunk)
-        currentChunk = sentence
+      } else if (rand < 0.8) {
+        // 65% chance: Stream token by token (most common)
+        chunks.push(token)
       } else {
-        currentChunk = sentence
+        // 20% chance: Group 2-4 tokens together
+        let group = token
+        const numToGroup = Math.floor(Math.random() * 3) + 1
+        
+        for (let j = 1; j <= numToGroup && i + j < tokens.length; j++) {
+          group += tokens[i + j]
+        }
+        
+        chunks.push(group)
+        i += numToGroup // Skip the grouped tokens
       }
-    }
-    
-    // Push any remaining content
-    if (currentChunk) {
-      chunks.push(currentChunk)
     }
     
     return chunks
@@ -219,17 +224,17 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
       
       yield chunk
       
-      // Variable delays between chunks
+      // Variable delays between chunks to simulate real streaming
       if (i < chunks.length - 1) {
-        if (Math.random() < 0.1) {
-          // Occasional network delay (10% chance)
-          await this.delay(300, 800, 'Network delay simulation')
-        } else if (Math.random() < 0.3) {
-          // Slower chunk (30% chance)
-          await this.delay(100, 300)
+        if (Math.random() < 0.05) {
+          // Occasional network delay (5% chance)
+          await this.delay(100, 300, 'Network delay simulation')
+        } else if (Math.random() < 0.2) {
+          // Slower chunk (20% chance)
+          await this.delay(20, 50)
         } else {
-          // Normal speed
-          await this.delay(30, 100)
+          // Normal speed - very fast for word-by-word streaming
+          await this.delay(5, 20)
         }
       }
     }

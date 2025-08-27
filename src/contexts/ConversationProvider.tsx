@@ -450,6 +450,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       let accumulatedContent = ''
       let chunkCount = 0
       let firstChunkTime: number | null = null
+      const processedSectionTitles = new Set<string>() // Track which section titles we've already created
 
       console.debug('Starting streaming...')
       console.time('Streaming Duration')
@@ -494,42 +495,75 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           }
         } else {
           // For new generation, parse sections from content
-          // Check if we've completed a section (next section started)
-          // Skip the main title (single #) and only process sections (##)
-          const sectionMatches = accumulatedContent.match(/##\s+(.+?)(?=\n##|\n$|$)/gs)
-          if (sectionMatches && sectionMatches.length > 0) {
-            const lastSection = sectionMatches[sectionMatches.length - 1]
-            const sectionTitle = lastSection.match(/##\s+(.+?)(?=\n|$)/)?.[1]?.trim()
-
-            if (sectionTitle && conversation) {
-              // Check if this is a new section
-              const existingSection = conversation.sections.find(s => s.title === sectionTitle)
-              
-              if (!existingSection) {
-                console.debug(`New section detected: "${sectionTitle}"`)
-                // Create new section
-                const newSection: ConversationSection = {
-                  id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-                  title: sectionTitle,
-                  content: lastSection,
-                  status: 'generating',
-                  messageIds: []
+          // Split content by section headers
+          const lines = accumulatedContent.split('\n')
+          let currentSectionStart = -1
+          let currentSectionTitle = ''
+          
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i]
+            
+            // Check if this is a section header
+            if (line.match(/^##\s+.+/)) {
+              // If we had a previous section, process it
+              if (currentSectionStart >= 0 && currentSectionTitle && conversation) {
+                const sectionContent = lines.slice(currentSectionStart, i).join('\n').trim()
+                
+                // Only create the section once (when we first encounter it)
+                if (!processedSectionTitles.has(currentSectionTitle)) {
+                  const existingSection = conversation.sections.find(s => s.title === currentSectionTitle)
+                  
+                  if (!existingSection) {
+                    console.debug(`New section detected: "${currentSectionTitle}"`)
+                    const newSection: ConversationSection = {
+                      id: `section_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+                      title: currentSectionTitle,
+                      content: sectionContent,
+                      status: 'generating',
+                      messageIds: []
+                    }
+                    
+                    dispatch({
+                      type: 'CREATE_SECTION',
+                      conversationId: conversation.id,
+                      section: newSection
+                    })
+                    
+                    processedSectionTitles.add(currentSectionTitle)
+                  } else {
+                    // Update existing section with accumulated content
+                    dispatch({
+                      type: 'UPDATE_SECTION',
+                      conversationId: conversation.id,
+                      sectionId: existingSection.id,
+                      updates: { content: sectionContent, status: 'generating' }
+                    })
+                  }
                 }
-
-                dispatch({
-                  type: 'CREATE_SECTION',
-                  conversationId: conversation.id,
-                  section: newSection
-                })
-              } else {
-                // Update existing section
-                dispatch({
-                  type: 'UPDATE_SECTION',
-                  conversationId: conversation.id,
-                  sectionId: existingSection.id,
-                  updates: { content: lastSection, status: 'generating' }
-                })
               }
+              
+              // Start tracking new section
+              currentSectionStart = i
+              currentSectionTitle = line.match(/##\s+(.+?)$/)?.[1]?.trim() || ''
+            }
+          }
+          
+          // Handle the last section if it exists (still being streamed)
+          if (currentSectionStart >= 0 && currentSectionTitle && conversation) {
+            const sectionContent = lines.slice(currentSectionStart).join('\n').trim()
+            const existingSection = conversation.sections.find(s => s.title === currentSectionTitle)
+            
+            if (existingSection) {
+              // Update with current content
+              dispatch({
+                type: 'UPDATE_SECTION',
+                conversationId: conversation.id,
+                sectionId: existingSection.id,
+                updates: { content: sectionContent, status: 'generating' }
+              })
+            } else if (!processedSectionTitles.has(currentSectionTitle)) {
+              // Don't create new section for partial content, wait until we see next section
+              // This prevents creating sections prematurely
             }
           }
         }
