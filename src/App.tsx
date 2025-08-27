@@ -1,6 +1,6 @@
 import { useReducer, useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Settings, ArrowLeft, Bell } from 'lucide-react'
+import { Settings, ArrowLeft, Bell, Square } from 'lucide-react'
 import { useAppContext } from './hooks/useAppContext'
 import { useJobQueue } from './hooks/useJobQueue'
 import { SettingsModal } from './components/SettingsModal'
@@ -32,6 +32,7 @@ function NotificationBell() {
   )
   const completedJobs = state.jobs.filter(job => job.status === 'completed')
   const failedJobs = state.jobs.filter(job => job.status === 'failed')
+  const cancelledJobs = state.jobs.filter(job => job.status === 'cancelled')
   const totalActiveJobs = activeJobs.length
   
   // Close dropdown when clicking outside
@@ -87,7 +88,7 @@ function NotificationBell() {
             <div role="status">No jobs yet</div>
           ) : (
             <ul role="list">
-              {[...activeJobs, ...completedJobs, ...failedJobs].map(job => (
+              {[...activeJobs, ...completedJobs, ...failedJobs, ...cancelledJobs].map(job => (
                 <li key={job.id} role="listitem">
                   <span 
                     className={`status-${job.status}`}
@@ -100,7 +101,8 @@ function NotificationBell() {
                     <p>
                       {job.status === 'processing' ? 'In progress...' : 
                        job.status === 'completed' ? 'Completed' :
-                       job.status === 'failed' ? 'Failed' : 'Queued'}
+                       job.status === 'failed' ? 'Failed' :
+                       job.status === 'cancelled' ? 'Cancelled' : 'Queued'}
                       {' • '}
                       <time dateTime={new Date(job.createdAt).toISOString()}>
                         {new Date(job.createdAt).toLocaleTimeString()}
@@ -123,7 +125,7 @@ function NotificationBell() {
                       Retry
                     </button>
                   )}
-                  {(job.status === 'failed' || job.status === 'completed') && (
+                  {(job.status === 'failed' || job.status === 'completed' || job.status === 'cancelled') && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
@@ -140,7 +142,7 @@ function NotificationBell() {
             </ul>
           )}
           
-          {(completedJobs.length > 0 || failedJobs.length > 0) && (
+          {(completedJobs.length > 0 || failedJobs.length > 0 || cancelledJobs.length > 0) && (
             <footer>
               <button
                 onClick={() => {
@@ -175,6 +177,7 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
+  const { state: jobQueueState, cancelJobsForScript } = useJobQueue()
   
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
     theme: (() => {
@@ -276,6 +279,17 @@ function AppContent() {
   const scriptId = isScriptPage ? location.pathname.split('/script/')[1] : null
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
   const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
+  
+  // Check if current script is generating
+  const isCurrentScriptGenerating = scriptId && jobQueueState.jobs.some(job => 
+    job.scriptId === scriptId && (job.status === 'queued' || job.status === 'processing')
+  )
+  
+  const handleStopGeneration = () => {
+    if (scriptId) {
+      cancelJobsForScript(scriptId)
+    }
+  }
 
   const handleSaveSettings = (newApiKey: string, newApiProvider: 'openai' | 'mock', newModel: Model) => {
     if (newApiKey.trim()) {
@@ -325,6 +339,17 @@ function AppContent() {
               style={{ marginRight: '1rem' }}
             >
               <ArrowLeft size={18} />
+            </button>
+          )}
+          {isCurrentScriptGenerating && (
+            <button 
+              onClick={handleStopGeneration}
+              aria-label="Stop script generation"
+              type="button"
+              className="stop-button"
+              style={{ marginRight: '1rem' }}
+            >
+              <Square size={18} />
             </button>
           )}
           <div>

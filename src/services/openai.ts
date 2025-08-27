@@ -70,7 +70,8 @@ export class OpenAIService implements ScriptGenerationService {
   async *generateScript(
     request: GenerationRequest,
     conversation?: Conversation,
-    examples?: ExampleScript[]
+    examples?: ExampleScript[],
+    abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     console.debug('OpenAIService.generateScript called', {
       hasConversation: !!conversation,
@@ -132,15 +133,18 @@ export class OpenAIService implements ScriptGenerationService {
         ...(promptCacheKey && { prompt_cache_key: promptCacheKey })
       }
       
+      const requestOptions = abortSignal ? { signal: abortSignal } : {}
+      
       console.debug('OpenAI Chat Completions API Request:', {
         ...completionsPayload,
         promptCacheKey,
         systemMessageLength: systemMessage?.content.length || 0,
-        totalMessages: messages.length
+        totalMessages: messages.length,
+        hasAbortSignal: !!abortSignal
       })
       
       // Use the Chat Completions API with streaming
-      const response = await this.client.chat.completions.create(completionsPayload) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
+      const response = await this.client.chat.completions.create(completionsPayload, requestOptions) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
 
       // Stream the response chunks
       let isFirstChunk = true
@@ -170,6 +174,10 @@ export class OpenAIService implements ScriptGenerationService {
         }
       }
     } catch (error) {
+      if (abortSignal?.aborted) {
+        console.debug('Generation aborted by user')
+        return
+      }
       console.error('Generation error:', error)
       throw error
     }

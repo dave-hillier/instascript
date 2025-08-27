@@ -1,6 +1,6 @@
 export type JobType = 'generate-script' | 'regenerate-section'
 
-export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed'
+export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
 
 export interface BaseJob {
   id: string
@@ -44,9 +44,11 @@ export type JobQueueAction =
   | { type: 'SET_PROCESSING'; isProcessing: boolean }
   | { type: 'LOAD_JOBS'; jobs: Job[] }
   | { type: 'CLEAR_COMPLETED_JOBS' }
+  | { type: 'CANCEL_JOB'; jobId: string }
+  | { type: 'CANCEL_JOBS_FOR_SCRIPT'; scriptId: string }
 
 export interface JobQueueMessage {
-  type: 'job-added' | 'job-updated' | 'job-completed' | 'job-failed' | 'queue-sync'
+  type: 'job-added' | 'job-updated' | 'job-completed' | 'job-failed' | 'job-cancelled' | 'queue-sync'
   jobId?: string
   job?: Job
   jobs?: Job[]

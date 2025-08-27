@@ -186,6 +186,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
+  const activeJobAbortControllerRef = useRef<{ jobId: string; controller: AbortController } | null>(null)
   const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
   const currentStateRef = useRef<ConversationState>(state)
   
@@ -383,7 +384,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     return conversation
   }, [])
 
-  const generateScript = useCallback(async (request: GenerationRequest): Promise<void> => {
+  const generateScript = useCallback(async (request: GenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
     const startTime = Date.now()
     
     console.group('Script Generation')
@@ -502,7 +503,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       console.time('Streaming Duration')
 
       // Generate content using the script service
-      for await (const chunk of scriptService.generateScript(request, conversation, examples)) {
+      for await (const chunk of scriptService.generateScript(request, conversation, examples, abortSignal)) {
         if (firstChunkTime === null) {
           firstChunkTime = Date.now()
           const timeToFirstChunk = firstChunkTime - startTime
@@ -861,6 +862,17 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       console.debug(`Processing job: ${queuedJob.id} (${queuedJob.type})`)
       
       try {
+        // Check if job was cancelled before processing
+        const currentJob = jobQueue.state.jobs.find(j => j.id === queuedJob.id)
+        if (!currentJob || currentJob.status === 'cancelled') {
+          console.debug(`Job was cancelled before processing: ${queuedJob.id}`)
+          return
+        }
+        
+        // Create AbortController for this job
+        const abortController = new AbortController()
+        activeJobAbortControllerRef.current = { jobId: queuedJob.id, controller: abortController }
+        
         // Mark job as processing
         jobQueue.updateJob(queuedJob.id, { status: 'processing' })
         
@@ -870,7 +882,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
             prompt: job.prompt,
             conversationId: job.conversationId
           }
-          await generateScript(request)
+          await generateScript(request, abortController.signal)
         } else if (queuedJob.type === 'regenerate-section') {
           const job = queuedJob as RegenerateSectionJob
           const request: GenerationRequest = {
@@ -879,8 +891,11 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
             sectionId: job.sectionId,
             regenerate: true
           }
-          await generateScript(request)
+          await generateScript(request, abortController.signal)
         }
+        
+        // Clear the abort controller when job completes
+        activeJobAbortControllerRef.current = null
         
         // Mark job as completed
         jobQueue.updateJob(queuedJob.id, { status: 'completed' })
@@ -889,6 +904,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         // Auto-regeneration check is now handled inside generateScript function
         
       } catch (error) {
+        // Clear the abort controller on error
+        activeJobAbortControllerRef.current = null
         console.error(`Job failed: ${queuedJob.id}`, error)
         jobQueue.updateJob(queuedJob.id, { 
           status: 'failed',
@@ -902,6 +919,20 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     const interval = setInterval(processJobs, 1000)
     return () => clearInterval(interval)
   }, [jobQueue, generateScript, handleAutoRegenerationCheck])
+
+  // Monitor for job cancellations and abort active jobs
+  useEffect(() => {
+    const activeJobInfo = activeJobAbortControllerRef.current
+    if (!activeJobInfo) return
+
+    // Only check for the specific active job to reduce unnecessary processing
+    const activeJob = jobQueue.state.jobs.find(job => job.id === activeJobInfo.jobId)
+    if (activeJob && activeJob.status === 'cancelled') {
+      console.debug(`Aborting active job: ${activeJobInfo.jobId}`)
+      activeJobInfo.controller.abort()
+      activeJobAbortControllerRef.current = null
+    }
+  }, [jobQueue.state.jobs])
 
   const contextValue: ConversationContextType = {
     state,

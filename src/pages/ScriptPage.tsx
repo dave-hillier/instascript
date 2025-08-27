@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, RotateCcw } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Square } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { useJobQueue } from '../hooks/useJobQueue'
@@ -12,7 +12,7 @@ export const ScriptPage = () => {
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
   const { state: conversationState, getConversationByScriptId } = useConversationContext()
-  const { state: jobQueueState } = useJobQueue()
+  const { state: jobQueueState, cancelJobsForScript } = useJobQueue()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -75,7 +75,20 @@ export const ScriptPage = () => {
     )
   }
 
+  const isScriptGenerating = () => {
+    if (!script) return false
+    return jobQueueState.jobs.some(job => 
+      job.scriptId === script.id && (job.status === 'queued' || job.status === 'processing')
+    )
+  }
+
+  const handleStopGeneration = () => {
+    if (!script) return
+    cancelJobsForScript(script.id)
+  }
+
   const isGenerating = currentGeneration && currentGeneration.conversationId === conversation?.id && !currentGeneration.isComplete
+  const isGeneratingFromJobs = isScriptGenerating()
   
   // Check if a section is currently being regenerated
   const isSectionRegenerating = (sectionId: string) => {
@@ -129,9 +142,20 @@ export const ScriptPage = () => {
     
   return (
     <section>
-      {isGenerating && (
+      {(isGenerating || isGeneratingFromJobs) && (
         <div role="status" aria-live="polite">
-          <p>Generating script...</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <p>{isGenerating ? 'Generating script...' : 'Preparing to generate script...'}</p>
+            <button
+              onClick={handleStopGeneration}
+              aria-label="Stop script generation"
+              type="button"
+              className="stop-button-with-text"
+            >
+              <Square size={16} />
+              Stop
+            </button>
+          </div>
           {currentGeneration?.error && (
             <p role="alert">Error: {currentGeneration.error}</p>
           )}

@@ -44,7 +44,27 @@ const jobQueueReducer = (state: JobQueueState, action: JobQueueAction): JobQueue
       return {
         ...state,
         jobs: state.jobs.filter(job => 
-          job.status !== 'completed' && job.status !== 'failed'
+          job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled'
+        )
+      }
+    
+    case 'CANCEL_JOB':
+      return {
+        ...state,
+        jobs: state.jobs.map(job =>
+          job.id === action.jobId
+            ? { ...job, status: 'cancelled' as const, updatedAt: Date.now() }
+            : job
+        )
+      }
+    
+    case 'CANCEL_JOBS_FOR_SCRIPT':
+      return {
+        ...state,
+        jobs: state.jobs.map(job =>
+          job.scriptId === action.scriptId && (job.status === 'queued' || job.status === 'processing')
+            ? { ...job, status: 'cancelled' as const, updatedAt: Date.now() }
+            : job
         )
       }
     
@@ -208,6 +228,50 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     coordinator.clearCompletedJobs()
   }, [])
 
+  const cancelJob = useCallback((jobId: string) => {
+    const coordinator = coordinatorRef.current
+    if (!coordinator) return
+    
+    const job = coordinator.getJobs().find(j => j.id === jobId)
+    if (!job) return
+    
+    coordinator.updateJob(jobId, { 
+      status: 'cancelled', 
+      updatedAt: Date.now()
+    })
+    
+    // Notify via message bus
+    messageBus.publish('JOB_STATUS_CHANGED', {
+      jobId,
+      status: 'cancelled',
+      type: job.type
+    })
+  }, [])
+
+  const cancelJobsForScript = useCallback((scriptId: string) => {
+    const coordinator = coordinatorRef.current
+    if (!coordinator) return
+    
+    const jobs = coordinator.getJobs()
+    const jobsToCancel = jobs.filter(job => 
+      job.scriptId === scriptId && (job.status === 'queued' || job.status === 'processing')
+    )
+    
+    jobsToCancel.forEach(job => {
+      coordinator.updateJob(job.id, { 
+        status: 'cancelled', 
+        updatedAt: Date.now()
+      })
+      
+      // Notify via message bus
+      messageBus.publish('JOB_STATUS_CHANGED', {
+        jobId: job.id,
+        status: 'cancelled',
+        type: job.type
+      })
+    })
+  }, [])
+
   const contextValue: JobQueueContextType = {
     state,
     addJob,
@@ -215,6 +279,8 @@ export const JobQueueProvider = ({ children }: JobQueueProviderProps) => {
     removeJob,
     retryJob,
     clearCompletedJobs,
+    cancelJob,
+    cancelJobsForScript,
     isLeader
   }
 

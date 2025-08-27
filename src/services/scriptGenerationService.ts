@@ -5,6 +5,7 @@ export interface ScriptGenerationService {
   generateScript(
     request: GenerationRequest,
     conversation?: Conversation,
-    examples?: ExampleScript[]
+    examples?: ExampleScript[],
+    abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown>
 }

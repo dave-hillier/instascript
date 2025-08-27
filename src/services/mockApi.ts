@@ -166,7 +166,8 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
   async *generateScript(
     request: GenerationRequest,
     conversation?: Conversation,
-    examples?: ExampleScript[]
+    examples?: ExampleScript[],
+    abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     // Starting mock generation
 
@@ -177,6 +178,12 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
 
     // Simulate initial API processing delay
     await this.delay(1000, 2500, 'Initial API processing')
+    
+    // Check for abort after initial delay
+    if (abortSignal?.aborted) {
+      console.debug('Mock generation aborted after initial delay')
+      return
+    }
 
     // Get the appropriate content based on the request
     let content: string
@@ -219,6 +226,12 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     
     // Stream chunks with realistic delays
     for (let i = 0; i < chunks.length; i++) {
+      // Check for abort before each chunk
+      if (abortSignal?.aborted) {
+        console.debug('Mock generation aborted during streaming')
+        return
+      }
+      
       const chunk = chunks[i]
       // Progress tracking removed - handled at API service layer
       
@@ -235,6 +248,12 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
         } else {
           // Normal speed - very fast for word-by-word streaming
           await this.delay(5, 20)
+        }
+        
+        // Check for abort after delay
+        if (abortSignal?.aborted) {
+          console.debug('Mock generation aborted during streaming')
+          return
         }
       }
     }

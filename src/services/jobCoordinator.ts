@@ -126,6 +126,7 @@ export class JobCoordinator {
       case 'job-updated':
       case 'job-completed':
       case 'job-failed':
+      case 'job-cancelled':
         // Sync jobs from storage
         this.syncJobs()
         break
@@ -207,7 +208,7 @@ export class JobCoordinator {
   clearCompletedJobs(): void {
     const jobs = this.getJobs()
     const activeJobs = jobs.filter(job => 
-      job.status !== 'completed' && job.status !== 'failed'
+      job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled'
     )
     this.saveJobs(activeJobs)
     

@@ -8,6 +8,8 @@ export interface JobQueueContextType {
   removeJob: (jobId: string) => void
   retryJob: (jobId: string) => void
   clearCompletedJobs: () => void
+  cancelJob: (jobId: string) => void
+  cancelJobsForScript: (scriptId: string) => void
   isLeader: boolean
 }
 
