@@ -245,8 +245,17 @@ export class ScriptGenerationOrchestrator {
       if (sectionHeaderMatch) {
         const sectionTitle = sectionHeaderMatch[1].trim()
         
-        // If no current section, or this is at a different line than current section
-        if (!currentSection || i !== currentSection.startPosition) {
+        // Check if this should be a new section or update to existing one
+        const shouldCreate = streamingState.shouldCreateNewSection(sectionTitle)
+        const currentSection = streamingState.getCurrentSection()
+        console.debug('Section decision', {
+          sectionTitle,
+          currentSectionTitle: currentSection?.currentTitle,
+          shouldCreateNew: shouldCreate,
+          lineIndex: i
+        })
+        
+        if (shouldCreate) {
           // This is a NEW section header we haven't seen before
           if (currentSection) {
             this.finalizeCurrentSection(conversation, streamingState)
@@ -258,7 +267,7 @@ export class ScriptGenerationOrchestrator {
           
           // Mark this position as processed
           streamingState.setLastProcessedPosition(i + 1)
-        } else if (currentSection && i === currentSection.startPosition) {
+        } else if (currentSection) {
           // This is the SAME section header we're already tracking, just evolving
           if (sectionTitle !== currentSection.currentTitle) {
             streamingState.updateCurrentSectionTitle(sectionTitle)

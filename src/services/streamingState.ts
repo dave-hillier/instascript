@@ -94,15 +94,28 @@ export class StreamingState {
   shouldCreateNewSection(sectionTitle: string): boolean {
     // Always create if no current section
     if (!this.currentSection) {
+      console.debug('shouldCreateNewSection: no current section, creating new')
       return true
     }
+
+    const currentTitle = this.currentSection.currentTitle
+    const newStartsWithCurrent = sectionTitle.startsWith(currentTitle)
+    const currentStartsWithNew = currentTitle.startsWith(sectionTitle)
+    const shouldCreate = !newStartsWithCurrent && !currentStartsWithNew
+    
+    console.debug('shouldCreateNewSection logic', {
+      currentTitle,
+      sectionTitle,
+      newStartsWithCurrent,
+      currentStartsWithNew,
+      shouldCreate
+    })
 
     // If the new title doesn't start with current title, it's a new section
     // E.g. current: "Visual", new: "Audio" -> new section
     // E.g. current: "Visual", new: "Visualization" -> same section (extends)
     // E.g. current: "Visualization", new: "Visual" -> same section (truncates)
-    return !sectionTitle.startsWith(this.currentSection.currentTitle) && 
-           !this.currentSection.currentTitle.startsWith(sectionTitle)
+    return shouldCreate
   }
 
   getConversationId(): string {

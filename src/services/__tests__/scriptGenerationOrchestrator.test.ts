@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ScriptGenerationOrchestrator } from '../scriptGenerationOrchestrator'
+import { StreamingState } from '../streamingState'
 import type { ScriptServices, GenerationCallbacks } from '../scriptGenerationOrchestrator'
 
 // Mock the content parser
@@ -217,6 +218,61 @@ More content.
           expect(result).toContain('Starting with your toes')
         }
       })
+    })
+  })
+
+  describe('Section title evolution during streaming', () => {
+    it('should update section titles as they evolve during streaming (E -> Emergence)', () => {
+      // Test the StreamingState logic directly
+      const streamingState = new StreamingState('test-conversation')
+      
+      // Start with "E" as section title
+      streamingState.startNewSection(0, 'E')
+      
+      // When we encounter "Emergence", it should NOT create a new section
+      // because "Emergence" starts with "E"
+      expect(streamingState.shouldCreateNewSection('Emergence')).toBe(false)
+      expect(streamingState.shouldCreateNewSection('Em')).toBe(false)
+      expect(streamingState.shouldCreateNewSection('Emer')).toBe(false)
+      
+      // But a completely different title should create a new section
+      expect(streamingState.shouldCreateNewSection('Introduction')).toBe(true)
+      expect(streamingState.shouldCreateNewSection('Visualization')).toBe(true)
+    })
+
+    it('should handle various section title evolution patterns', () => {
+      const streamingState = new StreamingState('test-conversation')
+      
+      // Test case 1: "Visual" -> "Visualization" (extension)
+      streamingState.startNewSection(0, 'Visual')
+      expect(streamingState.shouldCreateNewSection('Visualization')).toBe(false)
+      
+      // Test case 2: "Visualization" -> "Visual" (truncation) 
+      streamingState.updateCurrentSectionTitle('Visualization')
+      expect(streamingState.shouldCreateNewSection('Visual')).toBe(false)
+      
+      // Test case 3: "Progressive" -> "Progressive Relaxation"
+      streamingState.startNewSection(1, 'Progressive')
+      expect(streamingState.shouldCreateNewSection('Progressive Relaxation')).toBe(false)
+      
+      // Test case 4: Different section entirely
+      expect(streamingState.shouldCreateNewSection('Breathing')).toBe(true)
+    })
+
+    it('should handle edge cases in section title comparison', () => {
+      const streamingState = new StreamingState('test-conversation')
+      
+      // Empty current section should always create new
+      expect(streamingState.shouldCreateNewSection('Any Title')).toBe(true)
+      
+      // Single character extensions
+      streamingState.startNewSection(0, 'E')
+      expect(streamingState.shouldCreateNewSection('Em')).toBe(false)
+      expect(streamingState.shouldCreateNewSection('Emergence')).toBe(false)
+      
+      // Case sensitivity (should be treated as different sections)
+      streamingState.startNewSection(0, 'visual')  
+      expect(streamingState.shouldCreateNewSection('Visual')).toBe(true)
     })
   })
 })
