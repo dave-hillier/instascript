@@ -101,6 +101,13 @@ export const rawConversationReducer = (
       }
     
     case 'SET_GENERATION_PROGRESS':
+      // Prevent reverting completion state - once complete, stay complete
+      if (state.currentGeneration?.conversationId === action.conversationId && 
+          state.currentGeneration?.isComplete && 
+          !action.isComplete) {
+        return state
+      }
+      
       return { 
         ...state, 
         currentGeneration: {

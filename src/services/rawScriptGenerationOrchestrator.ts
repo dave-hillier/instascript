@@ -33,6 +33,8 @@ export interface RawGenerationCallbacks {
 export class RawScriptGenerationOrchestrator {
   private services: RawScriptServices
   private callbacks: RawGenerationCallbacks
+  private activeGenerations = new Set<string>()
+  private completedGenerations = new Set<string>()
   
   constructor(
     services: RawScriptServices,
@@ -99,6 +101,13 @@ export class RawScriptGenerationOrchestrator {
     abortSignal?: AbortSignal,
     sectionTitle?: string
   ): Promise<void> {
+    const generationKey = `${conversationId}-${sectionTitle || 'initial'}`
+    
+    if (this.activeGenerations.has(generationKey)) {
+      return
+    }
+    
+    this.activeGenerations.add(generationKey)
     let accumulatedContent = ''
     
     try {
@@ -116,27 +125,32 @@ export class RawScriptGenerationOrchestrator {
           response: accumulatedContent
         })
         
-        // Update generation progress
-        this.callbacks.dispatch({
-          type: 'SET_GENERATION_PROGRESS',
-          conversationId,
-          isComplete: false,
-          sectionTitle
-        })
+        // Update generation progress - but only if not completed
+        if (!this.completedGenerations.has(generationKey)) {
+          this.callbacks.dispatch({
+            type: 'SET_GENERATION_PROGRESS',
+            conversationId,
+            isComplete: false,
+            sectionTitle
+          })
+        }
       }
       
-      // Mark generation as complete
-      this.callbacks.dispatch({
-        type: 'COMPLETE_GENERATION',
-        conversationId,
-        response: accumulatedContent
-      })
+      // Mark generation as complete - first mark it as completed to prevent further updates
+      this.completedGenerations.add(generationKey)
       
+      // Dispatch completion actions
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true,
         sectionTitle
+      })
+      
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: accumulatedContent
       })
       
     } catch (error) {
@@ -152,6 +166,10 @@ export class RawScriptGenerationOrchestrator {
       })
       
       throw error
+    } finally {
+      // Clean up active generation tracking
+      this.activeGenerations.delete(generationKey)
+      // Don't clean up completedGenerations immediately - keep them to prevent late updates
     }
   }
 

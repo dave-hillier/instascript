@@ -11,6 +11,11 @@ export interface RegenerationRequest {
   sectionTitle: string
 }
 
+export interface SectionRegenerationRequest {
+  conversationId: string
+  sectionTitle: string
+}
+
 export interface GenerationProgress {
   conversationId: string
   sectionTitle?: string

@@ -1,6 +1,6 @@
 import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { RawConversation, GenerationRequest, RegenerationRequest } from '../types/conversation'
+import type { RawConversation, GenerationRequest, RegenerationRequest, SectionRegenerationRequest } from '../types/conversation'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
@@ -10,6 +10,7 @@ import { useAppContext } from '../hooks/useAppContext'
 import { rawConversationReducer } from '../reducers/rawConversationReducer'
 import { getStoredConversations, setStoredConversations, createRawConversation } from '../services/conversationStorage'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
+import { getSectionRegenerationPrompt } from '../services/prompts'
 
 type ConversationProviderProps = {
   children: ReactNode
@@ -51,11 +52,20 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     await orchestrator.generateScript(request, conversation, abortSignal)
   }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
 
-  const regenerateSection = useCallback(async (request: RegenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
+  const regenerateSection = useCallback(async (request: SectionRegenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
     // Find conversation in current state
     const conversation = state.conversations.find(c => c.id === request.conversationId)
     if (!conversation) {
       throw new Error(`Conversation ${request.conversationId} not found`)
+    }
+
+    // Generate the prompt internally - encapsulate the prompt logic
+    const prompt = getSectionRegenerationPrompt(request.sectionTitle)
+    
+    const regenerationRequest: RegenerationRequest = {
+      prompt,
+      conversationId: request.conversationId,
+      sectionTitle: request.sectionTitle
     }
 
     const services: RawScriptServices = {
@@ -69,7 +79,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     }
 
     const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
-    await orchestrator.regenerateSection(request, conversation, abortSignal)
+    await orchestrator.regenerateSection(regenerationRequest, conversation, abortSignal)
   }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
 
 
