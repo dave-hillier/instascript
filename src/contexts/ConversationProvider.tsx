@@ -7,13 +7,13 @@ import { useServices } from '../hooks/useServices'
 import { useAppContext } from '../hooks/useAppContext'
 import type { ExampleScript } from '../services/vectorStore'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
-import { PromptService } from '../services/prompts'
+import { getSystemPrompt } from '../services/prompts'
 import { useJobQueue } from '../hooks/useJobQueue'
-import { messageBus } from '../services/messageBus'
-import { scriptRegenerationService } from '../services/scriptRegenerationService'
 import { useRegeneration } from '../hooks/useRegeneration'
 import type { GenerateScriptJob, RegenerateSectionJob } from '../types/job'
-import type { MessageSubscription } from '../services/messageBus'
+import { 
+  analyzeConversationForRegeneration
+} from '../services/regenerationActions'
 
 type ConversationAction = 
   | { type: 'LOAD_CONVERSATIONS'; conversations: Conversation[] }
@@ -187,7 +187,6 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
   const activeJobAbortControllerRef = useRef<{ jobId: string; controller: AbortController } | null>(null)
-  const messageSubscriptionsRef = useRef<MessageSubscription[]>([])
   const currentStateRef = useRef<ConversationState>(state)
   
   // Update the current state ref whenever state changes
@@ -199,7 +198,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const jobQueue = useJobQueue()
   
   // Regeneration system integration
-  const { state: regenerationState, dispatch: regenerationDispatch } = useRegeneration()
+  const { state: regenerationState } = useRegeneration()
   
   // Handle regeneration section request from message bus
   const handleRegenerateSectionRequest = useCallback((payload: {
@@ -261,35 +260,25 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       sectionStatuses: conversation.sections.map(s => `${s.title}: ${s.status}`)
     })
     
-    // Use the new reducer-based regeneration service
-    scriptRegenerationService.handleAutoRegenerationCheck(
-      regenerationState, 
-      conversation, 
+    // Use functional regeneration analysis
+    const config = {
+      minimumWordCount: regenerationState.rules.minimumWordCount,
+      maxAutoRegenerationAttempts: regenerationState.rules.maxAutoRegenerationAttempts,
+      regenerationCooldownMs: regenerationState.rules.regenerationCooldownMs
+    }
+    
+    const analysis = analyzeConversationForRegeneration(
+      conversation,
+      config,
       jobQueue.state.jobs
     )
-  }, [state.conversations, jobQueue.state.jobs, regenerationState])
-  
-  // Set up the service with the dispatch function and auto-regeneration handler
-  useEffect(() => {
-    scriptRegenerationService.setDispatch(regenerationDispatch)
-    scriptRegenerationService.setAutoRegenerationHandler(handleAutoRegenerationCheck)
-  }, [regenerationDispatch, handleAutoRegenerationCheck])
-
-  // Setup message bus subscriptions
-  useEffect(() => {
-    const subscriptions = [
-      messageBus.subscribe('REGENERATE_SECTION_REQUESTED', (payload) => {
-        handleRegenerateSectionRequest(payload)
-      })
-      // Removed AUTO_REGENERATION_CHECK_REQUESTED - now handled via direct service calls
-    ]
     
-    messageSubscriptionsRef.current = subscriptions
-    
-    return () => {
-      subscriptions.forEach(sub => sub.unsubscribe())
+    if (analysis.nextRequest) {
+      handleRegenerateSectionRequest(analysis.nextRequest)
+    } else {
+      console.debug('Auto-regeneration: no sections need regeneration')
     }
-  }, [handleRegenerateSectionRequest, handleAutoRegenerationCheck])
+  }, [state.conversations, jobQueue.state.jobs, regenerationState, handleRegenerateSectionRequest])
 
   // Initial load from localStorage
   useEffect(() => {
@@ -442,7 +431,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         console.time('Example Retrieval')
         try {
           // Calculate optimal number of examples based on context window
-          const systemPrompt = PromptService.getSystemPrompt()
+          const systemPrompt = getSystemPrompt()
           const conversationTokens = conversation ? conversation.messages.reduce((total, msg) => total + msg.content.length, 0) : 0
           const optimalExampleCount = getRecommendedExampleCount(systemPrompt, Math.ceil(conversationTokens / 4))
           
@@ -726,22 +715,19 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
         }
 
-        // Notify completion for both initial generation and regeneration
+        // Trigger auto-regeneration check after completion
         if (request.regenerate) {
-          // For section regeneration, notify section completion
-          messageBus.publish('SECTION_REGENERATION_COMPLETED', {
-            scriptId: conversation.scriptId,
-            sectionId: request.sectionId!,
-            conversationId: conversation.id,
-            content: accumulatedContent
-          })
+          console.debug('Section regeneration completed, checking for next section')
+          // Delay to allow state to settle, then check for next regeneration
+          setTimeout(() => {
+            handleAutoRegenerationCheck(conversation.id)
+          }, 200)
         } else {
-          // For initial script generation, notify script completion
-          // Note: Auto-regeneration will be triggered after sections are marked as completed
-          messageBus.publish('SCRIPT_GENERATION_COMPLETED', {
-            conversationId: conversation.id,
-            scriptId: conversation.scriptId
-          })
+          console.debug('Initial script generation completed, starting auto-regeneration')
+          // Delay to allow sections to be marked as completed, then start auto-regeneration
+          setTimeout(() => {
+            handleAutoRegenerationCheck(conversation.id)
+          }, 500)
         }
 
         dispatch({

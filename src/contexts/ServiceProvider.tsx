@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ServiceFactory } from '../services/serviceFactory'
+import { createScriptService, createExampleService } from '../services/serviceFactory'
 import { ServiceContext } from './ServiceContext'
 
 type ServiceProviderProps = {
@@ -8,8 +8,8 @@ type ServiceProviderProps = {
 
 export function ServiceProvider({ children }: ServiceProviderProps) {
   const services = {
-    scriptService: ServiceFactory.createScriptService(),
-    exampleService: ServiceFactory.createExampleService()
+    scriptService: createScriptService(),
+    exampleService: createExampleService()
   }
   
   return (

@@ -1,9 +1,9 @@
 import OpenAI from 'openai'
 import type { GenerationRequest, Conversation } from '../types/conversation'
-import { PromptService } from './prompts'
+import { getSystemPrompt, getSectionRegenerationPrompt, formatExamplesForPrompt } from './prompts'
 import type { ExampleScript } from './vectorStore'
 import type { ScriptGenerationService } from './scriptGenerationService'
-import { formatExamplesForPrompt } from './exampleSearchService'
+import { getModel } from './config'
 
 export class OpenAIService implements ScriptGenerationService {
   private client: OpenAI
@@ -33,7 +33,7 @@ export class OpenAIService implements ScriptGenerationService {
   }
 
   private buildInstructions(examples?: ExampleScript[]): string {
-    let instructions = PromptService.getSystemPrompt()
+    let instructions = getSystemPrompt()
     
     // Add examples to instructions if provided
     if (examples && examples.length > 0) {
@@ -97,7 +97,7 @@ export class OpenAIService implements ScriptGenerationService {
       if (request.regenerate && request.sectionId) {
         const section = conversation.sections.find(s => s.id === request.sectionId)
         if (section) {
-          const regenerationPrompt = PromptService.getSectionRegenerationPrompt(section.title)
+          const regenerationPrompt = getSectionRegenerationPrompt(section.title)
           messages.push({ role: 'user', content: regenerationPrompt })
         }
       }
@@ -115,18 +115,8 @@ export class OpenAIService implements ScriptGenerationService {
         ? `system-${this.generateCacheKeyHash(systemContent)}`
         : undefined
 
-      // Get model from localStorage with fallback to gpt-5-mini
-      const getModelFromStorage = (): string => {
-        try {
-          const item = window.localStorage.getItem('model')
-          return item ? JSON.parse(item) : 'gpt-5-mini'
-        } catch {
-          return 'gpt-5-mini'
-        }
-      }
-
       const completionsPayload = {
-        model: getModelFromStorage(),
+        model: getModel(),
         messages: messages,
         stream: true,
         temperature: 1, // Not supported on gpt-5 

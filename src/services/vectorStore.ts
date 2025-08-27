@@ -147,23 +147,4 @@ export class VectorStoreService implements ExampleSearchService {
     }
   }
 
-  /**
-   * Format examples for inclusion in prompts
-   */
-  static formatExamplesForPrompt(examples: ExampleScript[]): string {
-    if (examples.length === 0) {
-      return ''
-    }
-
-    let formatted = '\n\nHere are some example hypnosis scripts for reference:\n\n'
-    
-    examples.forEach((example, index) => {
-      formatted += `### Example ${index + 1}\n`
-      formatted += `${example.content}\n\n---\n\n`
-    })
-
-    formatted += 'Use these examples as inspiration for structure, language patterns. Create a new script that follows similar quality and format while being unique and tailored to the user\'s specific request.\n\n'
-
-    return formatted
-  }
 }

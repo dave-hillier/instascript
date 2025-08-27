@@ -4,7 +4,6 @@ import { ArrowLeft, RotateCcw, Square } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { useJobQueue } from '../hooks/useJobQueue'
-import { scriptRegenerationService } from '../services/scriptRegenerationService'
 import type { Script } from '../types/script'
 
 export const ScriptPage = () => {
@@ -12,7 +11,7 @@ export const ScriptPage = () => {
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
   const { state: conversationState, getConversationByScriptId } = useConversationContext()
-  const { state: jobQueueState, cancelJobsForScript } = useJobQueue()
+  const { state: jobQueueState, cancelJobsForScript, addJob } = useJobQueue()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -66,13 +65,18 @@ export const ScriptPage = () => {
   const handleRegenerateSection = (sectionId: string, sectionTitle: string) => {
     if (!script || !conversation) return
     
-    // Use the regeneration service to handle the request
-    scriptRegenerationService.requestManualRegeneration(
-      script.id,
-      sectionId,
-      sectionTitle,
-      conversation.id
-    )
+    // Create regeneration job directly via job queue
+    const jobData = {
+      type: 'regenerate-section' as const,
+      scriptId: script.id,
+      title: `Regenerate ${sectionTitle}`,
+      sectionId: sectionId,
+      sectionTitle: sectionTitle,
+      conversationId: conversation.id,
+      prompt: `Regenerate the "${sectionTitle}" section to be at least 400 words`
+    }
+    
+    addJob(jobData)
   }
 
   const isScriptGenerating = () => {

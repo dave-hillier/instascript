@@ -4,55 +4,43 @@ import { OpenAIService } from './openai'
 import { MockAPIService } from './mockApi'
 import { VectorStoreService } from './vectorStore'
 import { MockVectorStoreService } from './mockVectorStore'
+import { createAppConfig, canUseOpenAI, type AppConfig } from './config'
 
-export type APIProvider = 'openai' | 'mock'
+/**
+ * Pure functions to create services based on configuration
+ * No internal state or side effects
+ */
 
-export class ServiceFactory {
-  private static getApiKey(): string | null {
-    try {
-      const item = window.localStorage.getItem('OPENAI_API_KEY')
-      return item ? JSON.parse(item) : null
-    } catch (error) {
-      console.warn('Error loading API key from localStorage:', error)
-      return null
-    }
+export function createScriptService(config?: AppConfig): ScriptGenerationService {
+  const appConfig = config || createAppConfig()
+  
+  console.debug('Creating script service', { 
+    provider: appConfig.apiProvider, 
+    hasApiKey: !!appConfig.apiKey 
+  })
+  
+  if (canUseOpenAI(appConfig)) {
+    console.debug('Creating OpenAI script service')
+    return new OpenAIService(appConfig.apiKey!)
   }
+  
+  console.debug('Creating Mock script service')
+  return new MockAPIService()
+}
 
-  private static getApiProvider(): APIProvider {
-    try {
-      const item = window.localStorage.getItem('apiProvider')
-      return item ? JSON.parse(item) : 'mock'
-    } catch (error) {
-      console.warn('Error loading API provider from localStorage:', error)
-      return 'mock'
-    }
+export function createExampleService(config?: AppConfig): ExampleSearchService {
+  const appConfig = config || createAppConfig()
+  
+  console.debug('Creating example service', { 
+    provider: appConfig.apiProvider, 
+    hasApiKey: !!appConfig.apiKey 
+  })
+  
+  if (canUseOpenAI(appConfig)) {
+    console.debug('Creating OpenAI example service')
+    return new VectorStoreService(appConfig.apiKey!)
   }
-
-  static createScriptService(): ScriptGenerationService {
-    const provider = this.getApiProvider()
-    const apiKey = this.getApiKey()
-    console.debug('Creating script service', { provider, hasApiKey: !!apiKey })
-    
-    if (provider === 'openai' && apiKey) {
-      console.debug('Creating OpenAI script service')
-      return new OpenAIService(apiKey)
-    }
-    
-    console.debug('Creating Mock script service')
-    return new MockAPIService()
-  }
-
-  static createExampleService(): ExampleSearchService {
-    const provider = this.getApiProvider()
-    const apiKey = this.getApiKey()
-    console.debug('Creating example service', { provider, hasApiKey: !!apiKey })
-    
-    if (provider === 'openai' && apiKey) {
-      console.debug('Creating OpenAI example service')
-      return new VectorStoreService(apiKey)
-    }
-    
-    console.debug('Creating Mock example service')
-    return new MockVectorStoreService()
-  }
+  
+  console.debug('Creating Mock example service')
+  return new MockVectorStoreService()
 }
