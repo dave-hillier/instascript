@@ -16,6 +16,7 @@ export interface ConversationSection {
   content: string
   status: 'pending' | 'generating' | 'completed' | 'error'
   messageIds: string[]
+  wasRegenerated?: boolean
 }
 
 export interface Conversation {

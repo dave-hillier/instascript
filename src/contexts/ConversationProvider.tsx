@@ -25,11 +25,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const { scriptService, exampleService } = useServices()
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<Conversation | null>(null)
-
-
   // Direct script generation without job processing
   const generateScript = useCallback(async (request: GenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
-    // Find conversation - first check pending, then state
+    // Find conversation - first check pending, then current state
     let conversation: Conversation | undefined
     
     if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
@@ -48,7 +46,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       dispatch,
       appDispatch,
       onRegenerationCheck: () => {
-        // No auto-regeneration for now - keep it simple
+        // Auto-regeneration is handled at the page level
       }
     }
 

@@ -9,7 +9,7 @@ export const ScriptPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  const { state: conversationState, getConversationByScriptId, generateScript } = useConversationContext()
+  const { state: conversationState, dispatch: conversationDispatch, getConversationByScriptId, generateScript } = useConversationContext()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -43,6 +43,28 @@ export const ScriptPage = () => {
     }
   }, [currentGeneration, script, conversation, dispatch])
 
+  // Auto-regeneration logic - trigger next section regeneration when one completes
+  useEffect(() => {
+    if (!script || !conversation || !currentGeneration?.isComplete || currentGeneration.conversationId !== conversation.id) {
+      return
+    }
+
+    // Don't auto-regenerate if there was an error
+    if (currentGeneration.error) {
+      return
+    }
+
+    // Find the first section that hasn't been regenerated yet
+    const nextSection = conversation.sections.find(section => 
+      section.status === 'completed' && !section.wasRegenerated
+    )
+    
+    if (nextSection) {
+      console.log(`Auto-regenerating section: ${nextSection.title}`)
+      handleRegenerateSection(nextSection.id, nextSection.title, true)
+    }
+  }, [currentGeneration, script, conversation])
+
   const parseContentSections = (content: string) => {
     if (!content) return []
     
@@ -60,10 +82,20 @@ export const ScriptPage = () => {
     })
   }
 
-  const handleRegenerateSection = async (sectionId: string, sectionTitle: string) => {
+  const handleRegenerateSection = async (sectionId: string, sectionTitle: string, markAsRegenerated: boolean = false) => {
     if (!script || !conversation) return
     
     try {
+      // Mark section as regenerated if requested (for auto-regeneration)
+      if (markAsRegenerated) {
+        conversationDispatch({
+          type: 'UPDATE_SECTION',
+          conversationId: conversation.id,
+          sectionId: sectionId,
+          updates: { wasRegenerated: true }
+        })
+      }
+      
       // Start regeneration directly (no job queue)
       await generateScript({
         prompt: `Regenerate the "${sectionTitle}" section to be at least 400 words`,
