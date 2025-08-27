@@ -3,12 +3,120 @@ import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import type { Script } from '../types/script'
-import {
-  getScriptDocument,
-  getScriptGenerationState,
-  formatSectionContent,
-  formatFullScriptContent
-} from '../utils/scriptPageHelpers'
+import type { RawConversation } from '../types/conversation'
+
+interface ScriptDocumentSection {
+  id: string
+  title: string
+  content: string
+  wordCount: number
+}
+
+interface ScriptDocument {
+  title?: string
+  sections: ScriptDocumentSection[]
+  fullContent: string
+  isGenerating: boolean
+  hasError: boolean
+  errorMessage?: string
+}
+
+interface CurrentGeneration {
+  conversationId: string
+  isComplete: boolean
+  error?: string
+  sectionTitle?: string
+}
+
+// Simplified script document parsing - inlined all helper functions
+const getScriptDocument = (
+  conversation: RawConversation | undefined,
+  currentGeneration: CurrentGeneration | null
+): ScriptDocument => {
+  // Get current script content
+  const currentScript = conversation?.generations?.[conversation.generations.length - 1]?.response || ''
+  
+  if (!currentScript) {
+    return {
+      sections: [],
+      fullContent: '',
+      isGenerating: false,
+      hasError: !!currentGeneration?.error,
+      errorMessage: currentGeneration?.error
+    }
+  }
+
+  // Parse document header
+  const lines = currentScript.split('\\n')
+  const firstLine = lines[0]
+  const titleMatch = firstLine.match(/^#\\s+(.+)$/)
+  const documentTitle = titleMatch ? titleMatch[1].trim() : undefined
+
+  // Parse sections
+  const sections: ScriptDocumentSection[] = []
+  let currentSectionStart = -1
+  let currentSectionTitle = ''
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    
+    if (line.match(/^##\\s+/)) {
+      // Complete previous section
+      if (currentSectionStart >= 0 && currentSectionTitle) {
+        const sectionContent = lines.slice(currentSectionStart + 1, i).join('\\n').trim()
+        const wordCount = sectionContent.trim().split(/\\s+/).filter(word => word.length > 0).length
+        sections.push({
+          id: `section_${currentSectionTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
+          title: currentSectionTitle,
+          content: sectionContent,
+          wordCount
+        })
+      }
+      
+      // Start new section
+      currentSectionStart = i
+      currentSectionTitle = line.match(/##\\s+(.+?)$/)?.[1]?.trim() || ''
+    }
+  }
+  
+  // Handle last section
+  if (currentSectionStart >= 0 && currentSectionTitle) {
+    const sectionContent = lines.slice(currentSectionStart + 1).join('\\n').trim()
+    const wordCount = sectionContent.trim().split(/\\s+/).filter(word => word.length > 0).length
+    sections.push({
+      id: `section_${currentSectionTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
+      title: currentSectionTitle,
+      content: sectionContent,
+      wordCount
+    })
+  }
+
+  // Apply live updates during section regeneration
+  const sectionsWithLiveUpdates = sections.map(section => {
+    const isSectionRegenerating = conversation && currentGeneration && 
+      currentGeneration.conversationId === conversation.id && 
+      !currentGeneration.isComplete && 
+      currentGeneration.sectionTitle === section.title
+
+    if (isSectionRegenerating) {
+      const liveContent = conversation.generations[conversation.generations.length - 1]?.response || ''
+      return { ...section, content: liveContent }
+    }
+    return section
+  })
+
+  const isConversationGenerating = conversation && currentGeneration ? 
+    currentGeneration.conversationId === conversation.id && !currentGeneration.isComplete : false
+
+  return {
+    title: documentTitle,
+    sections: sectionsWithLiveUpdates,
+    fullContent: currentScript,
+    isGenerating: isConversationGenerating,
+    hasError: !!currentGeneration?.error,
+    errorMessage: currentGeneration?.error
+  }
+}
 
 export const ScriptPage = () => {
   const { id } = useParams<{ id: string }>()
@@ -22,7 +130,12 @@ export const ScriptPage = () => {
   
   // Get structured document and generation state
   const document = getScriptDocument(conversation, currentGeneration)
-  const generationState = getScriptGenerationState(conversation, currentGeneration)
+  const isGenerating = conversation && currentGeneration ? currentGeneration.conversationId === conversation.id && !currentGeneration.isComplete : false
+  const generationState = {
+    isGenerating,
+    shouldDisableRegenerate: isGenerating,
+    error: currentGeneration?.error
+  }
 
 
   const handleRegenerateSection = async (sectionTitle: string) => {
@@ -98,17 +211,25 @@ export const ScriptPage = () => {
                 )}
               </header>
               <div>
-                {formatSectionContent(section.content).map(({ text, key }) => (
-                  <p key={key}>{text}</p>
-                ))}
+                {section.content
+                  .split('\n')
+                  .map((line, index) => ({ text: line, key: `line-${index}` }))
+                  .filter(({ text }) => !text.startsWith('## ') && text.trim())
+                  .map(({ text, key }) => (
+                    <p key={key}>{text}</p>
+                  ))}
               </div>
             </section>
           ))
         ) : document.fullContent ? (
           // Fallback for content without clear sections
-          formatFullScriptContent(document.fullContent).map(({ text, key }) => (
-            <p key={key}>{text}</p>
-          ))
+          document.fullContent
+            .split('\n')
+            .map((paragraph, index) => ({ text: paragraph, key: `paragraph-${index}` }))
+            .filter(({ text }) => text.trim())
+            .map(({ text, key }) => (
+              <p key={key}>{text}</p>
+            ))
         ) : (
           <p>No content yet. Script is being generated...</p>
         )}
