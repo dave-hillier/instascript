@@ -8,6 +8,7 @@ type AppAction =
   | { type: 'ADD_SCRIPT'; script: Script }
   | { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }
   | { type: 'SET_HOVER'; scriptId: string | null }
+  | { type: 'CLEAR_SCRIPTS' }
 
 type AppState = {
   scripts: Script[]

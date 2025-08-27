@@ -174,7 +174,7 @@ const uiReducer = (state: UIState, action: UIAction): UIState => {
 function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { state } = useAppContext()
+  const { state, dispatch } = useAppContext()
   
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
     theme: (() => {
@@ -285,6 +285,21 @@ function AppContent() {
     setModel(newModel)
   }
 
+  const handleClearConversations = () => {
+    if (confirm('Are you sure you want to clear all conversations and scripts? This action cannot be undone.')) {
+      // Clear conversations from localStorage
+      localStorage.removeItem('conversations')
+      // Clear scripts from state (they're stored in localStorage via AppProvider)
+      dispatch({ type: 'CLEAR_SCRIPTS' })
+      // Close the modal
+      uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
+      // Navigate to home page if currently on a script page
+      if (isScriptPage) {
+        navigate('/')
+      }
+    }
+  }
+
   const handleOpenSettings = () => {
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
@@ -353,6 +368,7 @@ function AppContent() {
         apiProvider={apiProvider || 'mock'}
         model={model || 'gpt-5'}
         onSave={handleSaveSettings}
+        onClearConversations={handleClearConversations}
       />
     </div>
   )

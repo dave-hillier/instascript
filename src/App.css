@@ -892,3 +892,53 @@ div[role="group"] button.active:hover {
 [data-theme="light"] .notification-bell menu footer button:hover {
   color: #374151;
 }
+
+/* Clear conversations button */
+.clear-conversations-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  background: none;
+  color: #ef4444;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clear-conversations-btn:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
+.clear-conversations-btn:active {
+  background-color: rgba(239, 68, 68, 0.2);
+}
+
+[data-theme="dark"] .clear-conversations-btn {
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .clear-conversations-btn:hover {
+  background-color: rgba(248, 113, 113, 0.1);
+  color: #f87171;
+  border-color: #f87171;
+}
+
+[data-theme="light"] .clear-conversations-btn {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+[data-theme="light"] .clear-conversations-btn:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border-color: #dc2626;
+}

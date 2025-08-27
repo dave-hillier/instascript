@@ -11,6 +11,7 @@ type AppAction =
   | { type: 'ADD_SCRIPT'; script: Script }
   | { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }
   | { type: 'SET_HOVER'; scriptId: string | null }
+  | { type: 'CLEAR_SCRIPTS' }
 
 type AppState = {
   scripts: Script[]
@@ -51,6 +52,8 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
       }
     case 'SET_HOVER':
       return { ...state, hoveredScript: action.scriptId }
+    case 'CLEAR_SCRIPTS':
+      return { ...state, scripts: [] }
     default:
       return state
   }
@@ -98,8 +101,13 @@ export const AppProvider = ({ children }: AppProviderProps) => {
 
   // Save scripts to localStorage when state changes
   useEffect(() => {
-    if (isLoaded && state.scripts.length > 0) {
-      setStoredScripts(state.scripts)
+    if (isLoaded) {
+      if (state.scripts.length > 0) {
+        setStoredScripts(state.scripts)
+      } else {
+        // If no scripts, clear localStorage
+        localStorage.removeItem('scripts')
+      }
     }
   }, [state.scripts, isLoaded])
 

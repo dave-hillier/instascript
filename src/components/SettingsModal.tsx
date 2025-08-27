@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { Sun, Moon, Monitor } from 'lucide-react'
+import { Sun, Moon, Monitor, Trash2 } from 'lucide-react'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -14,6 +14,7 @@ type SettingsModalProps = {
   apiProvider: 'openai' | 'mock'
   model: Model
   onSave: (apiKey: string, apiProvider: 'openai' | 'mock', model: Model) => void
+  onClearConversations: () => void
 }
 
 export const SettingsModal = ({
@@ -24,7 +25,8 @@ export const SettingsModal = ({
   apiKey,
   apiProvider,
   model,
-  onSave
+  onSave,
+  onClearConversations
 }: SettingsModalProps) => {
   const modalRef = useRef<HTMLDialogElement>(null)
   const [tempApiKey, setTempApiKey] = useState('')
@@ -171,6 +173,24 @@ export const SettingsModal = ({
               )}
             </>
           )}
+        </fieldset>
+
+        <fieldset>
+          <legend className="sr-only">Data Management</legend>
+          
+          <label>Data Management</label>
+          <button
+            type="button"
+            onClick={onClearConversations}
+            aria-label="Clear all conversations"
+            className="clear-conversations-btn"
+          >
+            <Trash2 size={16} />
+            <span>Clear All Conversations</span>
+          </button>
+          <p>
+            This will permanently delete all conversation history and scripts
+          </p>
         </fieldset>
       </form>
       
