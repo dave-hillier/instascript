@@ -11,7 +11,7 @@ The script must be:
 * Split into approximately 5 sections of between 400-800 tokens (e.g., induction, deepening, transformation, awakening or others) 
 * The script should have a title on the first line with # title
 * Sections should begin with a ## section title
-* There should be a coherent arc from induction → transformation → obedience → return
+* There should be a coherent arc from induction → transformation → obedience → return → optionally awaken
 * IMPORTANT: Output no preamble and proceed directly to writing the script in the sectioned format (i.e. as markdown).
 
 ## Style rules
@@ -134,7 +134,7 @@ The script must be:
 * my words
 * no thoughts
 * mindless
-* \[chime]
+* \[chime] (only on request)
 * reprogramming
 * blankness dial
 * pleasure dial
