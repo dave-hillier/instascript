@@ -1,6 +1,6 @@
 import { useReducer, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Settings, ArrowLeft } from 'lucide-react'
+import { Settings, ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { useAppContext } from './hooks/useAppContext'
 import { SettingsModal } from './components/SettingsModal'
 import { HomePage } from './pages/HomePage'
@@ -12,13 +12,15 @@ type Model = 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano'
 
 type ThemeAction = { type: 'SET_THEME'; theme: Theme }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
+type SectionTitlesAction = { type: 'TOGGLE_SECTION_TITLES' }
 
 type UIState = { 
   theme: Theme
   showSettingsModal: boolean
+  showSectionTitles: boolean
 }
 
-type UIAction = ThemeAction | ModalAction
+type UIAction = ThemeAction | ModalAction | SectionTitlesAction
 
 
 const uiReducer = (state: UIState, action: UIAction): UIState => {
@@ -27,6 +29,8 @@ const uiReducer = (state: UIState, action: UIAction): UIState => {
       return { ...state, theme: action.theme }
     case 'TOGGLE_SETTINGS_MODAL':
       return { ...state, showSettingsModal: !state.showSettingsModal }
+    case 'TOGGLE_SECTION_TITLES':
+      return { ...state, showSectionTitles: !state.showSectionTitles }
     default:
       return state
   }
@@ -46,7 +50,15 @@ function AppContent() {
         return 'system'
       }
     })(),
-    showSettingsModal: false
+    showSettingsModal: false,
+    showSectionTitles: (() => {
+      try {
+        const item = window.localStorage.getItem('showSectionTitles')
+        return item ? JSON.parse(item) : true
+      } catch {
+        return true
+      }
+    })()
   })
   
   const [apiKey, setApiKey] = useState(() => {
@@ -126,6 +138,15 @@ function AppContent() {
     }
   }, [model])
 
+  // Save section titles visibility when it changes
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('showSectionTitles', JSON.stringify(uiState.showSectionTitles))
+    } catch (error) {
+      console.error('Error saving section titles visibility to localStorage:', error)
+    }
+  }, [uiState.showSectionTitles])
+
   // Determine effective theme (resolve 'system' to actual theme)
   const effectiveTheme = uiState.theme === 'system' 
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -202,6 +223,16 @@ function AppContent() {
           </div>
         </div>
         <nav>
+          {isScriptPage && (
+            <button 
+              onClick={() => uiDispatch({ type: 'TOGGLE_SECTION_TITLES' })}
+              aria-label={uiState.showSectionTitles ? "Hide section titles" : "Show section titles"}
+              type="button"
+              style={{ marginRight: '0.5rem' }}
+            >
+              {uiState.showSectionTitles ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          )}
           <button 
             onClick={handleOpenSettings}
             aria-label="Open settings"
@@ -215,7 +246,7 @@ function AppContent() {
       <main>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/script/:id" element={<ScriptPage />} />
+          <Route path="/script/:id" element={<ScriptPage showSectionTitles={uiState.showSectionTitles} />} />
         </Routes>
       </main>
 

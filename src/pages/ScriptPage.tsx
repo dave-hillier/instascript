@@ -151,7 +151,11 @@ const getScriptDocument = (
   }
 }
 
-export const ScriptPage = () => {
+interface ScriptPageProps {
+  showSectionTitles?: boolean
+}
+
+export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state } = useAppContext()
@@ -228,20 +232,22 @@ export const ScriptPage = () => {
         {document.sections.length > 0 ? (
           document.sections.map((section, index) => (
             <section key={`section-${index}`}>
-              <header>
-                <h2>{section.title}</h2>
-                {!generationState.shouldDisableRegenerate && conversation && (
-                  <button
-                    onClick={() => handleRegenerateSection(section.title)}
-                    disabled={generationState.shouldDisableRegenerate}
-                    aria-label={`${generationState.shouldDisableRegenerate ? 'Regenerating' : 'Regenerate'} ${section.title} section`}
-                    type="button"
-                  >
-                    <RotateCcw size={16} />
-                    {generationState.shouldDisableRegenerate ? 'Regenerating...' : 'Regenerate'}
-                  </button>
-                )}
-              </header>
+              {showSectionTitles && (
+                <header>
+                  <h2>{section.title}</h2>
+                  {!generationState.shouldDisableRegenerate && conversation && (
+                    <button
+                      onClick={() => handleRegenerateSection(section.title)}
+                      disabled={generationState.shouldDisableRegenerate}
+                      aria-label={`${generationState.shouldDisableRegenerate ? 'Regenerating' : 'Regenerate'} ${section.title} section`}
+                      type="button"
+                    >
+                      <RotateCcw size={16} />
+                      {generationState.shouldDisableRegenerate ? 'Regenerating...' : 'Regenerate'}
+                    </button>
+                  )}
+                </header>
+              )}
               <div>
                 {section.content
                   .split('\n')
