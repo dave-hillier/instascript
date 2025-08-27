@@ -1,7 +1,6 @@
 import { useReducer, useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { Settings, ArrowLeft, Bell } from 'lucide-react'
-import { useLocalStorage } from './hooks/useLocalStorage'
 import { useAppContext } from './hooks/useAppContext'
 import { useJobQueue } from './hooks/useJobQueue'
 import { SettingsModal } from './components/SettingsModal'
@@ -176,14 +175,35 @@ function AppContent() {
   const navigate = useNavigate()
   const { state } = useAppContext()
   
-  const { value: savedTheme, setValue: setSavedTheme } = useLocalStorage<Theme>('theme', 'system')
   const [uiState, uiDispatch] = useReducer(uiReducer, { 
-    theme: savedTheme || 'system', 
+    theme: (() => {
+      try {
+        const item = window.localStorage.getItem('theme')
+        return item ? JSON.parse(item) : 'system'
+      } catch {
+        return 'system'
+      }
+    })(),
     showSettingsModal: false
   })
   
-  const { value: apiKey, setValue: setApiKey } = useLocalStorage<string>('OPENAI_API_KEY', '')
-  const { value: apiProvider, setValue: setApiProvider } = useLocalStorage<'openai' | 'mock'>('apiProvider', 'mock')
+  const [apiKey, setApiKey] = useState(() => {
+    try {
+      const item = window.localStorage.getItem('OPENAI_API_KEY')
+      return item ? JSON.parse(item) : ''
+    } catch {
+      return ''
+    }
+  })
+
+  const [apiProvider, setApiProvider] = useState<'openai' | 'mock'>(() => {
+    try {
+      const item = window.localStorage.getItem('apiProvider')
+      return item ? JSON.parse(item) : 'mock'
+    } catch {
+      return 'mock'
+    }
+  })
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -199,12 +219,32 @@ function AppContent() {
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [])
 
-  // Save theme preference when it changes (only if different from saved)
+  // Save theme preference when it changes
   useEffect(() => {
-    if (uiState.theme !== savedTheme) {
-      setSavedTheme(uiState.theme)
+    try {
+      window.localStorage.setItem('theme', JSON.stringify(uiState.theme))
+    } catch (error) {
+      console.error('Error saving theme to localStorage:', error)
     }
-  }, [uiState.theme, savedTheme, setSavedTheme])
+  }, [uiState.theme])
+
+  // Save API key when it changes
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('OPENAI_API_KEY', JSON.stringify(apiKey))
+    } catch (error) {
+      console.error('Error saving API key to localStorage:', error)
+    }
+  }, [apiKey])
+
+  // Save API provider when it changes
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('apiProvider', JSON.stringify(apiProvider))
+    } catch (error) {
+      console.error('Error saving API provider to localStorage:', error)
+    }
+  }, [apiProvider])
 
   // Determine effective theme (resolve 'system' to actual theme)
   const effectiveTheme = uiState.theme === 'system' 

@@ -1,7 +1,6 @@
-import { useReducer, useEffect, useCallback, useRef } from 'react'
+import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Conversation, Message, ConversationSection, GenerationRequest, GenerationProgress } from '../types/conversation'
-import { useLocalStorage } from '../hooks/useLocalStorage'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
@@ -145,14 +144,32 @@ type ConversationProviderProps = {
   children: ReactNode
 }
 
+const getStoredConversations = (): Conversation[] => {
+  try {
+    const item = window.localStorage.getItem('conversations')
+    return item ? JSON.parse(item) : []
+  } catch (error) {
+    console.warn('Error loading conversations from localStorage:', error)
+    return []
+  }
+}
+
+const setStoredConversations = (conversations: Conversation[]) => {
+  try {
+    window.localStorage.setItem('conversations', JSON.stringify(conversations))
+  } catch (error) {
+    console.error('Error saving conversations to localStorage:', error)
+  }
+}
+
+
 export const ConversationProvider = ({ children }: ConversationProviderProps) => {
   const [state, dispatch] = useReducer(conversationReducer, {
     conversations: [],
     currentGeneration: null
   })
 
-  const { value: storedConversations, setValue: setStoredConversations, isLoaded } = useLocalStorage<Conversation[]>('conversations', [])
-  const { value: apiProvider } = useLocalStorage<string>('apiProvider', 'mock')
+  const [isLoaded, setIsLoaded] = useState(false)
   const { scriptService, exampleService } = useServices()
   const pendingConversationRef = useRef<Conversation | null>(null)
   const lastStuckCheckRef = useRef<number>(0)
@@ -260,22 +277,21 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     }
   }, [handleRegenerateSectionRequest, handleAutoRegenerationCheck])
 
-  // Load conversations from localStorage
+  // Initial load from localStorage
   useEffect(() => {
-    if (isLoaded && state.conversations.length === 0 && storedConversations && storedConversations.length > 0) {
-      dispatch({ type: 'LOAD_CONVERSATIONS', conversations: storedConversations })
+    const stored = getStoredConversations()
+    if (stored.length > 0) {
+      dispatch({ type: 'LOAD_CONVERSATIONS', conversations: stored })
     }
-  }, [isLoaded, storedConversations, state.conversations.length])
+    setIsLoaded(true)
+  }, [])
 
   // Save conversations to localStorage when state changes
   useEffect(() => {
     if (isLoaded && state.conversations.length > 0) {
-      const conversationsChanged = JSON.stringify(state.conversations) !== JSON.stringify(storedConversations)
-      if (conversationsChanged) {
-        setStoredConversations(state.conversations)
-      }
+      setStoredConversations(state.conversations)
     }
-  }, [state.conversations, isLoaded, storedConversations, setStoredConversations])
+  }, [state.conversations, isLoaded])
 
   // Auto-complete sections that are stuck in generating state
   useEffect(() => {
@@ -724,7 +740,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         }
       })
     }
-  }, [state.conversations, apiProvider])
+  }, [state.conversations])
 
   // Job processing - only if we're the leader
   useEffect(() => {

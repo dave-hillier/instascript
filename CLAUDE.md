@@ -63,7 +63,7 @@ The app has a complete theme system with the following features:
 - **System**: Automatically follows the user's OS theme preference
 
 #### Technical Architecture
-- Theme preference stored in localStorage using `useLocalStorage` hook (key: 'theme')
+- Theme preference stored in localStorage with direct access (key: 'theme')
 - Theme state managed via `useReducer` in App.tsx with `uiReducer`
 - Applied to DOM via `data-theme` attribute on root div
 - CSS uses `[data-theme="light"]` and `[data-theme="dark"]` selectors for styling
