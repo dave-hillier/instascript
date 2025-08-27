@@ -20,6 +20,18 @@ export class OpenAIService implements ScriptGenerationService {
     })
   }
 
+  private generateCacheKeyHash(content: string): string {
+    // Generate a stable hash for cache key based on content
+    // Using a simple hash function for consistent cache routing
+    let hash = 0
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(36)
+  }
+
   private buildInstructions(examples?: ExampleScript[]): string {
     let instructions = PromptService.getSystemPrompt()
     
@@ -31,46 +43,28 @@ export class OpenAIService implements ScriptGenerationService {
     return instructions
   }
 
-  private conversationToInput(conversation: Conversation): string {
-    // For Responses API, we should only pass user messages
-    // Assistant messages are handled differently (via previous_response_id in stateful mode)
-    // Since we're not using previous_response_id, we'll simulate conversation context
+  private conversationToMessages(conversation: Conversation, excludeSystemMessages = false): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {
+    // Convert conversation messages to OpenAI chat format
+    const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
     
-    // Get only user messages
-    const userMessages = conversation.messages.filter(msg => msg.role === 'user')
-    
-    // For regeneration, we want the full context, so let's build a conversation string
-    // that includes both user and assistant messages as context
-    if (conversation.messages.length > 1) {
-      // Build a conversation context string
-      let contextString = ''
-      
-      // Add conversation history as context
-      for (const msg of conversation.messages) {
-        if (msg.role === 'system') continue // Skip system messages
-        
-        if (msg.role === 'user') {
-          contextString += `User: ${msg.content}\n\n`
-        } else if (msg.role === 'assistant') {
-          contextString += `Previous response:\n${msg.content}\n\n`
-        }
+    // Add conversation history
+    for (const msg of conversation.messages) {
+      if (msg.role === 'system' && !excludeSystemMessages) {
+        messages.push({ role: 'system', content: msg.content })
+      } else if (msg.role === 'user') {
+        messages.push({ role: 'user', content: msg.content })
+      } else if (msg.role === 'assistant') {
+        messages.push({ role: 'assistant', content: msg.content })
       }
-      
-      console.debug('Built conversation context string:', {
-        originalMessageCount: conversation.messages.length,
-        contextLength: contextString.length
-      })
-      
-      return contextString.trim()
     }
     
-    // For single user message, just return the content as a string
-    if (userMessages.length === 1) {
-      return userMessages[0].content
-    }
+    console.debug('Built conversation messages:', {
+      originalMessageCount: conversation.messages.length,
+      convertedMessageCount: messages.length,
+      excludedSystemMessages: excludeSystemMessages
+    })
     
-    // Fallback to empty string
-    return ''
+    return messages
   }
 
   async *generateScript(
@@ -85,64 +79,84 @@ export class OpenAIService implements ScriptGenerationService {
       sectionId: request.sectionId
     })
     
-    // Build instructions from system prompt and examples
-    const instructions = this.buildInstructions(examples)
-
-    // Build input based on context
-    let input: string
+    // Build messages array for chat completions
+    const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
+    
+    // Add system message with instructions and examples
+    const systemMessage = this.buildInstructions(examples)
+    messages.push({ role: 'system', content: systemMessage })
     
     if (conversation && conversation.messages.length > 0) {
-      // For conversations with history, build context string
-      const conversationContext = this.conversationToInput(conversation)
+      // Add existing conversation messages, excluding system messages to avoid duplicates
+      // since we're adding our own system message with current examples above
+      const conversationMessages = this.conversationToMessages(conversation, true)
+      messages.push(...conversationMessages)
       
-      // If regenerating, append the regeneration prompt
+      // If regenerating a specific section, add regeneration prompt
       if (request.regenerate && request.sectionId) {
         const section = conversation.sections.find(s => s.id === request.sectionId)
         if (section) {
-          // Combine context with regeneration instruction
-          input = conversationContext + '\n\n' + PromptService.getSectionRegenerationPrompt(section.title)
-        } else {
-          input = conversationContext
+          const regenerationPrompt = PromptService.getSectionRegenerationPrompt(section.title)
+          messages.push({ role: 'user', content: regenerationPrompt })
         }
-      } else {
-        input = conversationContext
       }
     } else {
-      // For single prompts, use the prompt directly
-      input = request.prompt
+      // For new conversations, add the initial prompt
+      messages.push({ role: 'user', content: request.prompt })
     }
 
     try {
-      // Log the full request for debugging
-      console.debug('OpenAI Responses API Request:', {
-        model: 'gpt-5-mini-2025-08-07',
-        instructionsLength: instructions.length,
-        instructionsPreview: instructions.substring(0, 100),
-        inputType: typeof input,
-        inputIsArray: Array.isArray(input),
-        inputLength: Array.isArray(input) ? input.length : (input as string).length,
-        fullInput: JSON.stringify(input, null, 2)
-      })
-      
-      // Create the request payload with proper typing for streaming
-      const requestPayload: OpenAI.Responses.ResponseCreateParamsStreaming = {
-        model: 'gpt-5-mini-2025-08-07',
-        instructions: instructions,
-        input: input,
+      // Generate a prompt cache key based on system message (which includes examples)
+      // This ensures requests with the same examples get cached together
+      const systemMessage = messages.find(msg => msg.role === 'system')
+      const systemContent = systemMessage?.content
+      const promptCacheKey = systemContent && typeof systemContent === 'string'
+        ? `system-${this.generateCacheKeyHash(systemContent)}`
+        : undefined
+
+      const completionsPayload = {
+        model: 'gpt-5-mini',
+        messages: messages,
         stream: true,
-        store: true
+        temperature: 1, // Not supported on gpt-5-mini 
+        ...(promptCacheKey && { prompt_cache_key: promptCacheKey })
       }
       
-      console.debug('Request payload before SDK:', JSON.stringify(requestPayload, null, 2))
+      console.debug('OpenAI Chat Completions API Request:', {
+        ...completionsPayload,
+        promptCacheKey,
+        systemMessageLength: systemMessage?.content.length || 0,
+        totalMessages: messages.length
+      })
       
-      // Use the Responses API with proper typing for streaming
-      const response = await this.client.responses.create(requestPayload)
+      // Use the Chat Completions API with streaming
+      const response = await this.client.chat.completions.create(completionsPayload) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
 
-      // Now we can safely iterate over the stream
+      // Stream the response chunks
+      let isFirstChunk = true
       for await (const chunk of response) {
-        // Handle the streaming events based on type
-        if (chunk.type === 'response.output_text.delta' && 'delta' in chunk) {
-          yield chunk.delta
+        const delta = chunk.choices[0]?.delta?.content
+        if (delta) {
+          yield delta
+        }
+        
+        // Log cache performance on first chunk
+        if (isFirstChunk && chunk.usage) {
+          isFirstChunk = false
+          const usage = chunk.usage
+          const promptTokensDetails = usage.prompt_tokens_details
+          if (promptTokensDetails?.cached_tokens !== undefined) {
+            const totalPromptTokens = usage.prompt_tokens || 0
+            const cachedTokens = promptTokensDetails.cached_tokens
+            const cacheHitRate = totalPromptTokens ? (cachedTokens / totalPromptTokens * 100).toFixed(1) : '0'
+            console.debug('Prompt Cache Performance:', {
+              promptCacheKey,
+              totalPromptTokens,
+              cachedTokens,
+              cacheHitRate: `${cacheHitRate}%`,
+              cacheEnabled: cachedTokens > 0
+            })
+          }
         }
       }
     } catch (error) {

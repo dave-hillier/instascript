@@ -25,6 +25,7 @@ type ConversationAction =
   | { type: 'UPDATE_SECTION'; conversationId: string; sectionId: string; updates: Partial<ConversationSection> }
   | { type: 'SET_GENERATION_PROGRESS'; progress: GenerationProgress }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
+  | { type: 'STORE_EXAMPLES'; conversationId: string; examples: ExampleScript[] }
 
 type ConversationState = {
   conversations: Conversation[]
@@ -133,6 +134,16 @@ const conversationReducer = (state: ConversationState, action: ConversationActio
       return {
         ...state,
         conversations: state.conversations.filter(conv => conv.id !== action.conversationId)
+      }
+    
+    case 'STORE_EXAMPLES':
+      return {
+        ...state,
+        conversations: state.conversations.map(conv =>
+          conv.id === action.conversationId
+            ? { ...conv, examples: action.examples }
+            : conv
+        )
       }
     
     default:
@@ -413,9 +424,18 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         })
       }
 
-      // Retrieve relevant examples for the initial prompt (not for regeneration)
+      // Retrieve or reuse examples
       let examples: ExampleScript[] = []
-      if (!request.regenerate) {
+      
+      if (request.regenerate && conversation?.examples) {
+        // For regeneration, reuse the same examples from initial generation
+        examples = conversation.examples
+        console.debug('Reusing stored examples for regeneration', {
+          count: examples.length,
+          sizes: examples.map(e => (e.content.length < 1024 ? `${e.content.length}B` : e.content.length < 1024 * 1024 ? `${(e.content.length / 1024).toFixed(1)}KB` : `${(e.content.length / (1024 * 1024)).toFixed(2)}MB`))
+        })
+      } else if (!request.regenerate) {
+        // For initial generation, retrieve new examples
         console.time('Example Retrieval')
         try {
           // Calculate optimal number of examples based on context window
@@ -425,18 +445,25 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
           
           examples = await exampleService.searchExamples(request.prompt, optimalExampleCount)
           console.timeEnd('Example Retrieval')
-          console.debug('Retrieved examples', {
+          console.debug('Retrieved new examples', {
             requestedCount: optimalExampleCount,
             actualCount: examples.length,
             sizes: examples.map(e => (e.content.length < 1024 ? `${e.content.length}B` : e.content.length < 1024 * 1024 ? `${(e.content.length / 1024).toFixed(1)}KB` : `${(e.content.length / (1024 * 1024)).toFixed(2)}MB`))
           })
+          
+          // Store examples in conversation for future regeneration use
+          if (conversation && examples.length > 0) {
+            dispatch({
+              type: 'STORE_EXAMPLES',
+              conversationId: conversation.id,
+              examples
+            })
+          }
         } catch (error) {
           console.timeEnd('Example Retrieval')
           console.warn('Failed to retrieve examples', error)
           // Continue without examples - don't fail the generation
         }
-      } else if (request.regenerate) {
-        console.debug('Skipping examples for regeneration')
       }
 
       // Start generation progress tracking
@@ -466,6 +493,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       let accumulatedContent = ''
       let chunkCount = 0
       let firstChunkTime: number | null = null
+      let titleDetected = false
       const processedSectionTitles = new Set<string>() // Track which section titles we've already created
 
       console.debug('Starting streaming...')
@@ -484,16 +512,24 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
         chunkCount++
 
         // Extract title from accumulated content if we haven't set it yet
-        if (conversation && !conversation.title) {
-          const titleMatch = accumulatedContent.match(/^#\s+(.+?)(?=\n|$)/m)
-          if (titleMatch) {
-            const title = titleMatch[1].trim()
-            dispatch({
-              type: 'SET_CONVERSATION_TITLE',
-              conversationId: conversation.id,
-              title
-            })
-            console.debug(`Script title detected: "${title}"`)
+        if (conversation && !conversation.title && !titleDetected) {
+          // Only check for title if we have a complete line (ends with newline or is at end)
+          const lines = accumulatedContent.split('\n')
+          const firstLine = lines[0]
+          
+          // Check if first line is complete (either has a newline after it, or we're done streaming)
+          if (lines.length > 1 || accumulatedContent.endsWith('\n')) {
+            const titleMatch = firstLine.match(/^#\s+(.+)$/)
+            if (titleMatch) {
+              const title = titleMatch[1].trim()
+              dispatch({
+                type: 'SET_CONVERSATION_TITLE',
+                conversationId: conversation.id,
+                title
+              })
+              console.debug(`Script title detected: "${title}"`)
+              titleDetected = true
+            }
           }
         }
 

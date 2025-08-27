@@ -1,3 +1,5 @@
+import type { ExampleScript } from '../services/vectorStore'
+
 export type MessageRole = 'user' | 'assistant' | 'system'
 
 export interface Message {
@@ -22,6 +24,7 @@ export interface Conversation {
   title?: string
   messages: Message[]
   sections: ConversationSection[]
+  examples?: ExampleScript[]
   status: 'idle' | 'generating' | 'completed' | 'error'
   createdAt: number
   updatedAt: number
