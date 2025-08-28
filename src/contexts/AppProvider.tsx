@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { Script } from '../types/script'
 import { AppContext } from './AppContext'
 import type { AppContextType } from './AppContext'
+import { parseScriptFromYamlMarkdown, serializeScriptToYamlMarkdown, migrateScriptsToYamlMarkdown } from '../services/scriptParser'
 
 type AppAction = 
   | { type: 'LOAD_SCRIPTS'; scripts: Script[] }
@@ -66,8 +67,42 @@ type AppProviderProps = {
 
 const getStoredScripts = (): Script[] => {
   try {
-    const item = window.localStorage.getItem('scripts')
-    return item ? JSON.parse(item) : []
+    // Check for old format and migrate if needed
+    const oldItem = window.localStorage.getItem('scripts')
+    if (oldItem) {
+      // Migrate from old format
+      const oldScripts = JSON.parse(oldItem)
+      const migrated = migrateScriptsToYamlMarkdown(oldScripts)
+      
+      // Save in new format
+      migrated.forEach((yamlContent, key) => {
+        window.localStorage.setItem(key, yamlContent)
+      })
+      
+      // Remove old format
+      window.localStorage.removeItem('scripts')
+      
+      // Return migrated data
+      return oldScripts
+    }
+    
+    // Load from new format
+    const scripts: Script[] = []
+    const keys = Object.keys(window.localStorage)
+    
+    for (const key of keys) {
+      if (key.startsWith('script_')) {
+        const yamlContent = window.localStorage.getItem(key)
+        if (yamlContent) {
+          const parsed = parseScriptFromYamlMarkdown(yamlContent)
+          if (parsed) {
+            scripts.push(parsed)
+          }
+        }
+      }
+    }
+    
+    return scripts
   } catch (error) {
     console.warn('Error loading scripts from localStorage:', error)
     return []
@@ -76,7 +111,20 @@ const getStoredScripts = (): Script[] => {
 
 const setStoredScripts = (scripts: Script[]) => {
   try {
-    window.localStorage.setItem('scripts', JSON.stringify(scripts))
+    // Clear old script keys
+    const keys = Object.keys(window.localStorage)
+    for (const key of keys) {
+      if (key.startsWith('script_')) {
+        window.localStorage.removeItem(key)
+      }
+    }
+    
+    // Save each script in new format
+    for (const script of scripts) {
+      const key = `script_${script.id}`
+      const yamlContent = serializeScriptToYamlMarkdown(script)
+      window.localStorage.setItem(key, yamlContent)
+    }
   } catch (error) {
     console.error('Error saving scripts to localStorage:', error)
   }
@@ -102,12 +150,7 @@ export const AppProvider = ({ children }: AppProviderProps) => {
   // Save scripts to localStorage when state changes
   useEffect(() => {
     if (isLoaded) {
-      if (state.scripts.length > 0) {
-        setStoredScripts(state.scripts)
-      } else {
-        // If no scripts, clear localStorage
-        localStorage.removeItem('scripts')
-      }
+      setStoredScripts(state.scripts)
     }
   }, [state.scripts, isLoaded])
 

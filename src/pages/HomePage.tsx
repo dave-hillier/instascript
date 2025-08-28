@@ -5,6 +5,7 @@ import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { ScriptList } from '../components/ScriptList'
 import type { Script } from '../types/script'
+import { getApiProvider, getModel } from '../services/config'
 
 type Tab = 'scripts' | 'archive'
 
@@ -31,7 +32,10 @@ export const HomePage = () => {
         content: '',
         createdAt: new Date().toLocaleDateString(),
         isArchived: false,
-        status: 'in-progress'
+        status: 'in-progress',
+        initialPrompt: prompt,
+        provider: getApiProvider(),
+        model: getModel()
       }
 
       // Create conversation

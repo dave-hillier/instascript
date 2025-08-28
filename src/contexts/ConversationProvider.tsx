@@ -94,7 +94,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   // Save conversations to localStorage when state changes
   useEffect(() => {
-    if (isLoaded && state.conversations.length > 0) {
+    if (isLoaded) {
       setStoredConversations(state.conversations)
     }
   }, [state.conversations, isLoaded])

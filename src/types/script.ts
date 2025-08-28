@@ -9,4 +9,7 @@ export interface Script {
   length?: string
   comments?: number
   conversationId?: string
+  initialPrompt?: string
+  provider?: string
+  model?: string
 }

@@ -1,9 +1,44 @@
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
+import { parseConversationFromYamlMarkdown, serializeConversationToYamlMarkdown, migrateJsonToYamlMarkdown } from './conversationParser'
 
 export const getStoredConversations = (): RawConversation[] => {
   try {
-    const item = window.localStorage.getItem('conversations')
-    return item ? JSON.parse(item) : []
+    // Check for old format and migrate if needed
+    const oldItem = window.localStorage.getItem('conversations')
+    if (oldItem) {
+      // Migrate from old format
+      const oldConversations = JSON.parse(oldItem)
+      const migrated = migrateJsonToYamlMarkdown(oldConversations)
+      
+      // Save in new format
+      migrated.forEach((yamlContent, key) => {
+        window.localStorage.setItem(key, yamlContent)
+      })
+      
+      // Remove old format
+      window.localStorage.removeItem('conversations')
+      
+      // Return migrated data
+      return oldConversations
+    }
+    
+    // Load from new format
+    const conversations: RawConversation[] = []
+    const keys = Object.keys(window.localStorage)
+    
+    for (const key of keys) {
+      if (key.startsWith('conversation_')) {
+        const yamlContent = window.localStorage.getItem(key)
+        if (yamlContent) {
+          const parsed = parseConversationFromYamlMarkdown(yamlContent)
+          if (parsed) {
+            conversations.push(parsed)
+          }
+        }
+      }
+    }
+    
+    return conversations
   } catch (error) {
     console.warn('Error loading conversations from localStorage:', error)
     return []
@@ -12,7 +47,22 @@ export const getStoredConversations = (): RawConversation[] => {
 
 export const setStoredConversations = (conversations: RawConversation[]): void => {
   try {
-    window.localStorage.setItem('conversations', JSON.stringify(conversations))
+    // Clear old conversation keys
+    const keys = Object.keys(window.localStorage)
+    for (const key of keys) {
+      if (key.startsWith('conversation_')) {
+        window.localStorage.removeItem(key)
+      }
+    }
+    
+    // Save each conversation in new format
+    for (const conversation of conversations) {
+      if (conversation.scriptId) {
+        const key = `conversation_${conversation.scriptId}`
+        const yamlContent = serializeConversationToYamlMarkdown(conversation)
+        window.localStorage.setItem(key, yamlContent)
+      }
+    }
   } catch (error) {
     console.error('Error saving conversations to localStorage:', error)
   }

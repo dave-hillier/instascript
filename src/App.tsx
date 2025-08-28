@@ -170,8 +170,16 @@ function AppContent() {
 
   const handleClearConversations = () => {
     if (confirm('Are you sure you want to clear all conversations and scripts? This action cannot be undone.')) {
-      // Clear conversations from localStorage
+      // Clear all conversation_* and script_* keys from localStorage
+      const keys = Object.keys(localStorage)
+      for (const key of keys) {
+        if (key.startsWith('conversation_') || key.startsWith('script_')) {
+          localStorage.removeItem(key)
+        }
+      }
+      // Also clear old formats if they exist
       localStorage.removeItem('conversations')
+      localStorage.removeItem('scripts')
       // Clear scripts from state (they're stored in localStorage via AppProvider)
       dispatch({ type: 'CLEAR_SCRIPTS' })
       // Close the modal
@@ -215,7 +223,10 @@ function AppContent() {
             </h1>
             {isScriptPage && currentScript && (
               <div>
-                <span>{currentScript.createdAt} · Generated Markdown</span>
+                <span>{currentScript.createdAt}</span>
+                {currentScript.provider && currentScript.model && (
+                  <span> · {currentScript.provider}/{currentScript.model}</span>
+                )}
                 {currentScript.status && <span> · {currentScript.status}</span>}
                 {currentScript.length && <span> · {currentScript.length}</span>}
               </div>
