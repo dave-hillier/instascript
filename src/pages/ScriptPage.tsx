@@ -96,7 +96,7 @@ const getScriptDocument = (
   const { title: documentTitle, sections: baseSections } = parseSections(baseGeneration.response)
 
   // Apply subsequent generations as section replacements
-  let consolidatedSections = [...baseSections]
+  const consolidatedSections = [...baseSections]
   
   for (let i = 1; i < conversation.generations.length; i++) {
     const generation = conversation.generations[i]

@@ -257,7 +257,7 @@ function AppContent() {
         onThemeChange={handleThemeChange}
         apiKey={apiKey || ''}
         apiProvider={apiProvider || 'mock'}
-        model={model || 'gpt-5-mini'}
+        model={model || 'gpt-5'}
         onSave={handleSaveSettings}
         onClearConversations={handleClearConversations}
       />

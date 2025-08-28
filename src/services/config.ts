@@ -33,10 +33,10 @@ export function getApiProvider(): APIProvider {
 export function getModel(): string {
   try {
     const item = window.localStorage.getItem('model')
-    return item ? JSON.parse(item) : 'gpt-5-mini'
+    return item ? JSON.parse(item) : 'gpt-5'
   } catch (error) {
     console.warn('Error loading model from localStorage:', error)
-    return 'gpt-5-mini'
+    return 'gpt-5'
   }
 }
 
