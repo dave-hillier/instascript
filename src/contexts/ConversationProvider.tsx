@@ -22,7 +22,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     currentGeneration: null
   })
 
-  const [isLoaded, setIsLoaded] = useState(false)
+  const [, setIsLoaded] = useState(false)
   const { scriptService, exampleService } = useServices()
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<RawConversation | null>(null)
@@ -45,7 +45,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
     const callbacks: RawGenerationCallbacks = {
       dispatch,
-      appDispatch
+      appDispatch,
+      saveConversations: setStoredConversations,
+      getCurrentConversations: () => state.conversations
     }
 
     const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
@@ -75,7 +77,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
     const callbacks: RawGenerationCallbacks = {
       dispatch,
-      appDispatch
+      appDispatch,
+      saveConversations: setStoredConversations,
+      getCurrentConversations: () => state.conversations
     }
 
     const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
@@ -92,12 +96,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     setIsLoaded(true)
   }, [])
 
-  // Save conversations to localStorage when state changes
-  useEffect(() => {
-    if (isLoaded) {
-      setStoredConversations(state.conversations)
-    }
-  }, [state.conversations, isLoaded])
+  // Note: Conversations are now saved directly by the orchestrator after API interactions
+  // No UI-triggered saves to avoid performance issues
 
 
   const getConversationByScriptId = useCallback((scriptId: string): RawConversation | undefined => {

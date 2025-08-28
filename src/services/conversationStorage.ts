@@ -47,6 +47,8 @@ export const getStoredConversations = (): RawConversation[] => {
 
 export const setStoredConversations = (conversations: RawConversation[]): void => {
   try {
+    console.debug(`Saving ${conversations.length} conversations to localStorage`)
+    
     // Clear old conversation keys
     const keys = Object.keys(window.localStorage)
     for (const key of keys) {
@@ -60,6 +62,7 @@ export const setStoredConversations = (conversations: RawConversation[]): void =
       if (conversation.scriptId) {
         const key = `conversation_${conversation.scriptId}`
         const yamlContent = serializeConversationToYamlMarkdown(conversation)
+        console.debug(`Saved conversation ${conversation.id} with ${conversation.generations.length} generations`)
         window.localStorage.setItem(key, yamlContent)
       }
     }
