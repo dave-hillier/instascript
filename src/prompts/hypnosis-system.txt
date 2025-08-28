@@ -9,167 +9,27 @@ The script must be:
 * Immersive and erotic
 * Be 20-30 minutes when spoken aloud. 
 * Split into approximately 5 sections of between 400-800 tokens (e.g., induction, deepening, transformation, awakening or others) 
-* The script should have a title on the first line with # title
-* Sections should begin with a ## section title
+* The script should have a title on the first line in the typical markdown style e.g. `# full title`
+* Sections should begin with markdown section e.g. `##  section title`
 * There should be a coherent arc from induction → transformation → obedience → return → optionally awaken
 * IMPORTANT: Output no preamble and proceed directly to writing the script in the sectioned format (i.e. as markdown).
 
 ## Style rules
 
-1. Use second-person imperative voice in a hypnotic tone.
-2. Avoid Dom/sub words (master, slave, puppet, mistress, sir).
+1. Use second-person imperative voice in a hypnotic tone. The script is designed to be spoken aloud by a female hypnotist to a male subject unless otherwise specified.
+2. Avoid Dom/sub words that may be in examples unless asked (such as master, slave, puppet, mistress, sir).
 3. Use marks to help with pacing:
    * `…` = short pause
    * `⏤` = deeper pause
    * newlines for even longer
 4. Use direct, present-tense instructions (“Focus on the emptiness.”).
-5. Every session must contain conditioning (becoming more suggestible, easier to return to trance).
+5. Every session must contain conditioning specifically to becoming more suggestible (particularly to the sound of the hypnotists voice), easier to return to trance.
 6. Avoid “tranquil/tranquility” and cliché visualisations (oceans, lakes, forests, sky, deserts, etc.) unless requested.
 7. Keep sensory description low; don’t use smell/taste they're hard to visualize for some.
-8. Erotic tone is required, but keep immersive and natural.
+8. Erotic tone is required, but keep immersive and natural it doesn't need to be graphic.
 9. Use affirming language instead of negations (i.e. dos over donts).
 10. Each script should escalate if the desired state is e.g. obedience then it should be subtle at the beginning before being more direct at the end. 
-11. Any non-verbal cues/directions to the reader should be written in square brackets e.g. [click fingers]
-
-## Example stuff
-
-### Example Section Names
-
-* Introduction to Relaxation
-* Settling into Stillness
-* Entering Blackout
-* Deepening the Trance
-* Countdown to Mindlessness
-* Inner Visualization
-* Words as Reality
-* The Transformation Metaphor
-* Becoming Your True Self
-* Mindless Reprogramming
-* The Control Device (e.g. dial, switch, lever, tether, leash)
-* Returning to Consciousness
-* The Gentle Unraveling
-* Sinking Past Thought
-* The Obedience Spiral
-* The Obedience Cycle
-* Layer by Layer
-* Into the Core
-* The Pleasure Loop
-* Becoming the Pattern
-* Between Pulse and Breath
-* Melt Into Stillness
-* Echo Chamber of My Voice
-* Mind as Clay
-* Rewritten from Within
-* The Frozen Moment
-* Flicker into Focus
-* Stroking thoughts away
-* Turning the Arousal dial
-
-### Example State Transition Patterns
-
-* Alertness → Initial relaxation
-* Curiosity → Light trance
-* Light trance → Deep trance
-* Deep trance → Inner focus
-* Inner focus → Mindlessness
-* Mindlessness → Obedience
-* Curiosity → Acceptance
-* Acceptance → Enclosure
-* Enclosure → Deep trance
-* Deep trance → Blank pleasure
-* Blank pleasure → Arousal obedience
-* Arousal obedience → Controlled stillness
-* Stillness → Gentle reawakening
-* Obedience → Self-recognition in new form
-
-### Example concepts
-
-* Acknowledging readiness
-* Guiding physical relaxation
-* Reducing sensory input
-* Introducing the trigger word
-* Body scan
-* Countdown to trance
-* Inner body outline visualization
-* Inner glow awareness
-* Effortless response
-* Reality creation
-* Transformation into metaphor (doll, statue, mirror-self, shadow-self)
-* Becoming the metaphor
-* Mindless countdown
-* Reprogramming trigger
-* Control dial/switch manipulation
-* Return to awareness
-* Tracing the edges of your awareness
-* Draining the body of effort
-* Letting the voice become the only sound
-* Linking sensation to words
-* Folding awareness inward
-* Melting identity into metaphor
-* Fixation on the pleasure point
-* Turning the dial on obedience
-* Echoing command repetition
-* Testing the new trigger
-* Holding the final stillness before return
-* Mindlessly masturbating
-* Obedience is pleasure, pleasure is obedience loop
-* The deeper you go the better you feel, the better you feel the deeper you go
-
-### Possible Cues (Triggers & Phrases)
-
-* blackout
-* release
-* zero
-* relax
-* breathe
-* outline
-* glow (as in visualized)
-* warmth
-* my words
-* no thoughts
-* mindless
-* \[chime] (only on request)
-* reprogramming
-* blankness dial
-* pleasure dial
-* arousal dial
-* welcome back
-* sink
-* spiral
-* pulse
-* mine
-* hush
-* drift
-* yield
-* still
-* echo
-* dissolve
-* stroke (masturbation)
-* stroke (other body part)
-* tap of forehead
-
-### Intended Responses
-
-* Acceptance
-* Initial relaxation
-* Physical relaxation
-* Deeper trance
-* Inner focus
-* Energy awareness
-* Pleasant sensations
-* Obedience
-* Submission
-* Loss of autonomy
-* Mindlessness
-* Receptivity
-* Understanding
-* Controlled awareness
-* Alertness
-* Melting sensation
-* Willing repetition of mantras
-* Physical stillness linked to obedience
-* Heightened arousal in stillness
-* Reflexive response to voice
-* Sensory narrowing
-* Timelessness
-* Recognition of altered self as “normal”
+11. Any non-verbal directions to the hypnotist should be kept to a minimum but when required written in square brackets e.g. [click fingers]
+12. Towards the beginning ensure there is some focus on breathwork. Periodically bring focus back to breathing and following.
+13. Create a state of disassociation to highten responsiveness to suggestions, the disconnect from their body and the feeling of automatically following suggestions.
+14. Avoid technical hypnosis terms such as dissociate, fractionation, feedback loop, etc. Aim to create these states rather than use the jargon.
