@@ -12,10 +12,11 @@ export interface AppConfig {
 
 export function getApiKey(): string | null {
   try {
-    const item = window.localStorage.getItem('OPENAI_API_KEY')
+    // API key is stored in sessionStorage for security (not persisted across sessions)
+    const item = window.sessionStorage.getItem('OPENAI_API_KEY')
     return item ? JSON.parse(item) : null
   } catch (error) {
-    console.warn('Error loading API key from localStorage:', error)
+    console.warn('Error loading API key from sessionStorage:', error)
     return null
   }
 }

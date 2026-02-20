@@ -36,6 +36,14 @@ header > div:first-child {
   align-items: center;
 }
 
+header > div:first-child > button:first-child {
+  margin-right: 1rem;
+}
+
+header nav > button:first-child {
+  margin-right: 0.5rem;
+}
+
 header h1 {
   display: flex;
   align-items: center;
@@ -242,6 +250,14 @@ main > section:nth-child(3) button[aria-selected="true"] {
   border-bottom-color: #4f46e5;
 }
 
+/* Script page generation status */
+main > section > div[role="status"] > div {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Script list */
 main > section:last-child ul {
   display: flex;
   flex-direction: column;
@@ -281,6 +297,13 @@ main > section:last-child li:last-child {
   background-color: rgba(0, 0, 0, 0.02);
 }
 
+main > section:last-child li > a:first-child {
+  flex: 1;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
 main > section:last-child li > div:first-child {
   flex: 1;
 }
@@ -301,6 +324,13 @@ main > section:last-child li > div:first-child > div {
 main > section:last-child li > div:not(:first-child):not(.script-actions) {
   margin-left: 0.5rem;
   font-size: 0.8125rem;
+  transition: opacity 0.15s ease;
+}
+
+main > section:last-child li:hover > div:not(:first-child):not(.script-actions),
+main > section:last-child li:focus-within > div:not(:first-child):not(.script-actions) {
+  opacity: 0;
+  pointer-events: none;
 }
 
 main > section:last-child li > div[aria-label*="comments"] {
@@ -674,6 +704,15 @@ div[role="group"] button.active:hover {
   gap: 0.375rem;
   align-items: center;
   margin-left: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+main > section:last-child li:hover .script-actions,
+main > section:last-child li:focus-within .script-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 [data-theme="light"] .script-actions {

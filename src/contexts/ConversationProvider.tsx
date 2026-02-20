@@ -8,7 +8,7 @@ import { useAppContext } from '../hooks/useAppContext'
 
 // Extracted modules
 import { rawConversationReducer } from '../reducers/rawConversationReducer'
-import { getStoredConversations, setStoredConversations, createRawConversation } from '../services/conversationStorage'
+import { getStoredConversations, setStoredConversation, createRawConversation } from '../services/conversationStorage'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 import { getSectionRegenerationPrompt } from '../services/prompts'
 
@@ -26,16 +26,42 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const { scriptService, exampleService } = useServices()
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<RawConversation | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+  // Ref that always points to the latest conversations state, avoiding stale closures
+  // in long-running async callbacks (streaming can take seconds)
+  const conversationsRef = useRef(state.conversations)
+  conversationsRef.current = state.conversations
+
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+  }, [])
+
+  const buildCallbacks = useCallback((): RawGenerationCallbacks => ({
+    dispatch,
+    appDispatch,
+    saveConversation: setStoredConversation,
+    getConversation: (conversationId: string) =>
+      conversationsRef.current.find(c => c.id === conversationId)
+  }), [dispatch, appDispatch])
+
   // Direct script generation without job processing
-  const generateScript = useCallback(async (request: GenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
+  const generateScript = useCallback(async (request: GenerationRequest): Promise<void> => {
+    // Abort any existing generation
+    stopGeneration()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     // Find conversation - first check pending, then current state
     let conversation: RawConversation | undefined
-    
+
     if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
       conversation = pendingConversationRef.current
       pendingConversationRef.current = null
     } else if (request.conversationId) {
-      conversation = state.conversations.find(c => c.id === request.conversationId)
+      conversation = conversationsRef.current.find(c => c.id === request.conversationId)
     }
 
     const services: RawScriptServices = {
@@ -43,27 +69,31 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       exampleService
     }
 
-    const callbacks: RawGenerationCallbacks = {
-      dispatch,
-      appDispatch,
-      saveConversations: setStoredConversations,
-      getCurrentConversations: () => state.conversations
+    try {
+      const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+      await orchestrator.generateScript(request, conversation, controller.signal)
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
     }
+  }, [scriptService, exampleService, stopGeneration, buildCallbacks])
 
-    const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
-    await orchestrator.generateScript(request, conversation, abortSignal)
-  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
+  const regenerateSection = useCallback(async (request: SectionRegenerationRequest): Promise<void> => {
+    // Abort any existing generation
+    stopGeneration()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
 
-  const regenerateSection = useCallback(async (request: SectionRegenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
     // Find conversation in current state
-    const conversation = state.conversations.find(c => c.id === request.conversationId)
+    const conversation = conversationsRef.current.find(c => c.id === request.conversationId)
     if (!conversation) {
       throw new Error(`Conversation ${request.conversationId} not found`)
     }
 
     // Generate the prompt internally - encapsulate the prompt logic
     const prompt = getSectionRegenerationPrompt(request.sectionTitle)
-    
+
     const regenerationRequest: RegenerationRequest = {
       prompt,
       conversationId: request.conversationId,
@@ -75,16 +105,15 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       exampleService
     }
 
-    const callbacks: RawGenerationCallbacks = {
-      dispatch,
-      appDispatch,
-      saveConversations: setStoredConversations,
-      getCurrentConversations: () => state.conversations
+    try {
+      const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+      await orchestrator.regenerateSection(regenerationRequest, conversation, controller.signal)
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
     }
-
-    const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
-    await orchestrator.regenerateSection(regenerationRequest, conversation, abortSignal)
-  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
+  }, [scriptService, exampleService, stopGeneration, buildCallbacks])
 
 
   // Initial load from localStorage
@@ -118,7 +147,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     getConversationByScriptId,
     createConversation,
     generateScript,
-    regenerateSection
+    regenerateSection,
+    stopGeneration
   }
 
   return (
