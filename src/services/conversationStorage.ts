@@ -71,6 +71,18 @@ export const setStoredConversations = (conversations: RawConversation[]): void =
   }
 }
 
+export const setStoredConversation = (conversation: RawConversation): void => {
+  try {
+    if (conversation.scriptId) {
+      const key = `conversation_${conversation.scriptId}`
+      const yamlContent = serializeConversationToYamlMarkdown(conversation)
+      window.localStorage.setItem(key, yamlContent)
+    }
+  } catch (error) {
+    console.error('Error saving conversation to localStorage:', error)
+  }
+}
+
 // Helper functions for working with generations
 export const addGenerationToConversation = (
   conversations: RawConversation[], 

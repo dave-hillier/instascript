@@ -28,8 +28,8 @@ export interface RawScriptServices {
 export interface RawGenerationCallbacks {
   dispatch: (action: RawConversationAction) => void
   appDispatch: (action: { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }) => void
-  saveConversations: (conversations: RawConversation[]) => void
-  getCurrentConversations: () => RawConversation[]
+  saveConversation: (conversation: RawConversation) => void
+  getConversation: (conversationId: string) => RawConversation | undefined
 }
 
 export class RawScriptGenerationOrchestrator {
@@ -89,6 +89,13 @@ export class RawScriptGenerationOrchestrator {
     return Math.round(bytes / (1024 * 1024)) + 'MB'
   }
 
+  private persistConversation(conversationId: string): void {
+    const conversation = this.callbacks.getConversation(conversationId)
+    if (conversation) {
+      this.callbacks.saveConversation(conversation)
+    }
+  }
+
   private setupGeneration(conversationId: string, sectionTitle?: string): void {
     // Start generation progress tracking
     this.callbacks.dispatch({
@@ -132,7 +139,7 @@ export class RawScriptGenerationOrchestrator {
         // Save during streaming (throttled to avoid excessive localStorage writes)
         const now = Date.now()
         if (now - this.lastSaveTime > this.saveThrottleMs) {
-          this.callbacks.saveConversations(this.callbacks.getCurrentConversations())
+          this.persistConversation(conversationId)
           this.lastSaveTime = now
         }
         
@@ -164,8 +171,8 @@ export class RawScriptGenerationOrchestrator {
         response: accumulatedContent
       })
       
-      // Save conversations after completion
-      this.callbacks.saveConversations(this.callbacks.getCurrentConversations())
+      // Save conversation after completion
+      this.persistConversation(conversationId)
       
     } catch (error) {
       console.error('Error processing stream:', error)
@@ -210,7 +217,7 @@ export class RawScriptGenerationOrchestrator {
       })
       
       // Save after starting generation
-      this.callbacks.saveConversations(this.callbacks.getCurrentConversations())
+      this.persistConversation(conversation.id)
       
       // Call the script service for initial generation
       const stream = this.services.scriptService.generateScript(
@@ -285,7 +292,7 @@ export class RawScriptGenerationOrchestrator {
       })
       
       // Save after starting regeneration
-      this.callbacks.saveConversations(this.callbacks.getCurrentConversations())
+      this.persistConversation(conversation.id)
       
       // Call the script service for section regeneration
       const stream = this.services.scriptService.regenerateSection(

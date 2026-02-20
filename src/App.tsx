@@ -63,7 +63,18 @@ function AppContent() {
   
   const [apiKey, setApiKey] = useState(() => {
     try {
-      const item = window.localStorage.getItem('OPENAI_API_KEY')
+      // Migrate API key from localStorage to sessionStorage if present
+      const legacyItem = window.localStorage.getItem('OPENAI_API_KEY')
+      if (legacyItem) {
+        const key = JSON.parse(legacyItem)
+        if (key) {
+          window.sessionStorage.setItem('OPENAI_API_KEY', JSON.stringify(key))
+        }
+        window.localStorage.removeItem('OPENAI_API_KEY')
+        return key || ''
+      }
+      // Read from sessionStorage (not persisted across browser sessions)
+      const item = window.sessionStorage.getItem('OPENAI_API_KEY')
       return item ? JSON.parse(item) : ''
     } catch {
       return ''
@@ -111,12 +122,12 @@ function AppContent() {
     }
   }, [uiState.theme])
 
-  // Save API key when it changes
+  // Save API key to sessionStorage (not persisted across browser sessions for security)
   useEffect(() => {
     try {
-      window.localStorage.setItem('OPENAI_API_KEY', JSON.stringify(apiKey))
+      window.sessionStorage.setItem('OPENAI_API_KEY', JSON.stringify(apiKey))
     } catch (error) {
-      console.error('Error saving API key to localStorage:', error)
+      console.error('Error saving API key to sessionStorage:', error)
     }
   }, [apiKey])
 
