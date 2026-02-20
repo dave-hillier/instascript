@@ -1,5 +1,5 @@
 import type { RawConversation, GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
-import type { ExampleScript } from './vectorStore'
+import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
 import { getSystemPrompt } from './prompts'

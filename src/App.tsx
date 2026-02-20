@@ -5,16 +5,16 @@ import { useAppContext } from './hooks/useAppContext'
 import { SettingsModal } from './components/SettingsModal'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
+import type { APIProvider } from './services/config'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
-type Model = 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano'
 
 type ThemeAction = { type: 'SET_THEME'; theme: Theme }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
 type SectionTitlesAction = { type: 'TOGGLE_SECTION_TITLES' }
 
-type UIState = { 
+type UIState = {
   theme: Theme
   showSettingsModal: boolean
   showSectionTitles: boolean
@@ -40,8 +40,8 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  
-  const [uiState, uiDispatch] = useReducer(uiReducer, { 
+
+  const [uiState, uiDispatch] = useReducer(uiReducer, {
     theme: (() => {
       try {
         const item = window.localStorage.getItem('theme')
@@ -60,7 +60,7 @@ function AppContent() {
       }
     })()
   })
-  
+
   const [apiKey, setApiKey] = useState(() => {
     try {
       // Migrate API key from localStorage to sessionStorage if present
@@ -81,7 +81,16 @@ function AppContent() {
     }
   })
 
-  const [apiProvider, setApiProvider] = useState<'openai' | 'mock'>(() => {
+  const [openRouterApiKey, setOpenRouterApiKey] = useState(() => {
+    try {
+      const item = window.sessionStorage.getItem('OPENROUTER_API_KEY')
+      return item ? JSON.parse(item) : ''
+    } catch {
+      return ''
+    }
+  })
+
+  const [apiProvider, setApiProvider] = useState<APIProvider>(() => {
     try {
       const item = window.localStorage.getItem('apiProvider')
       return item ? JSON.parse(item) : 'mock'
@@ -90,7 +99,7 @@ function AppContent() {
     }
   })
 
-  const [model, setModel] = useState<Model>(() => {
+  const [model, setModel] = useState<string>(() => {
     try {
       const item = window.localStorage.getItem('model')
       return item ? JSON.parse(item) : 'gpt-5'
@@ -101,14 +110,14 @@ function AppContent() {
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
-  
+
   // Listen for system theme changes
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const handleChange = (e: MediaQueryListEvent) => {
       setSystemPrefersDark(e.matches)
     }
-    
+
     mediaQuery.addEventListener('change', handleChange)
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [])
@@ -122,7 +131,7 @@ function AppContent() {
     }
   }, [uiState.theme])
 
-  // Save API key to sessionStorage (not persisted across browser sessions for security)
+  // Save OpenAI API key to sessionStorage
   useEffect(() => {
     try {
       window.sessionStorage.setItem('OPENAI_API_KEY', JSON.stringify(apiKey))
@@ -130,6 +139,15 @@ function AppContent() {
       console.error('Error saving API key to sessionStorage:', error)
     }
   }, [apiKey])
+
+  // Save OpenRouter API key to sessionStorage
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('OPENROUTER_API_KEY', JSON.stringify(openRouterApiKey))
+    } catch (error) {
+      console.error('Error saving OpenRouter API key to sessionStorage:', error)
+    }
+  }, [openRouterApiKey])
 
   // Save API provider when it changes
   useEffect(() => {
@@ -159,21 +177,24 @@ function AppContent() {
   }, [uiState.showSectionTitles])
 
   // Determine effective theme (resolve 'system' to actual theme)
-  const effectiveTheme = uiState.theme === 'system' 
+  const effectiveTheme = uiState.theme === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
     : uiState.theme
 
   const isScriptPage = location.pathname.startsWith('/script/')
-  
+
   // Extract script ID from URL and get script title
   const scriptId = isScriptPage ? location.pathname.split('/script/')[1] : null
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
   const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
-  
 
-  const handleSaveSettings = (newApiKey: string, newApiProvider: 'openai' | 'mock', newModel: Model) => {
+
+  const handleSaveSettings = (newApiKey: string, newOpenRouterApiKey: string, newApiProvider: APIProvider, newModel: string) => {
     if (newApiKey.trim()) {
       setApiKey(newApiKey.trim())
+    }
+    if (newOpenRouterApiKey.trim()) {
+      setOpenRouterApiKey(newOpenRouterApiKey.trim())
     }
     setApiProvider(newApiProvider)
     setModel(newModel)
@@ -228,7 +249,7 @@ function AppContent() {
             </button>
           )}
           <div>
-            <h1>          
+            <h1>
               {headerTitle}
             </h1>
             {isScriptPage && currentScript && (
@@ -253,7 +274,7 @@ function AppContent() {
               {uiState.showSectionTitles ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           )}
-          <button 
+          <button
             onClick={handleOpenSettings}
             aria-label="Open settings"
             type="button"
@@ -262,7 +283,7 @@ function AppContent() {
           </button>
         </nav>
       </header>
-      
+
       <main>
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -276,6 +297,7 @@ function AppContent() {
         theme={uiState.theme}
         onThemeChange={handleThemeChange}
         apiKey={apiKey || ''}
+        openRouterApiKey={openRouterApiKey || ''}
         apiProvider={apiProvider || 'mock'}
         model={model || 'gpt-5'}
         onSave={handleSaveSettings}

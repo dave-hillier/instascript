@@ -1,9 +1,19 @@
 import { useRef, useEffect, useState } from 'react'
 import { Sun, Moon, Monitor, Trash2 } from 'lucide-react'
+import type { APIProvider } from '../services/config'
 
 type Theme = 'light' | 'dark' | 'system'
 
-type Model = 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano'
+const OPENAI_MODELS = [
+  { value: 'gpt-5', label: 'GPT-5' },
+  { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
+  { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
+]
+
+const OPENROUTER_MODELS = [
+  { value: 'x-ai/grok-3', label: 'Grok 3' },
+  { value: 'x-ai/grok-3-mini', label: 'Grok 3 Mini' },
+]
 
 type SettingsModalProps = {
   isOpen: boolean
@@ -11,9 +21,10 @@ type SettingsModalProps = {
   theme: Theme
   onThemeChange: (theme: Theme) => void
   apiKey: string
-  apiProvider: 'openai' | 'mock'
-  model: Model
-  onSave: (apiKey: string, apiProvider: 'openai' | 'mock', model: Model) => void
+  openRouterApiKey: string
+  apiProvider: APIProvider
+  model: string
+  onSave: (apiKey: string, openRouterApiKey: string, apiProvider: APIProvider, model: string) => void
   onClearConversations: () => void
 }
 
@@ -23,6 +34,7 @@ export const SettingsModal = ({
   theme,
   onThemeChange,
   apiKey,
+  openRouterApiKey,
   apiProvider,
   model,
   onSave,
@@ -30,17 +42,21 @@ export const SettingsModal = ({
 }: SettingsModalProps) => {
   const modalRef = useRef<HTMLDialogElement>(null)
   const [tempApiKey, setTempApiKey] = useState('')
-  const [tempApiProvider, setTempApiProvider] = useState<'openai' | 'mock'>(apiProvider || 'mock')
-  const [tempModel, setTempModel] = useState<Model>(model || 'gpt-5')
+  const [tempOpenRouterApiKey, setTempOpenRouterApiKey] = useState('')
+  const [tempApiProvider, setTempApiProvider] = useState<APIProvider>(apiProvider || 'mock')
+  const [tempModel, setTempModel] = useState(model || 'gpt-5')
+  const [customModel, setCustomModel] = useState('')
 
   // Initialize temp values when modal opens
   useEffect(() => {
     if (isOpen) {
       setTempApiKey(apiKey || '')
+      setTempOpenRouterApiKey(openRouterApiKey || '')
       setTempApiProvider(apiProvider || 'mock')
       setTempModel(model || 'gpt-5')
+      setCustomModel('')
     }
-  }, [isOpen, apiKey, apiProvider, model])
+  }, [isOpen, apiKey, openRouterApiKey, apiProvider, model])
 
   // Open/close modal based on isOpen prop
   useEffect(() => {
@@ -52,13 +68,23 @@ export const SettingsModal = ({
   }, [isOpen])
 
   const handleSave = () => {
-    onSave(tempApiKey.trim(), tempApiProvider, tempModel)
+    const finalModel = tempModel === 'custom' ? customModel.trim() : tempModel
+    onSave(tempApiKey.trim(), tempOpenRouterApiKey.trim(), tempApiProvider, finalModel)
     onClose()
   }
 
   const handleClose = () => {
     modalRef.current?.close()
     onClose()
+  }
+
+  const handleProviderChange = (provider: APIProvider) => {
+    setTempApiProvider(provider)
+    if (provider === 'openai') {
+      setTempModel('gpt-5')
+    } else if (provider === 'openrouter') {
+      setTempModel('x-ai/grok-3')
+    }
   }
 
   const getThemeIcon = (themeType: Theme) => {
@@ -77,8 +103,11 @@ export const SettingsModal = ({
     }
   }
 
+  const modelOptions = tempApiProvider === 'openai' ? OPENAI_MODELS : OPENROUTER_MODELS
+  const isPresetModel = modelOptions.some(m => m.value === tempModel)
+
   return (
-    <dialog 
+    <dialog
       ref={modalRef}
       aria-labelledby="settings-title"
       onClick={(e) => {
@@ -89,7 +118,7 @@ export const SettingsModal = ({
     >
       <header>
         <h2 id="settings-title">Settings</h2>
-        <button 
+        <button
           onClick={handleClose}
           aria-label="Close settings"
           type="button"
@@ -97,15 +126,15 @@ export const SettingsModal = ({
           ×
         </button>
       </header>
-      
+
       <form onSubmit={(e) => { e.preventDefault(); handleSave(); }}>
         <fieldset>
           <legend className="sr-only">Theme Settings</legend>
-          
+
           <label htmlFor="theme-selector">Theme</label>
-          <div 
-            role="group" 
-            aria-labelledby="theme-selector" 
+          <div
+            role="group"
+            aria-labelledby="theme-selector"
             id="theme-options"
           >
             {(['light', 'dark', 'system'] as Theme[]).map((themeType) => (
@@ -126,39 +155,68 @@ export const SettingsModal = ({
 
         <fieldset>
           <legend className="sr-only">API Configuration</legend>
-          
+
           <label htmlFor="api-provider">API Provider</label>
-          <select 
+          <select
             id="api-provider"
             value={tempApiProvider}
-            onChange={(e) => setTempApiProvider(e.target.value as 'openai' | 'mock')}
+            onChange={(e) => handleProviderChange(e.target.value as APIProvider)}
             aria-describedby="api-provider-help"
           >
             <option value="mock">Mock API (for testing)</option>
             <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
           </select>
 
-          <label htmlFor="model-selector">Model</label>
-          <select 
-            id="model-selector"
-            value={tempModel}
-            onChange={(e) => setTempModel(e.target.value as Model)}
-            aria-describedby="model-help"
-          >
-            <option value="gpt-5">GPT-5</option>
-            <option value="gpt-5-mini">GPT-5 Mini</option>
-            <option value="gpt-5-nano">GPT-5 Nano</option>
-          </select>
-          <p id="model-help">
-            Choose the model for script generation
-          </p>
+          {tempApiProvider !== 'mock' && (
+            <>
+              <label htmlFor="model-selector">Model</label>
+              <select
+                id="model-selector"
+                value={isPresetModel ? tempModel : 'custom'}
+                onChange={(e) => setTempModel(e.target.value)}
+                aria-describedby="model-help"
+              >
+                {modelOptions.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+                {tempApiProvider === 'openrouter' && (
+                  <option value="custom">Custom model...</option>
+                )}
+              </select>
+
+              {tempApiProvider === 'openrouter' && (tempModel === 'custom' || !isPresetModel) && (
+                <>
+                  <label htmlFor="custom-model">Custom Model ID</label>
+                  <input
+                    type="text"
+                    id="custom-model"
+                    placeholder="e.g. x-ai/grok-4, anthropic/claude-sonnet-4"
+                    value={customModel || (!isPresetModel && tempModel !== 'custom' ? tempModel : '')}
+                    onChange={(e) => {
+                      setCustomModel(e.target.value)
+                      setTempModel('custom')
+                    }}
+                    aria-describedby="custom-model-help"
+                  />
+                  <p id="custom-model-help">
+                    Enter any OpenRouter model ID
+                  </p>
+                </>
+              )}
+
+              <p id="model-help">
+                Choose the model for script generation
+              </p>
+            </>
+          )}
 
           {tempApiProvider === 'openai' && (
             <>
               <label htmlFor="api-key">OpenAI API Key</label>
-              <input 
-                type="password" 
-                id="api-key" 
+              <input
+                type="password"
+                id="api-key"
                 placeholder="Enter your OpenAI API key"
                 value={tempApiKey}
                 onChange={(e) => setTempApiKey(e.target.value)}
@@ -173,11 +231,32 @@ export const SettingsModal = ({
               )}
             </>
           )}
+
+          {tempApiProvider === 'openrouter' && (
+            <>
+              <label htmlFor="openrouter-api-key">OpenRouter API Key</label>
+              <input
+                type="password"
+                id="openrouter-api-key"
+                placeholder="Enter your OpenRouter API key"
+                value={tempOpenRouterApiKey}
+                onChange={(e) => setTempOpenRouterApiKey(e.target.value)}
+                aria-describedby={openRouterApiKey ? "openrouter-key-status" : "openrouter-key-help"}
+                required
+              />
+              <p id="openrouter-key-help">
+                Get your API key from openrouter.ai/keys
+              </p>
+              {openRouterApiKey && (
+                <p id="openrouter-key-status" role="status">API key is currently saved</p>
+              )}
+            </>
+          )}
         </fieldset>
 
         <fieldset>
           <legend className="sr-only">Data Management</legend>
-          
+
           <label>Data Management</label>
           <button
             type="button"
@@ -193,15 +272,15 @@ export const SettingsModal = ({
           </p>
         </fieldset>
       </form>
-      
+
       <footer>
-        <button 
+        <button
           onClick={handleClose}
           type="button"
         >
           Cancel
         </button>
-        <button 
+        <button
           onClick={handleSave}
           type="button"
         >

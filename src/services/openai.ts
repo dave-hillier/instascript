@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
-import type { ExampleScript } from './vectorStore'
+import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { getModel } from './config'
 

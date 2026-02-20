@@ -1,5 +1,5 @@
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
-import type { ExampleScript } from './vectorStore'
+import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 
 export class MockAPIService implements ScriptGenerationService {
