@@ -5,6 +5,7 @@ import { useConversationContext } from '../hooks/useConversationContext'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
 
+
 interface ScriptDocumentSection {
   id: string
   title: string
@@ -159,7 +160,7 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state } = useAppContext()
-  const { state: conversationState, getConversationByScriptId, regenerateSection } = useConversationContext()
+  const { state: conversationState, getConversationByScriptId, regenerateSection, stopGeneration } = useConversationContext()
   
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -190,8 +191,8 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   if (!script) {
     return (
       <div>
-        <button 
-          onClick={() => navigate(-1)}
+        <button
+          onClick={() => navigate('/')}
           aria-label="Go back"
           type="button"
         >
@@ -208,13 +209,10 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
     <section>
       {generationState.isGenerating && (
         <div role="status" aria-live="polite">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div>
             <p>Generating script...</p>
             <button
-              onClick={() => {
-                // Stop generation by navigating away or show message
-                console.log('Generation stopping not implemented yet')
-              }}
+              onClick={stopGeneration}
               aria-label="Stop script generation"
               type="button"
               className="stop-button-with-text"

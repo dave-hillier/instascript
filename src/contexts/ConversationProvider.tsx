@@ -26,11 +26,25 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const { scriptService, exampleService } = useServices()
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<RawConversation | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+  }, [])
+
   // Direct script generation without job processing
-  const generateScript = useCallback(async (request: GenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
+  const generateScript = useCallback(async (request: GenerationRequest): Promise<void> => {
+    // Abort any existing generation
+    stopGeneration()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     // Find conversation - first check pending, then current state
     let conversation: RawConversation | undefined
-    
+
     if (request.conversationId && pendingConversationRef.current?.id === request.conversationId) {
       conversation = pendingConversationRef.current
       pendingConversationRef.current = null
@@ -50,11 +64,22 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       getCurrentConversations: () => state.conversations
     }
 
-    const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
-    await orchestrator.generateScript(request, conversation, abortSignal)
-  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
+    try {
+      const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
+      await orchestrator.generateScript(request, conversation, controller.signal)
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
+    }
+  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch, stopGeneration])
 
-  const regenerateSection = useCallback(async (request: SectionRegenerationRequest, abortSignal?: AbortSignal): Promise<void> => {
+  const regenerateSection = useCallback(async (request: SectionRegenerationRequest): Promise<void> => {
+    // Abort any existing generation
+    stopGeneration()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     // Find conversation in current state
     const conversation = state.conversations.find(c => c.id === request.conversationId)
     if (!conversation) {
@@ -63,7 +88,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
     // Generate the prompt internally - encapsulate the prompt logic
     const prompt = getSectionRegenerationPrompt(request.sectionTitle)
-    
+
     const regenerationRequest: RegenerationRequest = {
       prompt,
       conversationId: request.conversationId,
@@ -82,9 +107,15 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       getCurrentConversations: () => state.conversations
     }
 
-    const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
-    await orchestrator.regenerateSection(regenerationRequest, conversation, abortSignal)
-  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch])
+    try {
+      const orchestrator = new RawScriptGenerationOrchestrator(services, callbacks)
+      await orchestrator.regenerateSection(regenerationRequest, conversation, controller.signal)
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
+    }
+  }, [state.conversations, scriptService, exampleService, dispatch, appDispatch, stopGeneration])
 
 
   // Initial load from localStorage
@@ -118,7 +149,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     getConversationByScriptId,
     createConversation,
     generateScript,
-    regenerateSection
+    regenerateSection,
+    stopGeneration
   }
 
   return (

@@ -9,6 +9,7 @@ export type ConversationContextType = {
   createConversation: (scriptId: string) => RawConversation
   generateScript: (request: GenerationRequest) => Promise<void>
   regenerateSection: (request: SectionRegenerationRequest) => Promise<void>
+  stopGeneration: () => void
 }
 
 export const ConversationContext = createContext<ConversationContextType | undefined>(undefined)
