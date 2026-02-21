@@ -2,6 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
+import { TokenUsageBar } from '../components/TokenUsageBar'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
 
@@ -334,6 +335,8 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
         sections={document.sections}
         generationMachine={isThisConversation ? generationMachine : null}
       />
+
+      <TokenUsageBar conversation={conversation} />
 
       <article>
         {document.sections.length > 0 ? (
