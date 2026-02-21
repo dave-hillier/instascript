@@ -19,7 +19,8 @@ type ConversationProviderProps = {
 export const ConversationProvider = ({ children }: ConversationProviderProps) => {
   const [state, dispatch] = useReducer(rawConversationReducer, {
     conversations: [],
-    currentGeneration: null
+    currentGeneration: null,
+    generationMachine: null
   })
 
   const [, setIsLoaded] = useState(false)
