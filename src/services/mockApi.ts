@@ -7,214 +7,171 @@ export class MockAPIService implements ScriptGenerationService {
     console.warn('MockAPIService is being used - this should only be used for testing!')
   }
 
-  private async delay(min: number, max?: number, reason?: string): Promise<void> {
+  private async delay(min: number, max?: number): Promise<void> {
     const ms = max ? Math.random() * (max - min) + min : min
-    if (reason) {
-      // Simulated delay
-    }
     await new Promise(resolve => setTimeout(resolve, ms))
   }
 
   private splitIntoRealisticChunks(content: string): string[] {
     const chunks: string[] = []
-    
-    // Split content into words while preserving spaces and newlines
     const tokens = content.match(/\S+|\s+|\n/g) || []
-    
+
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i]
-      
-      // Randomly choose streaming granularity
       const rand = Math.random()
-      
+
       if (rand < 0.15) {
-        // 15% chance: Stream character by character for this token
         for (const char of token) {
           chunks.push(char)
         }
       } else if (rand < 0.8) {
-        // 65% chance: Stream token by token (most common)
         chunks.push(token)
       } else {
-        // 20% chance: Group 2-4 tokens together
         let group = token
         const numToGroup = Math.floor(Math.random() * 3) + 1
-        
         for (let j = 1; j <= numToGroup && i + j < tokens.length; j++) {
           group += tokens[i + j]
         }
-        
         chunks.push(group)
-        i += numToGroup // Skip the grouped tokens
+        i += numToGroup
       }
     }
-    
+
     return chunks
   }
 
-  private generateExpandedSectionContent(sectionTitle: string): string {
-    // Generate expanded section content with at least 400 words
-    const title = sectionTitle.replace(/^## /, '')
-    
-    return `## ${title}
+  private async *streamContent(
+    content: string,
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
+    const chunks = this.splitIntoRealisticChunks(content)
 
-Welcome to this expanded and enriched section designed to provide deeper therapeutic benefits. As you continue this journey of personal growth and healing, allow yourself to fully embrace the transformative power of this moment. Each word you hear, each breath you take, and each sensation you experience is guiding you toward a more balanced and centered state of being.
+    for (let i = 0; i < chunks.length; i++) {
+      if (abortSignal?.aborted) return
 
-In this space of deep relaxation and inner awareness, your subconscious mind is naturally receptive to positive change and healing suggestions. You may notice how effortlessly your body begins to release tension, starting from the very top of your head and flowing like warm, golden light through every fiber of your being. This gentle wave of relaxation moves down through your forehead, relaxing the muscles around your eyes, softening your jaw, and releasing any stored tension in your neck and shoulders.
+      yield chunks[i]
 
-As this peaceful sensation continues its journey through your body, you become increasingly aware of your natural capacity for healing and renewal. Your breathing becomes deeper and more rhythmic, each inhalation bringing in fresh energy and vitality, while each exhalation releases any stress, worry, or negativity that no longer serves your highest good.
-
-Within this sanctuary of inner peace, your mind naturally begins to organize and integrate the day's experiences, filing away what is useful and gently releasing what is no longer needed. You may find that solutions to challenges begin to emerge with remarkable clarity, as if your inner wisdom is finally free to express itself without the interference of daily distractions and concerns.
-
-The therapeutic benefits of this experience extend far beyond this single session, creating lasting positive changes in how you perceive yourself and interact with the world around you. With each passing moment, you are building new neural pathways that support confidence, resilience, and inner strength. These positive changes become more deeply embedded with each practice, creating a solid foundation for ongoing personal growth and emotional well-being.
-
-As this section draws to a gentle close, take a moment to appreciate the profound work you have done here today. Your commitment to self-improvement and healing is truly admirable, and the benefits of this experience will continue to unfold in the days and weeks ahead, bringing you greater peace, clarity, and joy in all aspects of your life.`
+      if (i < chunks.length - 1) {
+        if (Math.random() < 0.05) {
+          await this.delay(10, 100)
+        } else if (Math.random() < 0.2) {
+          await this.delay(10, 30)
+        } else {
+          await this.delay(5, 20)
+        }
+        if (abortSignal?.aborted) return
+      }
+    }
   }
 
-  private generateScriptContent(prompt: string): string {
-    // Generate different content based on the prompt
+  private generateOutlineContent(prompt: string): string {
     if (prompt.toLowerCase().includes('confidence') || prompt.toLowerCase().includes('speaking')) {
-      return `# Confidence Building for Public Speaking Script
-
-## Introduction
-Welcome to this confidence-building session designed specifically for public speaking success.
-
-## Induction
-Take a deep breath and allow yourself to settle into a comfortable, relaxed state...
-
-## Building Inner Confidence
-You are naturally confident and capable. Your voice carries wisdom and value...
-
-## Visualization of Success
-See yourself speaking with clarity, confidence, and natural ease...
-
-## Anchoring Confidence
-This feeling of confidence is now anchored within you...
-
-## Emergence
-Returning now, feeling confident and ready to share your voice with the world...`
-    } else if (prompt.toLowerCase().includes('sleep') || prompt.toLowerCase().includes('insomnia')) {
-      return `# Sleep Improvement & Deep Rest Script
-
-## Evening Preparation
-As you prepare for sleep tonight, your mind and body naturally begin to unwind...
-
-## Progressive Relaxation
-Starting from the top of your head, allow deep relaxation to flow through your entire being...
-
-## Mental Clearing
-Like gentle waves washing away footprints in the sand, let your thoughts drift peacefully away...
-
-## Sleep Induction
-Your body knows exactly how to achieve deep, restorative sleep...
-
-## Deep Sleep Suggestions
-Throughout the night, you sleep peacefully and wake feeling refreshed...
-
-## Gentle Awakening
-When morning comes, you awaken naturally, feeling energized and ready for the day...`
-    } else {
-      // Default relaxation script
-      return `# Deep Relaxation & Stress Relief Script
-
-## Introduction
-Welcome to this deep relaxation session. Find a comfortable position where you can remain undisturbed for the next 20 minutes.
-
-## Induction
-As you close your eyes, take a deep breath in through your nose... and slowly exhale through your mouth.
-
-## Progressive Muscle Relaxation
-Starting with your toes, begin to tense and then release each muscle group...
-
-## Breathing Techniques
-Focus on your breath as it flows naturally in and out...
-
-## Visualization
-Imagine yourself in a peaceful meadow, surrounded by gentle sounds of nature...
-
-## Deepening
-With each breath, you're becoming more and more relaxed...
-
-## Suggestions for Stress Relief
-Your mind is learning new ways to handle stress with calm confidence...
-
-## Emergence
-In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and peaceful...`
+      return `# Confidence and Inner Power
+## Induction and Breath
+Guide the listener into relaxation through focused breathing and attention on the voice.
+## Deepening the Trance
+Take the listener deeper using countdown and body awareness techniques.
+## Building Confidence
+Implant suggestions of natural confidence and self-assurance growing stronger.
+## Anchoring the Change
+Create a physical and mental anchor that triggers confidence on demand.
+## Awakening
+Gently bring the listener back carrying their new confidence with them.`
     }
+
+    if (prompt.toLowerCase().includes('sleep') || prompt.toLowerCase().includes('insomnia')) {
+      return `# Drift Into Deep Sleep
+## Evening Wind-Down
+Guide the listener to release the day and prepare the body for rest.
+## Breath and Body Release
+Use breath counting and progressive relaxation to quiet the nervous system.
+## Mind Clearing
+Help thoughts dissolve and the inner voice grow quiet and distant.
+## Sleep Threshold
+Guide the listener across the boundary between waking and sleeping.
+## Deep Rest Suggestions
+Embed suggestions for remaining asleep and waking refreshed.`
+    }
+
+    return `# Deep Relaxation and Renewal
+## Induction
+Guide the listener into a comfortable trance state through breathing and voice focus.
+## Deepening
+Use countdown and body scan techniques to deepen the relaxation state.
+## Transformation
+Introduce suggestions for letting go of tension and embracing calm renewal.
+## Integration
+Weave the new feelings of peace and clarity into the listener's sense of self.
+## Awakening
+Gently return the listener to full awareness carrying a sense of deep refreshment.`
+  }
+
+  private generateSectionContent(sectionTitle: string): string {
+    // Each mock section generates ~400 words of content (no ## header, orchestrator adds it)
+    const sectionContents: Record<string, string> = {
+      'Induction': `Close your eyes now... and take a slow, deep breath in through your nose... hold it for just a moment... and let it go, slowly, through your mouth. Good. And again... breathe in, feeling your chest expand, your shoulders lift just slightly... and exhale, letting everything soften. Already you can feel something shifting, something settling inside you.
+
+Focus now on the sound of my voice. Let it become the only thing that matters in this moment. Everything else... the sounds around you, the thoughts drifting through your mind... they can fade into the background, becoming distant and unimportant. My voice is here, steady and close, guiding you exactly where you need to go.
+
+With each breath you take, you sink a little deeper into this comfortable state. Your body knows how to do this. It remembers how to let go, how to release, how to simply be still. You do not need to try. You do not need to force anything. Just breathe... and follow.
+
+Notice the weight of your body against whatever is supporting you right now. Feel how gravity holds you, gently pulling you down, anchoring you in this moment. Your muscles begin to unwind on their own... the tension in your jaw loosening... your shoulders dropping away from your ears... your hands growing heavy and warm.
+
+Each time you breathe out, imagine you are breathing out a thin grey mist... all the stress, all the noise, all the things you have been carrying... leaving you with each exhale. And each time you breathe in, you draw in a soft, warm light that fills you from the inside, spreading comfort through every part of you.
+
+You are doing so well. Already you are more relaxed than you were just moments ago. And with every word I speak, with every breath you take, this feeling grows stronger, deeper, more complete. There is nowhere you need to be except right here. Nothing you need to do except listen... and breathe... and let yourself drift.`,
+
+      'Induction and Breath': `Close your eyes now... and take a slow, deep breath in through your nose... hold it for just a moment... and let it go, slowly, through your mouth. Good. And again... breathe in, feeling your chest expand, your shoulders lift just slightly... and exhale, letting everything soften. Already you can feel something shifting, something settling inside you.
+
+Focus now on the sound of my voice. Let it become the only thing that matters in this moment. Everything else... the sounds around you, the thoughts drifting through your mind... they can fade into the background, becoming distant and unimportant. My voice is here, steady and close, guiding you exactly where you need to go.
+
+With each breath you take, you sink a little deeper into this comfortable state. Your body knows how to do this. It remembers how to let go, how to release, how to simply be still. You do not need to try. You do not need to force anything. Just breathe... and follow.
+
+Notice the weight of your body against whatever is supporting you right now. Feel how gravity holds you, gently pulling you down, anchoring you in this moment. Your muscles begin to unwind on their own... the tension in your jaw loosening... your shoulders dropping away from your ears... your hands growing heavy and warm.
+
+Each time you breathe out, imagine you are breathing out a thin grey mist... all the stress, all the noise, all the things you have been carrying... leaving you with each exhale. And each time you breathe in, you draw in a soft, warm light that fills you from the inside, spreading comfort through every part of you.
+
+You are doing so well. Already you are more relaxed than you were just moments ago. And with every word I speak, with every breath you take, this feeling grows stronger, deeper, more complete. There is nowhere you need to be except right here. Nothing you need to do except listen... and breathe... and let yourself drift.`,
+    }
+
+    // Check if we have specific content for this section title
+    if (sectionContents[sectionTitle]) {
+      return sectionContents[sectionTitle]
+    }
+
+    // Generate generic ~400 word section content for any title
+    return `Take a deep breath now and allow yourself to settle even more completely into this experience. With each word you hear, your attention narrows, your focus sharpens on my voice alone, and everything else becomes distant and unimportant. You are exactly where you need to be.
+
+Feel the gentle rhythm of your breathing... in... and out... each cycle carrying you further along this path. Your body responds automatically now, releasing tension you did not even know you were holding. The muscles in your face soften. Your jaw unclenches. Your shoulders melt downward. Even your fingers and toes seem to grow heavier, warmer, more relaxed.
+
+⏤
+
+In this place of deep stillness, your mind becomes wonderfully receptive. Suggestions flow in easily, naturally, like water finding its way downhill. You do not need to analyse or resist. Simply allow the words to wash over you, knowing that your deeper mind is absorbing exactly what it needs.
+
+Notice how good it feels to simply surrender to this process... to let go of control and allow yourself to be guided. Each time you return to this state, you find it easier, faster, more natural. The sound of my voice becomes a key that unlocks this doorway instantly. You are training your mind to respond, to follow, to go deeper with less and less effort.
+
+⏤
+
+Your breathing has found its own perfect rhythm now. Slow and steady. Effortless. With each exhale, you release a little more... a little more tension, a little more resistance, a little more of the everyday noise that usually fills your mind. And with each inhale, you draw in calm, clarity, and a growing sense of peaceful surrender.
+
+This feeling is becoming familiar to you now. Comfortable. Safe. Deeply pleasurable. Your subconscious mind recognises this state and welcomes it, opening itself to positive change and growth. The work happening beneath the surface is profound and lasting, even if you are not consciously aware of all of it.
+
+Continue to breathe... continue to follow... continue to let go. Everything is unfolding exactly as it should. You are doing beautifully, and with each passing moment, you sink deeper and deeper into this wonderful state of receptive calm.`
   }
 
   async *generateScript(
     request: GenerationRequest,
-    messages?: ChatMessage[],
-    examples?: ExampleScript[],
+    _messages?: ChatMessage[],
+    _examples?: ExampleScript[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
-    // Starting mock generation
+    await this.delay(500, 1500)
+    if (abortSignal?.aborted) return
 
-    // Log examples usage (in real implementation, examples would influence content generation)
-    if (examples && examples.length > 0) {
-      console.debug(`Using ${examples.length} examples to inform generation:`, examples.map(e => e.metadata?.filename || 'unknown'))
-    }
-
-    // Simulate initial API processing delay
-    await this.delay(500, 1500, 'Initial API processing')
-    
-    // Check for abort after initial delay
-    if (abortSignal?.aborted) {
-      console.debug('Mock generation aborted after initial delay')
-      return
-    }
-
-    // Regular generation - use prompt from request or extract from messages
-    const prompt = request.prompt || (messages && messages.length > 0 
-      ? messages[messages.length - 1]?.content || 'Generate a hypnosis script'
-      : 'Generate a hypnosis script')
-    const content = this.generateScriptContent(prompt)
-
-    const formatSize = (bytes: number) => bytes < 1024 ? `${bytes}B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
-    console.debug('Content prepared', {
-      contentSize: formatSize(content.length)
-    })
-
-    // Split into realistic chunks
-    const chunks = this.splitIntoRealisticChunks(content)
-    console.debug(`Split into ${chunks.length} chunks`)
-    
-    // Stream chunks with realistic delays
-    for (let i = 0; i < chunks.length; i++) {
-      // Check for abort before each chunk
-      if (abortSignal?.aborted) {
-        console.debug('Mock generation aborted during streaming')
-        return
-      }
-      
-      const chunk = chunks[i]
-      // Progress tracking removed - handled at API service layer
-      
-      yield chunk
-      
-      // Variable delays between chunks to simulate real streaming
-      if (i < chunks.length - 1) {
-        if (Math.random() < 0.05) {
-          // Occasional network delay (5% chance)
-          await this.delay(10, 100, 'Network delay simulation')
-        } else if (Math.random() < 0.2) {
-          // Slower chunk (20% chance)
-          await this.delay(10, 30)
-        } else {
-          // Normal speed - very fast for word-by-word streaming
-          await this.delay(5, 20)
-        }
-        
-        // Check for abort after delay
-        if (abortSignal?.aborted) {
-          console.debug('Mock generation aborted during streaming')
-          return
-        }
-      }
-    }
-
-    // Streaming complete
+    // The orchestrator now sends outline requests via generateScript
+    // Detect if this is an outline request by checking prompt content
+    const content = this.generateOutlineContent(request.prompt)
+    yield* this.streamContent(content, abortSignal)
   }
 
   async *regenerateSection(
@@ -222,53 +179,11 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     _messages: ChatMessage[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
-    console.debug('Mock regenerateSection called', { sectionTitle: request.sectionTitle })
+    await this.delay(300, 800)
+    if (abortSignal?.aborted) return
 
-    // Simulate initial API processing delay
-    await this.delay(500, 1500, 'Section regeneration processing')
-    
-    // Check for abort after initial delay
-    if (abortSignal?.aborted) {
-      console.debug('Mock section regeneration aborted after initial delay')
-      return
-    }
-
-    // Generate expanded content for the specific section
-    const content = this.generateExpandedSectionContent(request.sectionTitle)
-    const wordCount = content.split(/\s+/).length
-    
-    console.debug('Generated section regeneration content', {
-      sectionTitle: request.sectionTitle,
-      wordCount,
-      meetsRequirement: wordCount >= 400
-    })
-
-    // Stream the regenerated content
-    const chunks = this.splitIntoRealisticChunks(content)
-    console.debug('Starting regeneration streaming', { totalChunks: chunks.length })
-
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]
-      yield chunk
-      
-      // Variable delays for realistic streaming
-      if (i < chunks.length - 1) {
-        if (Math.random() < 0.05) {
-          await this.delay(10, 100, 'Network delay simulation')
-        } else if (Math.random() < 0.2) {
-          await this.delay(10, 30)
-        } else {
-          await this.delay(5, 20)
-        }
-        
-        // Check for abort after delay
-        if (abortSignal?.aborted) {
-          console.debug('Mock section regeneration aborted during streaming')
-          return
-        }
-      }
-    }
-
-    console.debug('Section regeneration streaming complete')
+    // Generate ~400 word section content (no header - orchestrator adds ## Title)
+    const content = this.generateSectionContent(request.sectionTitle)
+    yield* this.streamContent(content, abortSignal)
   }
 }

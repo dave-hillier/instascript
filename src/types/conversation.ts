@@ -64,3 +64,31 @@ export interface ConversationDocument {
   fullContent: string
   totalWordCount: number
 }
+
+// State machine for section-by-section generation
+export type GenerationPhase =
+  | 'idle'
+  | 'generating_outline'
+  | 'generating_section'
+  | 'complete'
+  | 'error'
+
+export interface OutlineSection {
+  title: string
+  description: string
+}
+
+export interface ScriptOutline {
+  title: string
+  sections: OutlineSection[]
+}
+
+export interface GenerationMachineState {
+  phase: GenerationPhase
+  conversationId: string
+  outline: ScriptOutline | null
+  currentSectionIndex: number
+  totalSections: number
+  sectionWordCounts: number[] // word count per generated section
+  error?: string
+}

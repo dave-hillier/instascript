@@ -1,0 +1,21 @@
+Given the user's brief, produce ONLY an outline for a hypnosis script.
+
+The outline must contain:
+1. A title line: `# Title Here`
+2. Exactly 5 section headers, each as `## Section Title` followed by a one-sentence description of what that section covers.
+
+The sections should follow a coherent arc (e.g. induction, deepening, transformation, suggestion, awakening) but adapt to the user's request.
+
+Output ONLY the outline in this exact format, nothing else:
+
+# Title
+## Section 1 Title
+Brief description of this section.
+## Section 2 Title
+Brief description of this section.
+## Section 3 Title
+Brief description of this section.
+## Section 4 Title
+Brief description of this section.
+## Section 5 Title
+Brief description of this section.

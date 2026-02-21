@@ -39,10 +39,10 @@ const parseSections = (scriptContent: string): { title?: string; sections: Scrip
   const sections: ScriptDocumentSection[] = []
   let currentSectionStart = -1
   let currentSectionTitle = ''
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    
+
     if (line.match(/^##\s+/)) {
       // Complete previous section
       if (currentSectionStart >= 0 && currentSectionTitle) {
@@ -55,13 +55,13 @@ const parseSections = (scriptContent: string): { title?: string; sections: Scrip
           wordCount
         })
       }
-      
+
       // Start new section
       currentSectionStart = i
       currentSectionTitle = line.match(/##\s+(.+?)$/)?.[1]?.trim() || ''
     }
   }
-  
+
   // Handle last section
   if (currentSectionStart >= 0 && currentSectionTitle) {
     const sectionContent = lines.slice(currentSectionStart + 1).join('\n').trim()
@@ -77,7 +77,8 @@ const parseSections = (scriptContent: string): { title?: string; sections: Scrip
   return { title: documentTitle, sections }
 }
 
-// Improved script document parsing with multi-generation support
+// Build document from multi-generation conversation
+// Generation 0 = outline, Generations 1..N = sections
 const getScriptDocument = (
   conversation: RawConversation | undefined,
   currentGeneration: CurrentGeneration | null
@@ -92,51 +93,63 @@ const getScriptDocument = (
     }
   }
 
-  // Start with the first generation as the base document
-  const baseGeneration = conversation.generations[0]
-  const { title: documentTitle, sections: baseSections } = parseSections(baseGeneration.response)
+  // First generation is the outline - extract title from it
+  const outlineGeneration = conversation.generations[0]
+  const { title: documentTitle } = parseSections(outlineGeneration.response)
 
-  // Apply subsequent generations as section replacements
-  const consolidatedSections = [...baseSections]
-  
+  // Subsequent generations are individual sections
+  const consolidatedSections: ScriptDocumentSection[] = []
+
   for (let i = 1; i < conversation.generations.length; i++) {
     const generation = conversation.generations[i]
-    const { sections: replacementSections } = parseSections(generation.response)
-    
-    // Each subsequent generation should contain only one section
-    for (const replacementSection of replacementSections) {
-      const existingIndex = consolidatedSections.findIndex(
-        section => section.title === replacementSection.title
-      )
-      
+    const { sections: genSections } = parseSections(generation.response)
+
+    for (const section of genSections) {
+      const existingIndex = consolidatedSections.findIndex(s => s.title === section.title)
       if (existingIndex >= 0) {
-        // Replace existing section
-        consolidatedSections[existingIndex] = replacementSection
+        consolidatedSections[existingIndex] = section
       } else {
-        // Add new section if not found (shouldn't happen in normal flow)
-        consolidatedSections.push(replacementSection)
+        consolidatedSections.push(section)
       }
     }
   }
 
-  // Apply live updates during section regeneration
+  // Apply live updates during streaming
   const sectionsWithLiveUpdates = consolidatedSections.map(section => {
-    const isSectionRegenerating = conversation && currentGeneration && 
-      currentGeneration.conversationId === conversation.id && 
-      !currentGeneration.isComplete && 
+    const isSectionRegenerating = conversation && currentGeneration &&
+      currentGeneration.conversationId === conversation.id &&
+      !currentGeneration.isComplete &&
       currentGeneration.sectionTitle === section.title
 
     if (isSectionRegenerating) {
       const liveContent = conversation.generations[conversation.generations.length - 1]?.response || ''
-      return { ...section, content: liveContent }
+      const { sections: liveSections } = parseSections(liveContent)
+      if (liveSections.length > 0) {
+        return { ...section, content: liveSections[0].content, wordCount: liveSections[0].wordCount }
+      }
+      return section
     }
     return section
   })
 
-  const isConversationGenerating = conversation && currentGeneration ? 
+  // Check if a new section is currently streaming (not yet in consolidated)
+  if (currentGeneration &&
+      currentGeneration.conversationId === conversation.id &&
+      !currentGeneration.isComplete &&
+      currentGeneration.sectionTitle) {
+    const alreadyExists = sectionsWithLiveUpdates.some(s => s.title === currentGeneration.sectionTitle)
+    if (!alreadyExists) {
+      const liveResponse = conversation.generations[conversation.generations.length - 1]?.response || ''
+      const { sections: liveSections } = parseSections(liveResponse)
+      if (liveSections.length > 0) {
+        sectionsWithLiveUpdates.push(liveSections[0])
+      }
+    }
+  }
+
+  const isConversationGenerating = conversation && currentGeneration ?
     currentGeneration.conversationId === conversation.id && !currentGeneration.isComplete : false
 
-  // Reconstruct full content from consolidated sections
   const fullContent = [
     documentTitle ? `# ${documentTitle}` : '',
     ...sectionsWithLiveUpdates.map(section => `## ${section.title}\n${section.content}`)
@@ -152,6 +165,81 @@ const getScriptDocument = (
   }
 }
 
+const TARGET_WORDS_PER_SECTION = 400
+
+interface WordCountMeterProps {
+  sections: ScriptDocumentSection[]
+  generationMachine: {
+    phase: string
+    currentSectionIndex: number
+    totalSections: number
+    sectionWordCounts: number[]
+    outline: { sections: { title: string }[] } | null
+  } | null
+}
+
+const WordCountMeter = ({ sections, generationMachine }: WordCountMeterProps) => {
+  const totalWords = sections.reduce((sum, s) => sum + s.wordCount, 0)
+
+  // During generation, use the outline to show planned sections
+  const plannedSections = generationMachine?.outline?.sections ?? []
+  const displaySections = plannedSections.length > 0 ? plannedSections : sections
+
+  if (displaySections.length === 0 && !generationMachine) return null
+
+  return (
+    <aside aria-label="Word count breakdown">
+      <div className="word-meter">
+        <div className="word-meter-header">
+          <span>Word count</span>
+          <span>{totalWords} total</span>
+        </div>
+        <div className="word-meter-bars">
+          {displaySections.map((displaySection, i) => {
+            const title = 'title' in displaySection ? displaySection.title : ''
+            const matchingSection = sections.find(s => s.title === title)
+            const wordCount = matchingSection?.wordCount ?? 0
+            const fillPercent = Math.min(100, (wordCount / TARGET_WORDS_PER_SECTION) * 100)
+
+            const isCurrentlyGenerating = generationMachine &&
+              generationMachine.phase === 'generating_section' &&
+              generationMachine.currentSectionIndex === i
+
+            const isPending = generationMachine &&
+              generationMachine.phase === 'generating_section' &&
+              i > generationMachine.currentSectionIndex &&
+              wordCount === 0
+
+            let barState = 'complete'
+            if (isCurrentlyGenerating) barState = 'active'
+            else if (isPending) barState = 'pending'
+            else if (wordCount === 0) barState = 'empty'
+
+            return (
+              <div key={title || i} className="word-meter-row" data-state={barState}>
+                <span className="word-meter-label">{title || `Section ${i + 1}`}</span>
+                <div className="word-meter-track">
+                  <div
+                    className="word-meter-fill"
+                    style={{ width: `${fillPercent}%` }}
+                    role="progressbar"
+                    aria-valuenow={wordCount}
+                    aria-valuemin={0}
+                    aria-valuemax={TARGET_WORDS_PER_SECTION}
+                    aria-label={`${title}: ${wordCount} words`}
+                  />
+                  <span className="word-meter-target" />
+                </div>
+                <span className="word-meter-count">{wordCount}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </aside>
+  )
+}
+
 interface ScriptPageProps {
   showSectionTitles?: boolean
 }
@@ -161,11 +249,12 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const navigate = useNavigate()
   const { state } = useAppContext()
   const { state: conversationState, getConversationByScriptId, regenerateSection, stopGeneration } = useConversationContext()
-  
+
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
   const currentGeneration = conversationState.currentGeneration
-  
+  const generationMachine = conversationState.generationMachine
+
   // Get structured document and generation state
   const document = getScriptDocument(conversation, currentGeneration)
   const generationState = {
@@ -174,10 +263,25 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
     error: currentGeneration?.error
   }
 
+  const isThisConversation = conversation && generationMachine &&
+    generationMachine.conversationId === conversation.id
+
+  const phaseLabel = isThisConversation
+    ? generationMachine.phase === 'generating_outline'
+      ? 'Drafting outline...'
+      : generationMachine.phase === 'generating_section'
+        ? `Writing section ${generationMachine.currentSectionIndex + 1} of ${generationMachine.totalSections}...`
+        : generationMachine.phase === 'complete'
+          ? 'Complete'
+          : generationMachine.phase === 'error'
+            ? 'Error'
+            : 'Generating...'
+    : 'Generating...'
+
 
   const handleRegenerateSection = async (sectionTitle: string) => {
     if (!script || !conversation) return
-    
+
     try {
       await regenerateSection({
         conversationId: conversation.id,
@@ -187,7 +291,7 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
       console.error('Error regenerating section:', error)
     }
   }
-  
+
   if (!script) {
     return (
       <div>
@@ -204,13 +308,13 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
       </div>
     )
   }
-    
+
   return (
     <section>
       {generationState.isGenerating && (
         <div role="status" aria-live="polite">
           <div>
-            <p>Generating script...</p>
+            <p>{phaseLabel}</p>
             <button
               onClick={stopGeneration}
               aria-label="Stop script generation"
@@ -225,7 +329,12 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
           )}
         </div>
       )}
-      
+
+      <WordCountMeter
+        sections={document.sections}
+        generationMachine={isThisConversation ? generationMachine : null}
+      />
+
       <article>
         {document.sections.length > 0 ? (
           document.sections.map((section, index) => (
@@ -249,7 +358,7 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
               <div>
                 {section.content
                   .split('\n')
-                  .map((line, index) => ({ text: line, key: `line-${index}` }))
+                  .map((line, lineIndex) => ({ text: line, key: `line-${lineIndex}` }))
                   .filter(({ text }) => !text.startsWith('## ') && text.trim())
                   .map(({ text, key }) => (
                     <p key={key}>{text}</p>
@@ -258,10 +367,9 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
             </section>
           ))
         ) : document.fullContent ? (
-          // Fallback for content without clear sections
           document.fullContent
             .split('\n')
-            .map((paragraph, index) => ({ text: paragraph, key: `paragraph-${index}` }))
+            .map((paragraph, paragraphIndex) => ({ text: paragraph, key: `paragraph-${paragraphIndex}` }))
             .filter(({ text }) => text.trim())
             .map(({ text, key }) => (
               <p key={key}>{text}</p>

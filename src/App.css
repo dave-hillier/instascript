@@ -1034,3 +1034,120 @@ main > section:last-child li:focus-within .script-actions {
   color: #dc2626;
   border-color: #dc2626;
 }
+
+/* Word count meter */
+.word-meter {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border: 1px solid;
+  border-radius: 8px;
+}
+
+[data-theme="dark"] .word-meter {
+  border-color: #333;
+  background-color: #2a2a2a;
+}
+
+[data-theme="light"] .word-meter {
+  border-color: #e5e5e5;
+  background-color: #f9f9f9;
+}
+
+.word-meter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.word-meter-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.word-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.word-meter-label {
+  flex: 0 0 140px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.word-meter-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .word-meter-track {
+  background-color: #1a1a1a;
+}
+
+[data-theme="light"] .word-meter-track {
+  background-color: #e5e5e5;
+}
+
+.word-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.word-meter-row[data-state="complete"] .word-meter-fill {
+  background-color: #4f46e5;
+}
+
+.word-meter-row[data-state="active"] .word-meter-fill {
+  background-color: #4f46e5;
+  animation: meter-pulse 1.5s ease-in-out infinite;
+}
+
+.word-meter-row[data-state="pending"] .word-meter-fill {
+  background-color: #6b7280;
+  opacity: 0.3;
+}
+
+.word-meter-row[data-state="empty"] .word-meter-fill {
+  background-color: #6b7280;
+  opacity: 0.3;
+}
+
+.word-meter-row[data-state="pending"] .word-meter-label {
+  opacity: 0.4;
+}
+
+.word-meter-target {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 2px;
+  background-color: transparent;
+}
+
+.word-meter-count {
+  flex: 0 0 40px;
+  font-size: 0.75rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+
+@keyframes meter-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
