@@ -1,5 +1,5 @@
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
-import type { ExampleScript } from './vectorStore'
+import type { ExampleScript } from './exampleSearchService'
 
 export interface ScriptGenerationService {
   generateScript(

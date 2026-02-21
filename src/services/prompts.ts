@@ -1,6 +1,6 @@
 import hypnosisSystemPrompt from '../prompts/hypnosis-system.txt?raw'
 import sectionRegenerationPrompt from '../prompts/section-regeneration.txt?raw'
-import type { ExampleScript } from './vectorStore'
+import type { ExampleScript } from './exampleSearchService'
 
 /**
  * Pure functions for prompt generation

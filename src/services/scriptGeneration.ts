@@ -1,5 +1,5 @@
 import type { GenerationRequest, ChatMessage } from '../types/conversation'
-import type { ExampleScript } from './vectorStore'
+import type { ExampleScript } from './exampleSearchService'
 import type { AppConfig } from './config'
 import { OpenAIService } from './openai'
 import { MockAPIService } from './mockApi'

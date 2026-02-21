@@ -1,4 +1,4 @@
-export type APIProvider = 'openai' | 'mock'
+export type APIProvider = 'openai' | 'openrouter' | 'mock'
 
 export interface AppConfig {
   apiKey: string | null
@@ -12,11 +12,20 @@ export interface AppConfig {
 
 export function getApiKey(): string | null {
   try {
-    // API key is stored in sessionStorage for security (not persisted across sessions)
     const item = window.sessionStorage.getItem('OPENAI_API_KEY')
     return item ? JSON.parse(item) : null
   } catch (error) {
     console.warn('Error loading API key from sessionStorage:', error)
+    return null
+  }
+}
+
+export function getOpenRouterApiKey(): string | null {
+  try {
+    const item = window.sessionStorage.getItem('OPENROUTER_API_KEY')
+    return item ? JSON.parse(item) : null
+  } catch (error) {
+    console.warn('Error loading OpenRouter API key from sessionStorage:', error)
     return null
   }
 }
@@ -42,13 +51,18 @@ export function getModel(): string {
 }
 
 export function createAppConfig(): AppConfig {
+  const provider = getApiProvider()
   return {
-    apiKey: getApiKey(),
-    apiProvider: getApiProvider(),
+    apiKey: provider === 'openrouter' ? getOpenRouterApiKey() : getApiKey(),
+    apiProvider: provider,
     model: getModel()
   }
 }
 
 export function canUseOpenAI(config: AppConfig): boolean {
   return config.apiProvider === 'openai' && !!config.apiKey
+}
+
+export function canUseOpenRouter(config: AppConfig): boolean {
+  return config.apiProvider === 'openrouter' && !!config.apiKey
 }
