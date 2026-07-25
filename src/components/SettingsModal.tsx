@@ -438,9 +438,10 @@ export const SettingsModal = ({
             <span>Review pass</span>
           </label>
           <p id="review-pass-help">
-            After each generation, one extra request reviews the script against
-            the style rules and rewrites up to two violating sections — adds
-            cost and latency
+            Adds two checks to each generation: one extra request critiques the
+            outline against your brief before any section is written, and one
+            reviews the finished script against the style rules, rewriting up
+            to two violating sections — adds cost and latency
           </p>
         </fieldset>
 

@@ -2,12 +2,13 @@ import type { RawConversation, GenerationRequest, RegenerationRequest, Refinemen
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
-import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory } from './prompts'
-import { getRecommendedExampleCount } from '../utils/contextWindow'
+import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory } from './prompts'
+import { getRecommendedExampleCount, UPCOMING_SECTIONS_CONTEXT_TOKENS } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 import { parseOutline, ensureSectionHeading, consolidateSections } from './conversationDocument'
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
+import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 import { KeyedRunGuard } from './runLifecycle'
 
 export interface RawScriptServices {
@@ -121,9 +122,12 @@ export class RawScriptGenerationOrchestrator {
       const conversationTokens = conversation
         ? conversation.generations.reduce((total: number, generation) => total + generation.response.length, 0)
         : 0
+      // Section requests also carry the outline and its upcoming-sections
+      // block (story 8.10), so reserve room for that when sizing examples
       const optimalExampleCount = getRecommendedExampleCount(
         systemPrompt,
-        Math.ceil(conversationTokens / 4)
+        Math.ceil(conversationTokens / 4),
+        UPCOMING_SECTIONS_CONTEXT_TOKENS
       )
 
       return await this.services.exampleService.searchExamples(
@@ -287,6 +291,22 @@ export class RawScriptGenerationOrchestrator {
           throw new Error('Failed to parse outline from LLM response')
         }
         outline = parsedOutline
+
+        // --- Phase 1.5: optional outline critique (story 8.9) ---
+        // Checked against the brief before any section is written; a revised
+        // outline supersedes the original as the plan every section inherits.
+        // Gated by the same setting as the style-review pass.
+        if (this.options.reviewPassEnabled) {
+          const critiqued = await this.runOutlineCritique(
+            conversationId,
+            request,
+            outline,
+            outlineText,
+            abortSignal
+          )
+          outline = critiqued.outline
+          outlineText = critiqued.outlineText
+        }
       }
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
@@ -338,7 +358,12 @@ export class RawScriptGenerationOrchestrator {
           sectionWordCounts: [...sectionWordCounts]
         })
 
-        const sectionPrompt = getSectionGenerationPrompt(section.title, section.description)
+        // Upcoming outline entries let this section plant setups (story 8.10)
+        const sectionPrompt = getSectionGenerationPrompt(
+          section.title,
+          section.description,
+          outline.sections.slice(i + 1)
+        )
         const sectionUserMessage = `Here is the outline for the full script:\n\n${outlineText}\n\nHere is what has been written so far:\n\n${scriptContent}\n\n${sectionPrompt}`
 
         const runSectionAttempt = async (userMessage: string): Promise<string> => {
@@ -536,6 +561,74 @@ export class RawScriptGenerationOrchestrator {
       throw error
     } finally {
       this.activeGenerations.finish(generationKey)
+    }
+  }
+
+  // Outline-critique step (story 8.9): one request checks the freshly
+  // generated outline against the user's brief — coverage, escalation arc,
+  // section balance — and either approves it or returns a full revised
+  // outline. The exchange is stored as its own generation; a revised outline
+  // is the latest parseable outline in the conversation, so it supersedes
+  // generation 0 for section writing, resume and regeneration alike. A
+  // failed critique never fails the run: the original outline is kept.
+  private async runOutlineCritique(
+    conversationId: string,
+    request: GenerationRequest,
+    outline: ScriptOutline,
+    outlineText: string,
+    abortSignal?: AbortSignal
+  ): Promise<{ outline: ScriptOutline; outlineText: string }> {
+    try {
+      const critiquePrompt = buildOutlineCritiquePrompt(request.prompt, outlineText)
+      const critiqueMessages: ChatMessage[] = [{ role: 'user', content: critiquePrompt }]
+
+      this.callbacks.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages: critiqueMessages
+      })
+
+      const critiqueStream = this.services.scriptService.regenerateSection(
+        { prompt: critiquePrompt, conversationId, sectionTitle: OUTLINE_CRITIQUE_SECTION_TITLE },
+        critiqueMessages,
+        abortSignal
+      )
+
+      const critiqueText = await this.streamToString(
+        critiqueStream,
+        conversationId,
+        abortSignal,
+        (accumulated) => {
+          this.callbacks.dispatch({
+            type: 'UPDATE_CURRENT_GENERATION',
+            conversationId,
+            response: accumulated
+          })
+        }
+      )
+
+      const result = parseOutlineCritiqueResponse(critiqueText)
+
+      // A revision is stored as exactly the outline text, so latest-outline-
+      // wins consumers (resume, regeneration) see it supersede generation 0
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: result.revisedOutlineText ?? critiqueText
+      })
+
+      this.persistConversation(conversationId)
+
+      if (result.revisedOutline && result.revisedOutlineText) {
+        return { outline: result.revisedOutline, outlineText: result.revisedOutlineText }
+      }
+      return { outline, outlineText }
+    } catch (error) {
+      // A user abort must still end the whole run
+      if (abortSignal?.aborted) throw error
+
+      console.warn('Outline critique failed; keeping the generated outline as-is', error)
+      return { outline, outlineText }
     }
   }
 

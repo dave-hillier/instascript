@@ -4,8 +4,9 @@ import outlineGenerationPrompt from '../prompts/outline-generation.txt?raw'
 import sectionGenerationPrompt from '../prompts/section-generation.txt?raw'
 import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
 import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
+import outlineCritiquePrompt from '../prompts/outline-critique.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
-import type { RawConversation, ChatMessage } from '../types/conversation'
+import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
 import type { DocumentSection } from './conversationDocument'
 
@@ -23,10 +24,30 @@ export function getOutlineGenerationPrompt(): string {
   return outlineGenerationPrompt
 }
 
-export function getSectionGenerationPrompt(sectionTitle: string, sectionDescription: string): string {
+// The outline entries for the sections still to be written, phrased so the
+// current section can plant setups for them (story 8.10). Empty for the
+// final section.
+export function formatUpcomingSections(upcomingSections: OutlineSection[]): string {
+  if (upcomingSections.length === 0) return ''
+
+  const entries = upcomingSections
+    .map(section => `- "${section.title}": ${section.description}`)
+    .join('\n')
+
+  return '\nStill to come after this section (planned, not yet written):\n' +
+    entries +
+    '\nWhere it serves the arc, plant setups in this section that the upcoming sections can pay off. Do not write their content now.\n'
+}
+
+export function getSectionGenerationPrompt(
+  sectionTitle: string,
+  sectionDescription: string,
+  upcomingSections: OutlineSection[] = []
+): string {
   return sectionGenerationPrompt
     .replace('{sectionTitle}', sectionTitle)
     .replace('{sectionDescription}', sectionDescription)
+    .replace('{upcomingSections}', () => formatUpcomingSections(upcomingSections))
 }
 
 function excerptStart(text: string, maxWords: number): string {
@@ -119,6 +140,15 @@ export function buildStyleCritiquePrompt(script: string): string {
   return styleCritiquePrompt
     .replace('{styleRules}', getStyleRules())
     .replace('{script}', script)
+}
+
+// The critique request for the outline-critique step (story 8.9): the user's
+// brief plus the freshly generated outline, asking for either approval or a
+// full revised outline in the same format
+export function buildOutlineCritiquePrompt(brief: string, outlineText: string): string {
+  return outlineCritiquePrompt
+    .replace('{brief}', () => brief)
+    .replace('{outline}', () => outlineText)
 }
 
 export function getScriptRefinementPrompt(instruction: string): string {

@@ -1,7 +1,7 @@
 Now write the "{sectionTitle}" section of the script.
 
 This section should be: {sectionDescription}
-
+{upcomingSections}
 Requirements:
 - Write approximately 400 words for this section
 - Output ONLY the section content (do NOT include the ## header, it will be added automatically)

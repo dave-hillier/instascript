@@ -3,6 +3,8 @@ import {
   buildSectionRegenerationPrompt,
   buildSectionRegenerationPromptFromConversation,
   getScriptRefinementPrompt,
+  getSectionGenerationPrompt,
+  formatUpcomingSections,
   orderExamplesForPrompt,
   formatExamplesForPrompt,
   normaliseConversationHistory,
@@ -320,5 +322,51 @@ describe('getScriptRefinementPrompt', () => {
     expect(prompt).toContain('rewriting ONLY the sections that need to change')
     expect(prompt).toContain('"## Section Title" header line')
     expect(prompt).toContain('Do not output sections that do not need to change')
+  })
+})
+
+describe('getSectionGenerationPrompt upcoming sections (story 8.10)', () => {
+  const upcoming = [
+    { title: 'Deepener', description: 'Descend a staircase of ten steps.' },
+    { title: 'Awakening', description: 'Count back up to full alertness.' }
+  ]
+
+  it('lists the title and summary of every upcoming section', () => {
+    const prompt = getSectionGenerationPrompt('Induction', 'Settle the listener.', upcoming)
+
+    expect(prompt).toContain('Still to come after this section')
+    expect(prompt).toContain('- "Deepener": Descend a staircase of ten steps.')
+    expect(prompt).toContain('- "Awakening": Count back up to full alertness.')
+    expect(prompt).toContain('plant setups')
+  })
+
+  it('omits the upcoming block for the final section', () => {
+    const prompt = getSectionGenerationPrompt('Awakening', 'Count back up.', [])
+
+    expect(prompt).not.toContain('Still to come after this section')
+    expect(prompt).not.toContain('{upcomingSections}')
+  })
+
+  it('omits the upcoming block when no upcoming sections are given', () => {
+    const prompt = getSectionGenerationPrompt('Awakening', 'Count back up.')
+
+    expect(prompt).not.toContain('Still to come after this section')
+    expect(prompt).not.toContain('{upcomingSections}')
+  })
+
+  it('keeps the section title, description and requirements intact', () => {
+    const prompt = getSectionGenerationPrompt('Induction', 'Settle the listener.', upcoming)
+
+    expect(prompt).toContain('Now write the "Induction" section')
+    expect(prompt).toContain('This section should be: Settle the listener.')
+    expect(prompt).toContain('approximately 400 words')
+  })
+
+  it('formatUpcomingSections is not corrupted by replacement patterns', () => {
+    const block = formatUpcomingSections([
+      { title: 'Costs', description: "Roughly $100, or $& in shorthand." }
+    ])
+
+    expect(block).toContain("Roughly $100, or $& in shorthand.")
   })
 })

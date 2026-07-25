@@ -2,6 +2,7 @@ import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../typ
 import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
+import { OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 
 export class MockAPIService implements ScriptGenerationService {
   constructor() {
@@ -267,6 +268,33 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
     return ['Here is my review of the script:', ...verdictLines].join('\n')
   }
 
+  // A plausible outline-critique response (story 8.9): the mock always finds
+  // the escalation arc lacking and returns the outline with the second
+  // section's description revised, exercising the replacement flow. A
+  // prompt without a recognisable outline is approved unchanged.
+  private generateOutlineCritiqueContent(prompt: string): string {
+    const marker = 'Here is the outline to review:'
+    const markerIndex = prompt.indexOf(marker)
+    if (markerIndex < 0) return 'OUTLINE OK'
+
+    const outlineText = prompt.slice(markerIndex + marker.length).trim()
+    const lines = outlineText.split('\n')
+
+    let sectionCount = 0
+    for (let i = 0; i < lines.length; i++) {
+      if (/^##\s/.test(lines[i])) {
+        sectionCount++
+        if (sectionCount === 2 && i + 1 < lines.length) {
+          lines[i + 1] =
+            "Deepen the listener's trance while gradually escalating intensity toward the transformation ahead."
+          return lines.join('\n')
+        }
+      }
+    }
+
+    return 'OUTLINE OK'
+  }
+
   async *regenerateSection(
     request: RegenerationRequest,
     messages: ChatMessage[],
@@ -281,9 +309,11 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
     // Otherwise generate ~400 word section content (no header - orchestrator adds ## Title)
     const content = request.sectionTitle === STYLE_REVIEW_SECTION_TITLE
       ? this.generateCritiqueContent(request.prompt)
-      : request.sectionTitle === ''
-        ? this.generateRefinementContent(messages)
-        : this.generateSectionContent(request.sectionTitle)
+      : request.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE
+        ? this.generateOutlineCritiqueContent(request.prompt)
+        : request.sectionTitle === ''
+          ? this.generateRefinementContent(messages)
+          : this.generateSectionContent(request.sectionTitle)
     yield* this.streamContent(content, abortSignal)
   }
 }

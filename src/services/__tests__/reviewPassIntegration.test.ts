@@ -92,11 +92,11 @@ describe('style-review pass integration', () => {
     expect(report.revised).toHaveLength(2)
     expect(report.revised.map(entry => entry.ruleNumbers)).toEqual([[6], [9]])
 
-    // Outline + 5 sections + critique + 2 revisions
-    expect(finalConversation.generations).toHaveLength(9)
+    // Outline + outline critique + 5 sections + style critique + 2 revisions
+    expect(finalConversation.generations).toHaveLength(10)
 
     // The revision prompts carry the violation as an instruction
-    const revisionGeneration = finalConversation.generations[7]
+    const revisionGeneration = finalConversation.generations[8]
     const revisionPrompt = revisionGeneration.messages[revisionGeneration.messages.length - 1]
     expect(revisionPrompt.content).toContain('A style review found')
     expect(revisionPrompt.content).toContain('style rule 6')
@@ -118,10 +118,72 @@ describe('style-review pass integration', () => {
       conversation
     )
 
-    // Outline + 5 sections only, no critique and no report
+    // Outline + 5 sections only, no critiques and no report
     expect(getState().conversations[0].generations).toHaveLength(6)
     expect(getState().reviewReport).toBeNull()
     expect(actions.some(action => action.type === 'REVIEW_PASS_COMPLETED')).toBe(false)
+
+    vi.restoreAllMocks()
+  }, 30000)
+})
+
+describe('outline-critique step integration (story 8.9)', () => {
+  const revisedDescription =
+    "Deepen the listener's trance while gradually escalating intensity toward the transformation ahead."
+
+  it('critiques the outline and the revised outline replaces generation 0 as the plan', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(true)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    const generations = getState().conversations[0].generations
+
+    // The critique exchange is generation 1, stored as the revised outline
+    const critiqueGeneration = generations[1]
+    expect(critiqueGeneration.messages[0].content).toContain('Here is the outline to review:')
+    expect(critiqueGeneration.response.startsWith('# ')).toBe(true)
+    expect(critiqueGeneration.response).toContain(revisedDescription)
+
+    // Every section request inherits the revised outline, not the original
+    const sectionGenerations = generations.slice(2, 7)
+    for (const generation of sectionGenerations) {
+      const userMessage = generation.messages[generation.messages.length - 1].content
+      expect(userMessage).toContain(revisedDescription)
+    }
+
+    vi.restoreAllMocks()
+  }, 30000)
+
+  it('gives each section the outline entries of upcoming sections (story 8.10)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(false)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    const generations = getState().conversations[0].generations
+    const sectionGenerations = generations.slice(1)
+    expect(sectionGenerations).toHaveLength(5)
+
+    // Every section but the last names what is still to come
+    for (let i = 0; i < sectionGenerations.length; i++) {
+      const generation = sectionGenerations[i]
+      const userMessage = generation.messages[generation.messages.length - 1].content
+
+      if (i < sectionGenerations.length - 1) {
+        expect(userMessage).toContain('Still to come after this section')
+        // The mock outline for this prompt ends with the Awakening section
+        expect(userMessage).toContain('- "Awakening":')
+      } else {
+        expect(userMessage).not.toContain('Still to come after this section')
+      }
+    }
 
     vi.restoreAllMocks()
   }, 30000)

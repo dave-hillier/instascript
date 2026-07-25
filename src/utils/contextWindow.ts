@@ -30,7 +30,8 @@ export function calculateOptimalExampleCount(
 
 export function getRecommendedExampleCount(
   systemPrompt?: string,
-  conversationTokens: number = 0
+  conversationTokens: number = 0,
+  plannedContextTokens: number = 0
 ): number {
   const defaultCount = 20
 
@@ -39,8 +40,14 @@ export function getRecommendedExampleCount(
   }
 
   const systemTokens = estimateTokenCount(systemPrompt)
-  return calculateOptimalExampleCount(systemTokens, conversationTokens)
+  return calculateOptimalExampleCount(systemTokens, conversationTokens + plannedContextTokens)
 }
+
+// Estimated size of the outline context each section request carries: the
+// full outline plus the upcoming-sections block (story 8.10) — title and
+// one-sentence summary per section, twice over, at a generous line length.
+// Reserved up front so example selection leaves room for it.
+export const UPCOMING_SECTIONS_CONTEXT_TOKENS = 500
 
 export const CONTEXT_LIMITS = {
   MAX_TOKENS: 120000,
