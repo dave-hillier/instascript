@@ -53,30 +53,8 @@
 
 ## Theme System
 
-### Implementation Details
+The app supports light, dark, and system theme modes (system follows the OS preference via `matchMedia`, with live change listening). The preference persists in localStorage under the key `theme` and is applied as a `data-theme` attribute on the root div.
 
-The app has a complete theme system with the following features:
+All theming is expressed as CSS custom properties (design tokens) defined per theme in `App.css` under `[data-theme="light"]` and `[data-theme="dark"]` — background, surface, ink, line, accent, and danger colors. Components style against the tokens (`var(--accent)` etc.), never hardcoded colors, so both themes are first-class. When adding UI, use the existing tokens; add a new token rather than a literal color if none fits.
 
-#### Theme Modes
-- **Light**: Light background (#ffffff) with dark text (#1a1a1a)
-- **Dark**: Dark background (#1a1a1a) with light text (#ffffff)  
-- **System**: Automatically follows the user's OS theme preference
-
-#### Technical Architecture
-- Theme preference stored in localStorage with direct access (key: 'theme')
-- Theme state managed via `useReducer` in App.tsx with `uiReducer`
-- Applied to DOM via `data-theme` attribute on root div
-- CSS uses `[data-theme="light"]` and `[data-theme="dark"]` selectors for styling
-- System theme detection via `window.matchMedia('(prefers-color-scheme: dark)')`
-- Real-time system theme change listening with MediaQueryList event handlers
-
-#### Component Integration
-- Settings modal (`SettingsModal.tsx`) provides theme selector UI
-- Three theme buttons with icons (Sun/Moon/Monitor from Lucide React)
-- Theme changes are immediate and persistent across sessions
-
-#### CSS Theme Variables
-All theme-specific styles are in `App.css` using attribute selectors:
-- Colors, borders, backgrounds automatically adjust based on `[data-theme]`
-- Smooth transitions (0.3s ease) for theme switches
-- Component-specific theme overrides for dialogs, forms, buttons, etc.
+Typography roles are also tokens (`index.css`): `--font-ui` (system sans, chrome), `--font-display` (Cormorant Garamond — wordmark, titles, section headings), `--font-reading` (Spectral — script body text only).

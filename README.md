@@ -1,69 +1,31 @@
-# React + TypeScript + Vite
+# InstaScript
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+InstaScript generates long-form hypnosis scripts for adults from a short brief. It is a client-side React app: scripts stream in section by section, can be regenerated per section, and everything persists in the browser — there is no backend.
 
-Currently, two official plugins are available:
+**Content note:** the app generates erotic hypnosis scripts and is intended for adults.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## How it works
 
-## Expanding the ESLint configuration
+A brief is expanded in two stages: the model first produces an outline (section list with per-section word targets), then writes each section against that outline with bundled example scripts as few-shot style exemplars. Generation streams live into a sectioned reading view, with per-section word-count and context-token meters. Each section can be regenerated individually using the full conversation history.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Providers: OpenAI, OpenRouter (any model id), or a mock provider for development — selected in settings along with the model and API key. API keys are held in sessionStorage; scripts and conversations are stored in localStorage as YAML front-matter + markdown.
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Development
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+- `yarn dev` — start the development server
+- `yarn build` — type-check and build for production
+- `yarn lint` — run ESLint
+- `yarn test` — run Vitest
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Built with Vite, React, and TypeScript. Coding standards live in [CLAUDE.md](CLAUDE.md).
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Structure
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- `src/pages` — home (composer + script library) and script reading page
+- `src/services` — generation orchestration, providers, example retrieval, storage
+- `src/prompts` — system, outline, and section prompts
+- `src/contexts`, `src/reducers` — app and conversation state (event-driven reducers)
 
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Backlog
+
+The single source of truth for what exists and what is planned is [docs/user-stories.md](docs/user-stories.md). Stories are marked Implemented, Partial, or Gap; design rationale (retrieval approach, generation pipeline, visual design) is recorded alongside the affected epics.

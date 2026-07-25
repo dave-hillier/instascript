@@ -95,6 +95,7 @@ Acceptance criteria:
 - Section content is editable in place; edits persist to storage
 - The script title is editable from the script page or list
 - Manual edits are preserved when other sections are regenerated
+- Regenerating an edited section sends the current (edited) content as context, not the original generation
 
 ### 2.4 Show or hide section titles [Implemented]
 As a user, I want to toggle section headings off, so that I can read (or perform) the script as continuous prose without structural markers.
@@ -146,6 +147,7 @@ Acceptance criteria:
 - List items show creation date, status, total word count and estimated duration (e.g. at ~130 wpm)
 - Dead fields are either populated or removed
 - The script page header shows the same metadata (partially present today)
+- The script's stored title updates to the generated document title once the outline produces one, replacing the truncated prompt
 
 ## Epic 4: Using the Finished Script
 
@@ -253,6 +255,16 @@ As a user, I want to export my whole library to a file and import it elsewhere, 
 Acceptance criteria:
 - Export produces a single file containing all scripts and conversations
 - Import merges without duplicating existing IDs and validates the format
+
+### 7.3 Store conversation history in OPFS [Gap]
+As a user with a large script library, I want conversation history stored in the Origin Private File System instead of localStorage, so that storage is not constrained by localStorage quotas or blocking synchronous writes during streaming.
+
+Notes: scripts already serialize as YAML front-matter + markdown; the same hybrid format would suit conversation files in OPFS.
+
+Acceptance criteria:
+- Conversations persist to OPFS with localStorage data migrated on first load
+- Streaming saves no longer block the main thread
+- Clear All Data removes OPFS content too
 
 ## Epic 8: Example Retrieval & Generation Quality
 
