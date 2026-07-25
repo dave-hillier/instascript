@@ -207,7 +207,7 @@ Acceptance criteria:
 - The copy is clearly titled (e.g. "Copy of ...")
 - Duplicating a script whose generation is still streaming gives the copy an honest status (an in-progress source duplicates as a draft)
 
-### 4.4 Hear the script read aloud [Gap]
+### 4.4 Hear the script read aloud [Implemented]
 As a user, I want an optional read-aloud mode using the browser's speech synthesis, so that I can listen to the script — or rehearse against it — without any external service.
 
 Notes: scripts are written to be spoken; performance mode's auto-scroll pacing is the natural timing source. speechSynthesis is free, local, and consistent with the no-backend architecture, at the cost of voice quality.

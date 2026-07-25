@@ -1857,6 +1857,37 @@ dialog.performance-mode[open] {
   accent-color: var(--accent);
 }
 
+/* Read-aloud controls (story 4.4): speech toggle, voice and rate pickers */
+.performance-controls .read-aloud {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+
+.performance-controls .read-aloud select {
+  max-width: 11rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background-color: var(--surface);
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+
+.performance-controls .read-aloud select:hover,
+.performance-controls .read-aloud select:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The paragraph currently being spoken steps forward from the page */
+.performance-mode article p[data-spoken] {
+  color: var(--accent);
+}
+
 /* ------------------------------------------------------------------ */
 /* Motion                                                              */
 /* ------------------------------------------------------------------ */
