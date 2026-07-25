@@ -211,6 +211,56 @@ main form button[aria-label="Generate script"]:disabled {
 }
 
 /* ------------------------------------------------------------------ */
+/* Home: library toolbar — search and sort                             */
+/* ------------------------------------------------------------------ */
+
+main search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.875rem;
+}
+
+main search input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.875rem;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease;
+}
+
+main search input[type="search"]:focus {
+  border-color: var(--accent);
+}
+
+main search input[type="search"]::placeholder {
+  color: var(--ink-muted);
+}
+
+main search select {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+main search select:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ */
 /* Home: tabs                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -296,14 +346,6 @@ main ul li > a > div {
   text-overflow: ellipsis;
 }
 
-/* Metadata (status, length) at rest; actions on hover/focus */
-main ul li > div[aria-label] {
-  font-size: 0.75rem;
-  color: var(--ink-muted);
-  white-space: nowrap;
-  transition: opacity 0.15s ease;
-}
-
 .script-actions {
   display: flex;
   align-items: center;
@@ -328,12 +370,12 @@ main ul li:focus-within .script-actions button {
   opacity: 1;
 }
 
-.script-actions button:first-child:hover {
+.script-actions button:hover {
   background-color: var(--accent-soft);
   color: var(--accent);
 }
 
-.script-actions button:last-child:hover {
+.script-actions button[aria-label="Delete script"]:hover {
   background-color: var(--danger-soft);
   color: var(--danger);
 }
@@ -346,10 +388,6 @@ main ul li:focus-within .script-actions button {
   /* No hover on touch: keep actions visible */
   .script-actions button {
     opacity: 1;
-  }
-
-  main ul li > div[aria-label] {
-    display: none;
   }
 }
 

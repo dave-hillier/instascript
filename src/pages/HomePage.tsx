@@ -6,6 +6,8 @@ import { useConversationContext } from '../hooks/useConversationContext'
 import { ScriptList } from '../components/ScriptList'
 import type { Script } from '../types/script'
 import { getApiProvider, getModel } from '../services/config'
+import { filterScriptsByQuery, parseSortOrder, sortScriptsByCreation } from '../utils/scriptLibrary'
+import type { SortOrder } from '../utils/scriptLibrary'
 
 type Tab = 'scripts' | 'archive'
 
@@ -13,16 +15,52 @@ export const HomePage = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
   const navigate = useNavigate()
-  
+
   const { activeScripts, archivedScripts, dispatch: appDispatch } = useAppContext()
   const { createConversation, generateScript } = useConversationContext()
-  
+
   const activeTab = (searchParams.get('state') === 'archived' ? 'archive' : 'scripts') as Tab
-  const filteredScripts = activeTab === 'scripts' ? activeScripts : archivedScripts
+  const searchQuery = searchParams.get('q') ?? ''
+  const sortOrder = parseSortOrder(searchParams.get('sort'))
+
+  const tabScripts = activeTab === 'scripts' ? activeScripts : archivedScripts
+  const visibleScripts = sortScriptsByCreation(
+    filterScriptsByQuery(tabScripts, searchQuery),
+    sortOrder
+  )
+
+  // Applies partial updates to the query string, dropping keys set to null
+  // so defaults (scripts tab, no search, newest first) keep clean URLs
+  const updateSearchParams = (
+    updates: Record<string, string | null>,
+    options?: { replace?: boolean }
+  ) => {
+    const next = new URLSearchParams(searchParams)
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null || value === '') {
+        next.delete(key)
+      } else {
+        next.set(key, value)
+      }
+    }
+    setSearchParams(next, options)
+  }
+
+  const handleTabSelected = (tab: Tab) => {
+    updateSearchParams({ state: tab === 'archive' ? 'archived' : null })
+  }
+
+  const handleSearchChanged = (value: string) => {
+    updateSearchParams({ q: value }, { replace: true })
+  }
+
+  const handleSortChanged = (order: SortOrder) => {
+    updateSearchParams({ sort: order === 'oldest' ? 'oldest' : null })
+  }
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return
-    
+
     try {
       // Create new script entry
       const scriptId = `script_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -47,7 +85,7 @@ export const HomePage = () => {
 
       // Navigate to the script page
       navigate(`/script/${scriptId}`)
-      
+
       // Clear the prompt
       setPrompt('')
 
@@ -56,7 +94,7 @@ export const HomePage = () => {
         prompt: prompt,
         conversationId: conversation.id
       })
-      
+
     } catch (error) {
       console.error('Failed to queue script generation:', error)
     }
@@ -67,10 +105,10 @@ export const HomePage = () => {
       <section>
         <h2>What script should we generate?</h2>
       </section>
-      
+
       <section>
         <form onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}>
-          <textarea 
+          <textarea
             placeholder="Describe a script to generate"
             aria-label="Script description"
             value={prompt}
@@ -80,7 +118,7 @@ export const HomePage = () => {
             <div>
             </div>
             <div>
-              <button 
+              <button
                 type="button"
                 onClick={handleGenerate}
                 disabled={!prompt.trim()}
@@ -94,26 +132,43 @@ export const HomePage = () => {
       </section>
 
       <section>
-        <div 
+        <search>
+          <input
+            type="search"
+            placeholder="Search scripts"
+            aria-label="Search scripts by title or prompt"
+            value={searchQuery}
+            onChange={(e) => handleSearchChanged(e.target.value)}
+          />
+          <select
+            aria-label="Sort scripts"
+            value={sortOrder}
+            onChange={(e) => handleSortChanged(parseSortOrder(e.target.value))}
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </search>
+        <div
           role="tablist"
           aria-label="Script categories"
         >
-          <button 
+          <button
             role="tab"
             aria-selected={activeTab === 'scripts'}
             aria-controls="scripts-panel"
             id="scripts-tab"
-            onClick={() => setSearchParams({})}
+            onClick={() => handleTabSelected('scripts')}
             type="button"
           >
             Scripts
           </button>
-          <button 
+          <button
             role="tab"
             aria-selected={activeTab === 'archive'}
             aria-controls="archive-panel"
             id="archive-tab"
-            onClick={() => setSearchParams({ state: 'archived' })}
+            onClick={() => handleTabSelected('archive')}
             type="button"
           >
             Archive
@@ -121,14 +176,15 @@ export const HomePage = () => {
         </div>
       </section>
 
-      <section 
+      <section
         role="tabpanel"
         id={`${activeTab}-panel`}
         aria-labelledby={`${activeTab}-tab`}
       >
-        <ScriptList 
-          scripts={filteredScripts} 
-          showArchived={activeTab === 'archive'} 
+        <ScriptList
+          scripts={visibleScripts}
+          showArchived={activeTab === 'archive'}
+          searchQuery={searchQuery}
         />
       </section>
     </>

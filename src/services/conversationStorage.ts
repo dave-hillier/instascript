@@ -137,6 +137,20 @@ export const createRawConversation = (
   }
 }
 
+// Builds a new conversation for a duplicated script, seeded with deep
+// copies of the source conversation's generations so the copy renders and
+// regenerates independently of the original. A missing source yields an
+// empty conversation.
+export const duplicateRawConversation = (
+  source: RawConversation | undefined,
+  newScriptId: string
+): RawConversation => {
+  return {
+    ...createRawConversation(newScriptId),
+    generations: source ? structuredClone(source.generations) : []
+  }
+}
+
 export const getLatestGeneration = (conversation: RawConversation): Generation | undefined => {
   if (!conversation.generations || conversation.generations.length === 0) return undefined
   return conversation.generations[conversation.generations.length - 1]

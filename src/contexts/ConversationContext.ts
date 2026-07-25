@@ -9,6 +9,7 @@ export type ConversationContextType = {
   dispatch: (action: RawConversationAction) => void
   getConversationByScriptId: (scriptId: string) => RawConversation | undefined
   createConversation: (scriptId: string) => RawConversation
+  duplicateConversation: (sourceScriptId: string, newScriptId: string) => RawConversation
   generateScript: (request: GenerationRequest) => Promise<void>
   regenerateSection: (request: SectionRegenerationRequest) => Promise<void>
   refineScript: (request: ScriptRefinementRequest) => Promise<void>

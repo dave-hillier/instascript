@@ -8,7 +8,7 @@ import { useAppContext } from '../hooks/useAppContext'
 
 // Extracted modules
 import { rawConversationReducer } from '../reducers/rawConversationReducer'
-import { loadStoredConversations, saveStoredConversation, createRawConversation } from '../services/conversationStorage'
+import { loadStoredConversations, saveStoredConversation, createRawConversation, duplicateRawConversation } from '../services/conversationStorage'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 import { buildSectionRegenerationPromptFromConversation, getScriptRefinementPrompt } from '../services/prompts'
 
@@ -190,12 +190,25 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     return conversation
   }, [])
 
+  // Duplicates the source script's conversation (story 4.3): the copy gets
+  // its own id and deep-copied generations, and is saved immediately since
+  // no generation run will save it
+  const duplicateConversation = useCallback((sourceScriptId: string, newScriptId: string): RawConversation => {
+    const source = conversationsRef.current.find(conv => conv.scriptId === sourceScriptId)
+    const conversation = duplicateRawConversation(source, newScriptId)
+
+    dispatch({ type: 'CREATE_CONVERSATION', conversation })
+    saveStoredConversation(conversation)
+    return conversation
+  }, [])
+
   const contextValue: ConversationContextType = {
     state,
     isLoaded,
     dispatch,
     getConversationByScriptId,
     createConversation,
+    duplicateConversation,
     generateScript,
     regenerateSection,
     refineScript,

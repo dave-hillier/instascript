@@ -1,15 +1,18 @@
-import { Archive, Trash2 } from 'lucide-react'
+import { Archive, Copy, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../hooks/useAppContext'
+import { useConversationContext } from '../hooks/useConversationContext'
 import type { Script } from '../types/script'
 
 type ScriptListProps = {
   scripts: Script[]
   showArchived?: boolean
+  searchQuery?: string
 }
 
-export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) => {
+export const ScriptList = ({ scripts, showArchived = false, searchQuery = '' }: ScriptListProps) => {
   const { dispatch: appDispatch } = useAppContext()
+  const { duplicateConversation } = useConversationContext()
 
   const handleArchiveScript = (e: React.MouseEvent, scriptId: string) => {
     e.preventDefault()
@@ -23,7 +26,28 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
     }
   }
 
+  const handleDuplicateScript = (e: React.MouseEvent, script: Script) => {
+    e.preventDefault()
+    const newScriptId = `script_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`
+    const conversation = duplicateConversation(script.id, newScriptId)
+
+    const copy: Script = {
+      ...script,
+      id: newScriptId,
+      title: `Copy of ${script.title}`,
+      createdAt: new Date().toLocaleDateString(),
+      isArchived: false,
+      status: script.content.trim() ? 'complete' : 'draft',
+      conversationId: conversation.id
+    }
+    appDispatch({ type: 'ADD_SCRIPT', script: copy })
+  }
+
   const renderScriptItem = (script: Script) => {
+    const metadata = [script.createdAt, script.status, script.length]
+      .filter(Boolean)
+      .join(' · ')
+
     return (
       <li key={script.id}>
         <Link
@@ -31,18 +55,16 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
           aria-label={`View script: ${script.title}`}
         >
           <h3>{script.title}</h3>
-          <div>{script.createdAt}</div>
+          <div>{metadata}</div>
         </Link>
-        {script.comments && (
-          <div aria-label={`${script.comments} comments`}>{script.comments}</div>
-        )}
-        {script.status && (
-          <div aria-label={`Status: ${script.status}`}>{script.status}</div>
-        )}
-        {script.length && (
-          <div aria-label={`Script length: ${script.length}`}>{script.length}</div>
-        )}
         <div className="script-actions">
+          <button
+            onClick={(e) => handleDuplicateScript(e, script)}
+            aria-label="Duplicate script"
+            type="button"
+          >
+            <Copy size={16} />
+          </button>
           <button
             onClick={(e) => handleArchiveScript(e, script.id)}
             aria-label={script.isArchived ? 'Unarchive script' : 'Archive script'}
@@ -63,6 +85,9 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
   }
 
   if (scripts.length === 0) {
+    if (searchQuery.trim()) {
+      return <p>No scripts match "{searchQuery.trim()}".</p>
+    }
     return <p>No {showArchived ? 'archived ' : ''}scripts found.</p>
   }
 

@@ -30,7 +30,6 @@ In a moment, I'll count from 1 to 5, and you'll return feeling refreshed and pea
     isArchived: false,
     status: 'complete',
     length: '3.2 pages',
-    comments: 7
   },
   {
     id: '2',
@@ -58,7 +57,6 @@ Your confidence grows stronger with each speaking opportunity...`,
     isArchived: false,
     status: 'complete',
     length: '2.8 pages',
-    comments: 3
   },
   {
     id: '3',
@@ -113,7 +111,6 @@ These changes become a natural, permanent part of your lifestyle...`,
     isArchived: false,
     status: 'in-progress',
     length: '3.7 pages',
-    comments: 12
   },
   {
     id: '5',
@@ -141,7 +138,6 @@ You are now a non-smoker, and this identity feels natural and comfortable...`,
     isArchived: false,
     status: 'complete',
     length: '2.9 pages',
-    comments: 5
   },
   {
     id: '6',
@@ -169,7 +165,6 @@ You carry this sense of relief and comfort with you throughout your day...`,
     isArchived: false,
     status: 'complete',
     length: '3.4 pages',
-    comments: 9
   },
   {
     id: '7',
@@ -224,7 +219,6 @@ You approach your studies with confidence and achieve your learning goals...`,
     isArchived: false,
     status: 'in-progress',
     length: '2.2 pages',
-    comments: 4
   },
   {
     id: '9',
@@ -252,7 +246,6 @@ You can access your zone of optimal performance whenever needed...`,
     isArchived: false,
     status: 'complete',
     length: '3.1 pages',
-    comments: 8
   },
   {
     id: '10',
@@ -307,7 +300,6 @@ Your creative energy renews itself through the joy of expression...`,
     isArchived: false,
     status: 'complete',
     length: '2.4 pages',
-    comments: 11
   },
   {
     id: '12',
@@ -335,7 +327,6 @@ Flying becomes an opportunity for peaceful reflection and anticipation...`,
     isArchived: true,
     status: 'complete',
     length: '3.0 pages',
-    comments: 6
   },
   {
     id: '13',
@@ -363,7 +354,6 @@ Finishing tasks gives you a deep sense of satisfaction and pride...`,
     isArchived: true,
     status: 'complete',
     length: '2.8 pages',
-    comments: 15
   },
   {
     id: '14',
@@ -391,7 +381,6 @@ You are worthy of love, including love from yourself...`,
     isArchived: true,
     status: 'complete',
     length: '3.3 pages',
-    comments: 22
   },
   {
     id: '15',
@@ -446,6 +435,5 @@ Your memory serves you reliably in all important situations...`,
     isArchived: true,
     status: 'in-progress',
     length: '2.9 pages',
-    comments: 3
   }
 ]

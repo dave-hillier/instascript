@@ -7,7 +7,6 @@ export interface Script {
   tags?: string[]
   status?: 'draft' | 'complete' | 'in-progress'
   length?: string
-  comments?: number
   conversationId?: string
   initialPrompt?: string
   provider?: string
