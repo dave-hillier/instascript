@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useReducer } from 'react'
 import type { ChangeEvent } from 'react'
-import { Sun, Moon, Monitor, Trash2, Download, Upload } from 'lucide-react'
+import { Sun, Moon, Monitor, Trash2, Download, Upload, FolderSync, FolderX } from 'lucide-react'
 import type { APIProvider } from '../services/config'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
@@ -97,6 +97,14 @@ type SettingsModalProps = {
   onClearConversations: () => void
   onExportLibrary: () => Promise<void>
   onImportLibrary: (file: File) => Promise<LibraryImportCounts>
+  backupReminderEnabled: boolean
+  onBackupReminderEnabledChange: (enabled: boolean) => void
+  backupFolderSupported: boolean
+  backupFolderName: string | null
+  autoBackupEnabled: boolean
+  onAutoBackupEnabledChange: (enabled: boolean) => void
+  onLinkBackupFolder: () => Promise<void>
+  onUnlinkBackupFolder: () => Promise<void>
 }
 
 export const SettingsModal = ({
@@ -112,7 +120,15 @@ export const SettingsModal = ({
   onSave,
   onClearConversations,
   onExportLibrary,
-  onImportLibrary
+  onImportLibrary,
+  backupReminderEnabled,
+  onBackupReminderEnabledChange,
+  backupFolderSupported,
+  backupFolderName,
+  autoBackupEnabled,
+  onAutoBackupEnabledChange,
+  onLinkBackupFolder,
+  onUnlinkBackupFolder
 }: SettingsModalProps) => {
   const modalRef = useRef<HTMLDialogElement>(null)
   const [tempApiKey, setTempApiKey] = useState('')
@@ -487,6 +503,63 @@ export const SettingsModal = ({
           >
             {libraryTransferMessage}
           </p>
+
+          <label className="checkbox-field" htmlFor="backup-reminder">
+            <input
+              type="checkbox"
+              id="backup-reminder"
+              checked={backupReminderEnabled}
+              onChange={(e) => onBackupReminderEnabledChange(e.target.checked)}
+              aria-describedby="backup-reminder-help"
+            />
+            <span>Remind me to export</span>
+          </label>
+          <p id="backup-reminder-help">
+            Shows a dismissible reminder when new scripts have accrued since
+            your last export. Tracking stays in this browser
+          </p>
+
+          {backupFolderSupported && (
+            <>
+              {backupFolderName ? (
+                <>
+                  <label className="checkbox-field" htmlFor="auto-backup">
+                    <input
+                      type="checkbox"
+                      id="auto-backup"
+                      checked={autoBackupEnabled}
+                      onChange={(e) => onAutoBackupEnabledChange(e.target.checked)}
+                      aria-describedby="backup-folder-help"
+                    />
+                    <span>Back up automatically to "{backupFolderName}"</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="backup-folder-btn"
+                    onClick={() => { void onUnlinkBackupFolder() }}
+                  >
+                    <FolderX size={16} />
+                    <span>Unlink backup folder</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="backup-folder-btn"
+                  onClick={() => { void onLinkBackupFolder() }}
+                  aria-describedby="backup-folder-help"
+                >
+                  <FolderSync size={16} />
+                  <span>Link backup folder</span>
+                </button>
+              )}
+              <p id="backup-folder-help">
+                Writes the library export file into a folder you choose after
+                significant changes, at most every few minutes. The folder is
+                on this device and nothing is sent anywhere remote
+              </p>
+            </>
+          )}
 
           <button
             type="button"

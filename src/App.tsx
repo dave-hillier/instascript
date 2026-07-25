@@ -13,6 +13,32 @@ import type { APIProvider } from './services/config'
 import { clearStoredConversations, loadStoredConversations, saveStoredConversation } from './services/conversationStorage'
 import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryImportCounts } from './services/libraryTransfer'
 import { getExampleSelectionCounts, importExampleSelectionCounts } from './services/exampleCorpus'
+import { BackupReminder } from './components/BackupReminder'
+import {
+  evaluateBackupReminder,
+  loadExportSnapshot,
+  recordLibraryExported,
+  loadReminderDismissal,
+  recordReminderDismissed,
+  loadReminderEnabled,
+  saveReminderEnabled,
+  loadAutoBackupEnabled,
+  saveAutoBackupEnabled,
+  loadAutoBackupLastWrittenAt,
+  loadAutoBackupSignature,
+  recordAutoBackupWritten,
+  autoBackupDelay,
+  librarySignature
+} from './services/backupReminder'
+import {
+  isBackupFolderSupported,
+  pickBackupFolder,
+  loadBackupFolderHandle,
+  storeBackupFolderHandle,
+  clearBackupFolderHandle,
+  ensureBackupPermission,
+  writeBackupFile
+} from './services/backupFolder'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -140,6 +166,26 @@ function AppContent() {
       return false
     }
   })
+
+  // Backup staleness tracking and the linked backup folder (story 7.4).
+  // All of it is strictly local: localStorage for the small state, IndexedDB
+  // for the directory handle, and writes only to a folder the user picked.
+  const [backupReminderEnabled, setBackupReminderEnabled] = useState(loadReminderEnabled)
+  const [exportSnapshot, setExportSnapshot] = useState(loadExportSnapshot)
+  const [reminderDismissal, setReminderDismissal] = useState(loadReminderDismissal)
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(loadAutoBackupEnabled)
+  const [backupFolder, setBackupFolder] = useState<FileSystemDirectoryHandle | null>(null)
+
+  // Restore a previously linked backup folder handle from IndexedDB
+  useEffect(() => {
+    let cancelled = false
+    void loadBackupFolderHandle().then(handle => {
+      if (!cancelled && handle) setBackupFolder(handle)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -330,7 +376,79 @@ function AppContent() {
     anchor.download = `instascript-library-${new Date().toISOString().slice(0, 10)}.json`
     anchor.click()
     URL.revokeObjectURL(url)
+    // Remember what this export covered, so the staleness reminder measures
+    // new work against it (story 7.4); a fresh export also clears dismissals
+    setExportSnapshot(recordLibraryExported(state.scripts.map(script => script.id), Date.now()))
+    setReminderDismissal(null)
   }
+
+  const backupReminder = evaluateBackupReminder({
+    enabled: backupReminderEnabled,
+    snapshot: exportSnapshot,
+    currentScriptIds: state.scripts.map(script => script.id),
+    dismissal: reminderDismissal,
+    now: Date.now()
+  })
+
+  const handleDismissBackupReminder = () => {
+    setReminderDismissal(recordReminderDismissed(backupReminder.newScriptCount, Date.now()))
+  }
+
+  const handleBackupReminderEnabledChange = (enabled: boolean) => {
+    saveReminderEnabled(enabled)
+    setBackupReminderEnabled(enabled)
+  }
+
+  const handleAutoBackupEnabledChange = (enabled: boolean) => {
+    saveAutoBackupEnabled(enabled)
+    setAutoBackupEnabled(enabled)
+  }
+
+  const handleLinkBackupFolder = async () => {
+    const handle = await pickBackupFolder()
+    if (!handle) return
+    await ensureBackupPermission(handle, true)
+    // Persisting the handle can fail in browsers that cannot clone handles
+    // into IndexedDB; the link then simply lasts for this session
+    await storeBackupFolderHandle(handle)
+    setBackupFolder(handle)
+    handleAutoBackupEnabledChange(true)
+  }
+
+  const handleUnlinkBackupFolder = async () => {
+    await clearBackupFolderHandle()
+    setBackupFolder(null)
+    handleAutoBackupEnabledChange(false)
+  }
+
+  // Automatic backup into the linked folder after significant changes,
+  // throttled so streaming generations do not cause a write per token. The
+  // signature check skips writes when nothing has actually changed.
+  useEffect(() => {
+    if (!autoBackupEnabled || !backupFolder || state.scripts.length === 0) return
+    const scripts = state.scripts
+    const writeBackup = async () => {
+      try {
+        const signature = librarySignature(scripts)
+        if (signature === loadAutoBackupSignature()) return
+        // Without a user gesture we can only use an already granted permission
+        if (!(await ensureBackupPermission(backupFolder, false))) return
+        const conversations = await loadStoredConversations()
+        await writeBackupFile(
+          backupFolder,
+          serializeLibraryExport(scripts, conversations, getExampleSelectionCounts())
+        )
+        recordAutoBackupWritten(signature, Date.now())
+      } catch (error) {
+        console.error('Automatic backup failed:', error)
+      }
+    }
+    const delay = autoBackupDelay(loadAutoBackupLastWrittenAt(), Date.now())
+    const timer = window.setTimeout(() => {
+      void writeBackup()
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [autoBackupEnabled, backupFolder, state.scripts])
 
   // Imports a previously exported library, merging it into this browser:
   // anything whose id already exists here is skipped, never overwritten.
@@ -471,6 +589,17 @@ function AppContent() {
         </nav>
       </header>
 
+      {backupReminder.due && !uiState.performanceMode && (
+        <BackupReminder
+          newScriptCount={backupReminder.newScriptCount}
+          lastExportedAt={backupReminder.lastExportedAt}
+          onExport={() => {
+            void handleExportLibrary()
+          }}
+          onDismiss={handleDismissBackupReminder}
+        />
+      )}
+
       <main>
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -502,6 +631,14 @@ function AppContent() {
         onClearConversations={handleClearConversations}
         onExportLibrary={handleExportLibrary}
         onImportLibrary={handleImportLibrary}
+        backupReminderEnabled={backupReminderEnabled}
+        onBackupReminderEnabledChange={handleBackupReminderEnabledChange}
+        backupFolderSupported={isBackupFolderSupported()}
+        backupFolderName={backupFolder ? backupFolder.name : null}
+        autoBackupEnabled={autoBackupEnabled}
+        onAutoBackupEnabledChange={handleAutoBackupEnabledChange}
+        onLinkBackupFolder={handleLinkBackupFolder}
+        onUnlinkBackupFolder={handleUnlinkBackupFolder}
       />
     </div>
   )
