@@ -83,7 +83,7 @@ Acceptance criteria:
 - Retry on an interrupted script keeps the outline and completed sections and resumes at the first incomplete one
 - A full restart remains available as an explicit choice
 
-### 1.9 Make the run lifecycle a tested unit [Gap]
+### 1.9 Make the run lifecycle a tested unit [Implemented]
 As the maintainer, I want the single-active-run invariant (new runs await settlement of the previous, aborts can never clobber a successor's state) extracted into a small standalone state machine with its own tests, so that the concurrency logic that has already produced race bugs is provable rather than woven through the orchestrator.
 
 Acceptance criteria:
@@ -282,7 +282,7 @@ Acceptance criteria:
 - Scripts stored per-key as YAML front-matter + markdown; legacy JSON is migrated on load
 - Conversations store the complete message history and every generation, saved throttled during streaming and on completion
 
-### 7.4 Protect me from silent data loss [Gap]
+### 7.4 Protect me from silent data loss [Implemented]
 As a user whose whole library lives in one browser profile, I want the app to help me keep a backup, so that clearing browser data or losing the device doesn't silently destroy my scripts.
 
 Notes: OPFS and localStorage vanish with the profile; export exists (7.2) but relies on the user remembering. Two tiers: a lightweight nudge, and — where the File System Access API is available — a linked backup folder written to automatically.
@@ -373,7 +373,7 @@ As a user, I want to see the context-token composition of the conversation behin
 Acceptance criteria:
 - A token usage bar on the script page segments estimated context by role (system/user/assistant), with per-segment tooltips and a legend
 
-### 8.7 Hybrid example retrieval [Gap]
+### 8.7 Hybrid example retrieval [Implemented]
 As a user with a growing corpus, I want retrieval to catch stylistic matches that share no vocabulary with my brief, so that "slow, heavy, sinking" can surface an example that achieves that mood in different words.
 
 Notes: BM25 is lexical-only; the research consensus is that fusing lexical and dense signals beats either alone. A small quantized embedding model run client-side (e.g. via transformers.js, ~20MB cached) keeps the no-backend constraint. Corpus embeddings are computed once at import time and stored with each example; only the brief is embedded at generation time. Scores fuse with BM25 via reciprocal rank fusion, feeding the existing diversity pass (8.3).
@@ -383,14 +383,14 @@ Acceptance criteria:
 - Corpus embeddings are computed at import/promotion time, not per generation
 - The embedding model loads lazily and everything stays client-side
 
-### 8.8 Deliberate exemplar ordering [Gap]
+### 8.8 Deliberate exemplar ordering [Implemented]
 As a user, I want the strongest examples placed where they influence generation most, so that ordering — which research shows can swing few-shot output quality substantially — is a choice rather than an accident.
 
 Acceptance criteria:
 - The most relevant exemplar is placed closest to the instruction (last in the prompt)
 - The ordering rule lives in one place in the prompt-assembly code and is covered by a test
 
-### 8.9 Critique the outline before writing [Gap]
+### 8.9 Critique the outline before writing [Implemented]
 As a user, I want the outline reviewed and revised before any section is written, so that the plan every section inherits is checked for arc, escalation, pacing, and brief coverage at the moment it is cheapest to fix.
 
 Notes: the outline is the highest-leverage artifact in the pipeline — sections cannot see forward, so structural flaws in the outline propagate everywhere. One extra call against the brief and style rules costs far less than the section-level critique pass (8.5).
@@ -400,7 +400,7 @@ Acceptance criteria:
 - The revised outline replaces generation 0 before section writing begins
 - The step is skippable via the same setting surface as the review pass
 
-### 8.10 Let sections see what comes next [Gap]
+### 8.10 Let sections see what comes next [Implemented]
 As a user, I want each section written with awareness of the upcoming sections, so that the script can plant setups and callbacks instead of only reacting to what came before.
 
 Notes: the outline already contains every section's title and summary; this is a prompt change, not a pipeline change.
@@ -409,7 +409,7 @@ Acceptance criteria:
 - The section prompt includes the outline entries for upcoming sections alongside prior content
 - Token budgeting accounts for the added context
 
-### 8.11 See which examples earn their place [Gap]
+### 8.11 See which examples earn their place [Implemented]
 As a user curating a corpus, I want to see how often each example is actually selected for generations, so that I can prune dead weight and learn what makes an example useful.
 
 Notes: per-generation traceability of selected examples already exists; this surfaces it in aggregate on the examples page.
@@ -418,7 +418,7 @@ Acceptance criteria:
 - Each example on the examples page shows how many generations it has been selected for
 - Counts persist with the corpus and survive export/import
 
-### 8.12 Understand what a script cost [Gap]
+### 8.12 Understand what a script cost [Implemented]
 As a user paying per token, I want a running estimate of tokens spent (and approximate cost for the selected model) per script, so that I can weigh refinement and regeneration against my budget — especially on OpenRouter where model prices vary widely.
 
 Acceptance criteria:
@@ -426,7 +426,7 @@ Acceptance criteria:
 - Where the model's pricing is known, an approximate cost is shown alongside
 - Estimates are labelled as estimates
 
-### 8.13 Keep conversation history well-formed [Gap]
+### 8.13 Keep conversation history well-formed [Implemented]
 As the maintainer, I want the flattened history sent to providers to contain exactly one system message with refinement instructions expressed as user turns, so that provider behaviour is predictable and context is not wasted.
 
 Acceptance criteria:
