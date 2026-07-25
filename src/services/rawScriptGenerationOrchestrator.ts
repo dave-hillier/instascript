@@ -721,6 +721,20 @@ export class RawScriptGenerationOrchestrator {
       this.persistConversation(conversationId)
 
     } catch (error) {
+      // The user stopped the regeneration: keep what streamed in and settle
+      // quietly instead of surfacing an error banner
+      if (abortSignal?.aborted) {
+        this.callbacks.dispatch({
+          type: 'SET_GENERATION_PROGRESS',
+          conversationId,
+          isComplete: true,
+          sectionTitle: request.sectionTitle
+        })
+
+        this.persistConversation(conversationId)
+        return
+      }
+
       console.error('Section regeneration error:', error)
 
       this.callbacks.dispatch({

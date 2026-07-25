@@ -31,6 +31,11 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<RawConversation | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  // The in-flight run, wrapped so awaiting it never rejects. Starting a new
+  // run first aborts and awaits the previous one so its asynchronous abort
+  // cleanup dispatches settle before the new run claims the singleton
+  // currentGeneration/generationMachine state
+  const activeRunRef = useRef<Promise<void> | null>(null)
   // Ref that always points to the latest conversations state, avoiding stale closures
   // in long-running async callbacks (streaming can take seconds)
   const conversationsRef = useRef(state.conversations)
@@ -43,6 +48,19 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     }
   }, [])
 
+  // Aborts any existing run and waits until it has fully settled (including
+  // its abort-path cleanup dispatches), then installs a fresh AbortController
+  // for the run about to start
+  const settlePreviousRun = useCallback(async (): Promise<AbortController> => {
+    stopGeneration()
+    if (activeRunRef.current) {
+      await activeRunRef.current
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    return controller
+  }, [stopGeneration])
+
   const buildCallbacks = useCallback((): RawGenerationCallbacks => ({
     dispatch,
     appDispatch,
@@ -53,10 +71,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   // Direct script generation without job processing
   const generateScript = useCallback(async (request: GenerationRequest): Promise<void> => {
-    // Abort any existing generation
-    stopGeneration()
-    const controller = new AbortController()
-    abortControllerRef.current = controller
+    // Abort any existing generation and wait for it to settle first
+    const controller = await settlePreviousRun()
 
     // Find conversation - first check pending, then current state
     let conversation: RawConversation | undefined
@@ -73,25 +89,30 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       exampleService
     }
 
+    const orchestrator = new RawScriptGenerationOrchestrator(
+      services,
+      buildCallbacks(),
+      { reviewPassEnabled: isReviewPassEnabled() }
+    )
+    const run = orchestrator.generateScript(request, conversation, controller.signal)
+    const tracked = run.catch(() => {})
+    activeRunRef.current = tracked
+
     try {
-      const orchestrator = new RawScriptGenerationOrchestrator(
-        services,
-        buildCallbacks(),
-        { reviewPassEnabled: isReviewPassEnabled() }
-      )
-      await orchestrator.generateScript(request, conversation, controller.signal)
+      await run
     } finally {
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null
       }
+      if (activeRunRef.current === tracked) {
+        activeRunRef.current = null
+      }
     }
-  }, [scriptService, exampleService, stopGeneration, buildCallbacks])
+  }, [scriptService, exampleService, settlePreviousRun, buildCallbacks])
 
   const regenerateSection = useCallback(async (request: SectionRegenerationRequest): Promise<void> => {
-    // Abort any existing generation
-    stopGeneration()
-    const controller = new AbortController()
-    abortControllerRef.current = controller
+    // Abort any existing generation and wait for it to settle first
+    const controller = await settlePreviousRun()
 
     // Find conversation in current state
     const conversation = conversationsRef.current.find(c => c.id === request.conversationId)
@@ -118,21 +139,26 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       exampleService
     }
 
+    const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+    const run = orchestrator.regenerateSection(regenerationRequest, conversation, controller.signal)
+    const tracked = run.catch(() => {})
+    activeRunRef.current = tracked
+
     try {
-      const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
-      await orchestrator.regenerateSection(regenerationRequest, conversation, controller.signal)
+      await run
     } finally {
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null
       }
+      if (activeRunRef.current === tracked) {
+        activeRunRef.current = null
+      }
     }
-  }, [scriptService, exampleService, stopGeneration, buildCallbacks])
+  }, [scriptService, exampleService, settlePreviousRun, buildCallbacks])
 
   const refineScript = useCallback(async (request: ScriptRefinementRequest): Promise<void> => {
-    // Abort any existing generation
-    stopGeneration()
-    const controller = new AbortController()
-    abortControllerRef.current = controller
+    // Abort any existing generation and wait for it to settle first
+    const controller = await settlePreviousRun()
 
     // Find conversation in current state
     const conversation = conversationsRef.current.find(c => c.id === request.conversationId)
@@ -147,19 +173,26 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       exampleService
     }
 
+    const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+    const run = orchestrator.refineScript(
+      { prompt, conversationId: request.conversationId },
+      conversation,
+      controller.signal
+    )
+    const tracked = run.catch(() => {})
+    activeRunRef.current = tracked
+
     try {
-      const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
-      await orchestrator.refineScript(
-        { prompt, conversationId: request.conversationId },
-        conversation,
-        controller.signal
-      )
+      await run
     } finally {
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null
       }
+      if (activeRunRef.current === tracked) {
+        activeRunRef.current = null
+      }
     }
-  }, [scriptService, exampleService, stopGeneration, buildCallbacks])
+  }, [scriptService, exampleService, settlePreviousRun, buildCallbacks])
 
 
   // Persists a manual section edit as a completed generation of its own

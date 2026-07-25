@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { findResumeState } from '../rawScriptGenerationOrchestrator'
+import { findResumeState, RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestrator'
+import type { RawScriptServices, RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
+import type { RawConversationAction } from '../../reducers/rawConversationReducer'
 import type { RawConversation, Generation } from '../../types/conversation'
 
 const makeGeneration = (response: string): Generation => ({
@@ -98,5 +100,91 @@ describe('findResumeState', () => {
     expect(resume?.outline.title).toBe('Quiet Descent')
     expect(resume?.sectionTexts.get('Arrival')).toBe('New run content.')
     expect(resume?.sectionTexts.has('Induction')).toBe(false)
+  })
+})
+
+describe('regenerateSection abort handling', () => {
+  const setup = (stream: (signal?: AbortSignal) => AsyncIterable<string>) => {
+    const dispatched: RawConversationAction[] = []
+    const conversation = makeConversation([outlineText, '## Induction\nOld text.'])
+
+    const services: RawScriptServices = {
+      scriptService: {
+        generateScript: () => stream(),
+        regenerateSection: (_request, _messages, abortSignal) => stream(abortSignal)
+      },
+      exampleService: {
+        searchExamples: async () => []
+      }
+    }
+
+    const callbacks: RawGenerationCallbacks = {
+      dispatch: action => { dispatched.push(action) },
+      appDispatch: () => {},
+      saveConversation: () => {},
+      getConversation: () => conversation
+    }
+
+    return {
+      dispatched,
+      conversation,
+      orchestrator: new RawScriptGenerationOrchestrator(services, callbacks)
+    }
+  }
+
+  it('settles quietly without an error when the user aborts mid-stream', async () => {
+    const controller = new AbortController()
+
+    async function* abortedStream(): AsyncIterable<string> {
+      yield 'A calm opening line. '
+      controller.abort()
+      yield 'This chunk arrives after the abort.'
+    }
+
+    const { dispatched, conversation, orchestrator } = setup(() => abortedStream())
+
+    await expect(
+      orchestrator.regenerateSection(
+        { prompt: 'Rewrite it', conversationId: conversation.id, sectionTitle: 'Induction' },
+        conversation,
+        controller.signal
+      )
+    ).resolves.toBeUndefined()
+
+    const progressActions = dispatched.filter(
+      action => action.type === 'SET_GENERATION_PROGRESS'
+    )
+    const final = progressActions[progressActions.length - 1]
+    expect(final).toMatchObject({
+      isComplete: true,
+      sectionTitle: 'Induction'
+    })
+    expect(final.type === 'SET_GENERATION_PROGRESS' && final.error).toBeUndefined()
+  })
+
+  it('still surfaces an error when the stream fails without an abort', async () => {
+    async function* failingStream(): AsyncIterable<string> {
+      yield 'A calm opening line. '
+      throw new Error('Provider exploded')
+    }
+
+    const { dispatched, conversation, orchestrator } = setup(() => failingStream())
+
+    await expect(
+      orchestrator.regenerateSection(
+        { prompt: 'Rewrite it', conversationId: conversation.id, sectionTitle: 'Induction' },
+        conversation,
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Provider exploded')
+
+    const progressActions = dispatched.filter(
+      action => action.type === 'SET_GENERATION_PROGRESS'
+    )
+    const final = progressActions[progressActions.length - 1]
+    expect(final).toMatchObject({
+      isComplete: true,
+      error: 'Provider exploded'
+    })
   })
 })
