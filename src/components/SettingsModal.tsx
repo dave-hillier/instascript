@@ -24,7 +24,8 @@ type SettingsModalProps = {
   openRouterApiKey: string
   apiProvider: APIProvider
   model: string
-  onSave: (apiKey: string, openRouterApiKey: string, apiProvider: APIProvider, model: string) => void
+  reviewPass: boolean
+  onSave: (apiKey: string, openRouterApiKey: string, apiProvider: APIProvider, model: string, reviewPass: boolean) => void
   onClearConversations: () => void
 }
 
@@ -37,6 +38,7 @@ export const SettingsModal = ({
   openRouterApiKey,
   apiProvider,
   model,
+  reviewPass,
   onSave,
   onClearConversations
 }: SettingsModalProps) => {
@@ -46,6 +48,7 @@ export const SettingsModal = ({
   const [tempApiProvider, setTempApiProvider] = useState<APIProvider>(apiProvider || 'mock')
   const [tempModel, setTempModel] = useState(model || 'gpt-5')
   const [customModel, setCustomModel] = useState('')
+  const [tempReviewPass, setTempReviewPass] = useState(reviewPass)
 
   // Initialize temp values when modal opens
   useEffect(() => {
@@ -55,8 +58,9 @@ export const SettingsModal = ({
       setTempApiProvider(apiProvider || 'mock')
       setTempModel(model || 'gpt-5')
       setCustomModel('')
+      setTempReviewPass(reviewPass)
     }
-  }, [isOpen, apiKey, openRouterApiKey, apiProvider, model])
+  }, [isOpen, apiKey, openRouterApiKey, apiProvider, model, reviewPass])
 
   // Open/close modal based on isOpen prop
   useEffect(() => {
@@ -69,7 +73,7 @@ export const SettingsModal = ({
 
   const handleSave = () => {
     const finalModel = tempModel === 'custom' ? customModel.trim() : tempModel
-    onSave(tempApiKey.trim(), tempOpenRouterApiKey.trim(), tempApiProvider, finalModel)
+    onSave(tempApiKey.trim(), tempOpenRouterApiKey.trim(), tempApiProvider, finalModel, tempReviewPass)
     onClose()
   }
 
@@ -252,6 +256,26 @@ export const SettingsModal = ({
               )}
             </>
           )}
+        </fieldset>
+
+        <fieldset>
+          <legend className="sr-only">Generation Quality</legend>
+
+          <label className="checkbox-field" htmlFor="review-pass">
+            <input
+              type="checkbox"
+              id="review-pass"
+              checked={tempReviewPass}
+              onChange={(e) => setTempReviewPass(e.target.checked)}
+              aria-describedby="review-pass-help"
+            />
+            <span>Review pass</span>
+          </label>
+          <p id="review-pass-help">
+            After each generation, one extra request reviews the script against
+            the style rules and rewrites up to two violating sections — adds
+            cost and latency
+          </p>
         </fieldset>
 
         <fieldset>

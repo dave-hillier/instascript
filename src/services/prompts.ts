@@ -3,6 +3,7 @@ import sectionRegenerationPrompt from '../prompts/section-regeneration.txt?raw'
 import outlineGenerationPrompt from '../prompts/outline-generation.txt?raw'
 import sectionGenerationPrompt from '../prompts/section-generation.txt?raw'
 import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
+import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -102,6 +103,22 @@ export function buildSectionRegenerationPromptFromConversation(
     nextSection: index >= 0 && index < sections.length - 1 ? sections[index + 1] : undefined,
     instruction
   })
+}
+
+// The numbered style rules as written in hypnosis-system.txt — the single
+// source of truth shared by generation and the style-review pass (story 8.5)
+export function getStyleRules(): string {
+  const index = hypnosisSystemPrompt.indexOf('## Style rules')
+  return (index >= 0 ? hypnosisSystemPrompt.slice(index) : hypnosisSystemPrompt).trim()
+}
+
+// The critique request for the style-review pass: the consolidated script
+// plus the system prompt's own style rules, asking for one strict
+// line-oriented verdict per section
+export function buildStyleCritiquePrompt(script: string): string {
+  return styleCritiquePrompt
+    .replace('{styleRules}', getStyleRules())
+    .replace('{script}', script)
 }
 
 export function getScriptRefinementPrompt(instruction: string): string {

@@ -1,0 +1,14 @@
+Review the hypnosis script below against the numbered style rules. Judge each section strictly.
+
+{styleRules}
+
+For every "##" section of the script, output exactly one line in one of these two formats:
+
+VERDICT: <section title> | compliant
+VERDICT: <section title> | violates <rule numbers, comma-separated> | <one-line reason>
+
+Output only VERDICT lines, one per section, in script order — no preamble, no commentary, no code fences.
+
+Here is the script to review:
+
+{script}

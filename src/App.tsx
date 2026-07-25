@@ -125,6 +125,16 @@ function AppContent() {
       return 'gpt-5'
     }
   })
+  // Opt-in style-review pass after each full generation (story 8.5)
+  const [reviewPass, setReviewPass] = useState<boolean>(() => {
+    try {
+      const item = window.localStorage.getItem('reviewPass')
+      return item ? JSON.parse(item) === true : false
+    } catch {
+      return false
+    }
+  })
+
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -184,6 +194,15 @@ function AppContent() {
       console.error('Error saving model to localStorage:', error)
     }
   }, [model])
+
+  // Save review pass preference when it changes
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('reviewPass', JSON.stringify(reviewPass))
+    } catch (error) {
+      console.error('Error saving review pass setting to localStorage:', error)
+    }
+  }, [reviewPass])
 
   // Save section titles visibility when it changes
   useEffect(() => {
@@ -253,7 +272,7 @@ function AppContent() {
   }
 
 
-  const handleSaveSettings = (newApiKey: string, newOpenRouterApiKey: string, newApiProvider: APIProvider, newModel: string) => {
+  const handleSaveSettings = (newApiKey: string, newOpenRouterApiKey: string, newApiProvider: APIProvider, newModel: string, newReviewPass: boolean) => {
     if (newApiKey.trim()) {
       setApiKey(newApiKey.trim())
     }
@@ -262,6 +281,7 @@ function AppContent() {
     }
     setApiProvider(newApiProvider)
     setModel(newModel)
+    setReviewPass(newReviewPass)
   }
 
   const handleClearConversations = () => {
@@ -422,6 +442,7 @@ function AppContent() {
         openRouterApiKey={openRouterApiKey || ''}
         apiProvider={apiProvider || 'mock'}
         model={model || 'gpt-5'}
+        reviewPass={reviewPass}
         onSave={handleSaveSettings}
         onClearConversations={handleClearConversations}
       />

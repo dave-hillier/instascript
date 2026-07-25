@@ -7,6 +7,7 @@ import { TokenUsageBar } from '../components/TokenUsageBar'
 import { PerformanceMode } from '../components/PerformanceMode'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
+import { formatReviewSummary } from '../services/critiquePass'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
 
@@ -268,6 +269,7 @@ export const ScriptPage = ({
   const {
     state: conversationState,
     isLoaded: conversationsLoaded,
+    dispatch: conversationDispatch,
     getConversationByScriptId,
     createConversation,
     generateScript,
@@ -290,6 +292,7 @@ export const ScriptPage = ({
   const conversation = script ? getConversationByScriptId(script.id) : undefined
   const currentGeneration = conversationState.currentGeneration
   const generationMachine = conversationState.generationMachine
+  const reviewReport = conversationState.reviewReport
 
   // Get structured document and generation state
   const document = getScriptDocument(conversation, currentGeneration)
@@ -308,11 +311,13 @@ export const ScriptPage = ({
     ? 'Drafting outline...'
     : isThisConversation && generationMachine.phase === 'generating_section'
       ? `Writing section ${generationMachine.currentSectionIndex + 1} of ${generationMachine.totalSections}...`
-      : currentGeneration && !currentGeneration.isComplete
-        ? currentGeneration.sectionTitle
-          ? `Rewriting "${currentGeneration.sectionTitle}"...`
-          : 'Refining script...'
-        : 'Generating...'
+      : isThisConversation && generationMachine.phase === 'reviewing'
+        ? 'Reviewing style...'
+        : currentGeneration && !currentGeneration.isComplete
+          ? currentGeneration.sectionTitle
+            ? `Rewriting "${currentGeneration.sectionTitle}"...`
+            : 'Refining script...'
+          : 'Generating...'
 
 
   // A failed generation stays visible after the generating flag clears
@@ -510,6 +515,27 @@ export const ScriptPage = ({
           >
             <Play size={16} />
             Resume
+          </button>
+        </div>
+      )}
+
+      {reviewReport && conversation &&
+        reviewReport.conversationId === conversation.id &&
+        !generationState.isGenerating && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="generation-notice"
+          data-kind="review"
+        >
+          <p>{formatReviewSummary(reviewReport.revised)}</p>
+          <button
+            onClick={() => conversationDispatch({ type: 'REVIEW_REPORT_DISMISSED' })}
+            aria-label="Dismiss review summary"
+            type="button"
+          >
+            <X size={14} />
+            Dismiss
           </button>
         </div>
       )}

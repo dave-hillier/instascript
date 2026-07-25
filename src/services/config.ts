@@ -50,6 +50,19 @@ export function getModel(): string {
   }
 }
 
+// Whether the optional style-review pass (story 8.5) runs after each full
+// generation. Opt-in, since it adds one critique request plus up to two
+// section regenerations per run.
+export function isReviewPassEnabled(): boolean {
+  try {
+    const item = window.localStorage.getItem('reviewPass')
+    return item ? JSON.parse(item) === true : false
+  } catch (error) {
+    console.warn('Error loading review pass setting from localStorage:', error)
+    return false
+  }
+}
+
 export function createAppConfig(): AppConfig {
   const provider = getApiProvider()
   return {

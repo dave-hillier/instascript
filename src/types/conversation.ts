@@ -91,8 +91,21 @@ export type GenerationPhase =
   | 'idle'
   | 'generating_outline'
   | 'generating_section'
+  | 'reviewing'
   | 'complete'
   | 'error'
+
+// One section rewritten by the style-review pass (story 8.5)
+export interface ReviewRevision {
+  sectionTitle: string
+  ruleNumbers: number[]
+}
+
+// The outcome of a style-review pass, shown on the script page until dismissed
+export interface ReviewReport {
+  conversationId: string
+  revised: ReviewRevision[]
+}
 
 export interface OutlineSection {
   title: string

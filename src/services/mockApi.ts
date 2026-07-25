@@ -1,6 +1,7 @@
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
+import { STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 
 export class MockAPIService implements ScriptGenerationService {
   constructor() {
@@ -219,6 +220,53 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
       .join('\n\n')
   }
 
+  // A plausible style-critique response (story 8.5): one VERDICT line per
+  // section of the script under review, with a couple of violations so the
+  // revision flow can be exercised, plus a stray commentary line the parser
+  // must skip
+  private generateCritiqueContent(prompt: string): string {
+    // Only parse "##" headings after the review marker so the style-rules
+    // heading in the prompt itself is not mistaken for a script section
+    const marker = 'Here is the script to review:'
+    const markerIndex = prompt.indexOf(marker)
+    const scriptText = markerIndex >= 0 ? prompt.slice(markerIndex + marker.length) : prompt
+
+    const titles: string[] = []
+    for (const line of scriptText.split('\n')) {
+      const match = line.match(/^##\s+(.+?)\s*$/)
+      if (match && !titles.includes(match[1])) {
+        titles.push(match[1])
+      }
+    }
+
+    if (titles.length === 0) {
+      return 'VERDICT: Script | compliant'
+    }
+
+    const violations = new Map<string, { rules: number[]; reason: string }>()
+    if (titles.length > 1) {
+      violations.set(titles[1], {
+        rules: [6],
+        reason: 'Leans on a cliched nature visualisation instead of voice and breath.'
+      })
+    }
+    if (titles.length > 2) {
+      violations.set(titles[titles.length - 1], {
+        rules: [9],
+        reason: 'Uses negations ("do not resist") instead of affirmative phrasing.'
+      })
+    }
+
+    const verdictLines = titles.map(title => {
+      const violation = violations.get(title)
+      return violation
+        ? `VERDICT: ${title} | violates ${violation.rules.join(', ')} | ${violation.reason}`
+        : `VERDICT: ${title} | compliant`
+    })
+
+    return ['Here is my review of the script:', ...verdictLines].join('\n')
+  }
+
   async *regenerateSection(
     request: RegenerationRequest,
     messages: ChatMessage[],
@@ -227,12 +275,15 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
     await this.delay(300, 800)
     if (abortSignal?.aborted) return
 
+    // The style-review marker asks for a critique of the submitted script.
     // An empty section title marks a whole-script refinement: respond with
     // full "## Section" blocks for the sections that change.
     // Otherwise generate ~400 word section content (no header - orchestrator adds ## Title)
-    const content = request.sectionTitle === ''
-      ? this.generateRefinementContent(messages)
-      : this.generateSectionContent(request.sectionTitle)
+    const content = request.sectionTitle === STYLE_REVIEW_SECTION_TITLE
+      ? this.generateCritiqueContent(request.prompt)
+      : request.sectionTitle === ''
+        ? this.generateRefinementContent(messages)
+        : this.generateSectionContent(request.sectionTitle)
     yield* this.streamContent(content, abortSignal)
   }
 }

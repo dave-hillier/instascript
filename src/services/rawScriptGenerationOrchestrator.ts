@@ -1,12 +1,13 @@
-import type { RawConversation, GenerationRequest, RegenerationRequest, RefinementRequest, ChatMessage, ScriptOutline } from '../types/conversation'
+import type { RawConversation, GenerationRequest, RegenerationRequest, RefinementRequest, ChatMessage, ReviewRevision, ScriptOutline } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
-import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt } from './prompts'
+import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildSectionRegenerationPromptFromConversation } from './prompts'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
-import { parseOutline, ensureSectionHeading } from './conversationDocument'
+import { parseOutline, ensureSectionHeading, consolidateSections } from './conversationDocument'
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
+import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 
 export interface RawScriptServices {
   scriptService: {
@@ -33,6 +34,19 @@ export interface RawGenerationCallbacks {
   appDispatch: (action: { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }) => void
   saveConversation: (conversation: RawConversation) => void
   getConversation: (conversationId: string) => RawConversation | undefined
+}
+
+export interface RawGenerationOptions {
+  // When true, a full generation ends with a style-review pass (story 8.5)
+  reviewPassEnabled?: boolean
+}
+
+interface ReviewPassResult {
+  // True when the critique request completed, so the outcome can be reported
+  ran: boolean
+  revised: ReviewRevision[]
+  // The consolidated script including revised sections, when any were revised
+  updatedContent?: string
 }
 
 interface ResumeState {
@@ -81,6 +95,7 @@ export function findResumeState(conversation: RawConversation): ResumeState | nu
 export class RawScriptGenerationOrchestrator {
   private services: RawScriptServices
   private callbacks: RawGenerationCallbacks
+  private options: RawGenerationOptions
   private activeGenerations = new Set<string>()
   private completedGenerations = new Set<string>()
   private lastSaveTime = 0
@@ -88,10 +103,12 @@ export class RawScriptGenerationOrchestrator {
 
   constructor(
     services: RawScriptServices,
-    callbacks: RawGenerationCallbacks
+    callbacks: RawGenerationCallbacks,
+    options: RawGenerationOptions = {}
   ) {
     this.services = services
     this.callbacks = callbacks
+    this.options = options
   }
 
   private async retrieveExamples(
@@ -405,6 +422,15 @@ export class RawScriptGenerationOrchestrator {
         this.persistConversation(conversationId)
       }
 
+      // --- Phase 2.5: optional style-review pass (story 8.5) ---
+      let reviewResult: ReviewPassResult | null = null
+      if (this.options.reviewPassEnabled) {
+        reviewResult = await this.runReviewPass(conversation, outline, scriptContent, abortSignal)
+        if (reviewResult.updatedContent) {
+          scriptContent = reviewResult.updatedContent
+        }
+      }
+
       // --- Phase 3: Complete ---
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PHASE',
@@ -422,7 +448,11 @@ export class RawScriptGenerationOrchestrator {
         isComplete: true
       })
 
-      const totalWords = sectionWordCounts.reduce((sum, count) => sum + count, 0)
+      // Revised sections change the totals, so count from the final content
+      const totalWords = scriptContent
+        .split('\n')
+        .filter(line => !/^#{1,2}\s/.test(line))
+        .reduce((sum, line) => sum + countWords(line), 0)
       this.callbacks.appDispatch({
         type: 'UPDATE_SCRIPT',
         scriptId: conversation.scriptId,
@@ -433,6 +463,13 @@ export class RawScriptGenerationOrchestrator {
           length: formatScriptLength(totalWords)
         }
       })
+
+      if (reviewResult?.ran) {
+        this.callbacks.dispatch({
+          type: 'REVIEW_PASS_COMPLETED',
+          report: { conversationId, revised: reviewResult.revised }
+        })
+      }
 
       this.persistConversation(conversationId)
 
@@ -488,6 +525,119 @@ export class RawScriptGenerationOrchestrator {
       throw error
     } finally {
       this.activeGenerations.delete(generationKey)
+    }
+  }
+
+  // Style-review pass (story 8.5): one critique request checks the finished
+  // script against the style rules, then up to MAX_REVIEW_REVISIONS violating
+  // sections are regenerated once each through the ordinary
+  // section-regeneration path with the violation as the instruction. A
+  // failed or stopped review never fails the completed generation.
+  private async runReviewPass(
+    conversation: RawConversation,
+    outline: ScriptOutline,
+    scriptContent: string,
+    abortSignal?: AbortSignal
+  ): Promise<ReviewPassResult> {
+    const conversationId = conversation.id
+    const revised: ReviewRevision[] = []
+
+    try {
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PHASE',
+        conversationId,
+        phase: 'reviewing',
+        outline,
+        currentSectionIndex: outline.sections.length,
+        totalSections: outline.sections.length
+      })
+
+      // Clear the last section's title from progress so the streaming
+      // critique text is not mistaken for live section content
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: false
+      })
+
+      const critiquePrompt = buildStyleCritiquePrompt(scriptContent)
+      const critiqueMessages: ChatMessage[] = [{ role: 'user', content: critiquePrompt }]
+
+      this.callbacks.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages: critiqueMessages
+      })
+
+      const critiqueStream = this.services.scriptService.regenerateSection(
+        { prompt: critiquePrompt, conversationId, sectionTitle: STYLE_REVIEW_SECTION_TITLE },
+        critiqueMessages,
+        abortSignal
+      )
+
+      const critiqueText = await this.streamToString(
+        critiqueStream,
+        conversationId,
+        abortSignal,
+        (accumulated) => {
+          this.callbacks.dispatch({
+            type: 'UPDATE_CURRENT_GENERATION',
+            conversationId,
+            response: accumulated
+          })
+        }
+      )
+
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: critiqueText
+      })
+
+      this.persistConversation(conversationId)
+
+      const verdicts = parseCritiqueResponse(critiqueText)
+      const violations = selectViolationsToRevise(
+        verdicts,
+        outline.sections.map(section => section.title)
+      )
+
+      for (const violation of violations) {
+        if (abortSignal?.aborted) throw new Error('Generation aborted')
+
+        const current = this.callbacks.getConversation(conversationId) ?? conversation
+        const prompt = buildSectionRegenerationPromptFromConversation(
+          current,
+          violation.sectionTitle,
+          buildRevisionInstruction(violation)
+        )
+
+        await this.regenerateSection(
+          { prompt, conversationId, sectionTitle: violation.sectionTitle },
+          current,
+          abortSignal
+        )
+
+        revised.push({
+          sectionTitle: violation.sectionTitle,
+          ruleNumbers: violation.ruleNumbers
+        })
+      }
+
+      const updated = this.callbacks.getConversation(conversationId)
+      const updatedContent = updated && revised.length > 0
+        ? `# ${outline.title}` +
+          consolidateSections(updated)
+            .map(section => `\n\n## ${section.title}\n${section.content}`)
+            .join('')
+        : undefined
+
+      return { ran: true, revised, updatedContent }
+    } catch (error) {
+      if (!abortSignal?.aborted) {
+        console.warn('Style review pass failed; keeping the generated script as-is', error)
+      }
+      return { ran: false, revised }
     }
   }
 

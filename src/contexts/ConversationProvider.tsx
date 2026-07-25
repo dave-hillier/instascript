@@ -12,6 +12,7 @@ import { loadStoredConversations, saveStoredConversation, createRawConversation,
 import { ensureSectionHeading } from '../services/conversationDocument'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 import { buildSectionRegenerationPromptFromConversation, getScriptRefinementPrompt } from '../services/prompts'
+import { isReviewPassEnabled } from '../services/config'
 
 type ConversationProviderProps = {
   children: ReactNode
@@ -21,7 +22,8 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const [state, dispatch] = useReducer(rawConversationReducer, {
     conversations: [],
     currentGeneration: null,
-    generationMachine: null
+    generationMachine: null,
+    reviewReport: null
   })
 
   const [isLoaded, setIsLoaded] = useState(false)
@@ -72,7 +74,11 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     }
 
     try {
-      const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+      const orchestrator = new RawScriptGenerationOrchestrator(
+        services,
+        buildCallbacks(),
+        { reviewPassEnabled: isReviewPassEnabled() }
+      )
       await orchestrator.generateScript(request, conversation, controller.signal)
     } finally {
       if (abortControllerRef.current === controller) {

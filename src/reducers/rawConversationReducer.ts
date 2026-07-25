@@ -1,4 +1,4 @@
-import type { RawConversation, ChatMessage, Generation, GenerationPhase, ScriptOutline } from '../types/conversation'
+import type { RawConversation, ChatMessage, Generation, GenerationPhase, ReviewReport, ScriptOutline } from '../types/conversation'
 
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
@@ -11,6 +11,8 @@ export type RawConversationAction =
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
   | { type: 'SET_GENERATION_PROGRESS'; conversationId: string; isComplete: boolean; error?: string; sectionTitle?: string }
   | { type: 'SET_GENERATION_PHASE'; conversationId: string; phase: GenerationPhase; outline?: ScriptOutline; currentSectionIndex?: number; totalSections?: number; sectionWordCounts?: number[]; error?: string }
+  | { type: 'REVIEW_PASS_COMPLETED'; report: ReviewReport }
+  | { type: 'REVIEW_REPORT_DISMISSED' }
 
 export type RawConversationState = {
   conversations: RawConversation[]
@@ -29,6 +31,8 @@ export type RawConversationState = {
     sectionWordCounts: number[]
     error?: string
   } | null
+  // The outcome of the latest style-review pass (story 8.5), until dismissed
+  reviewReport: ReviewReport | null
 }
 
 export const rawConversationReducer = (
@@ -138,11 +142,13 @@ export const rawConversationReducer = (
 
     case 'GENERATION_RESTARTED':
       // A fresh generation run is starting: clear any completed/errored state
-      // so progress updates for the new run are not blocked or misattributed
+      // so progress updates for the new run are not blocked or misattributed,
+      // and drop a review report that no longer describes the current script
       return {
         ...state,
         currentGeneration: null,
-        generationMachine: null
+        generationMachine: null,
+        reviewReport: null
       }
 
     case 'SET_GENERATION_PROGRESS':
@@ -176,6 +182,12 @@ export const rawConversationReducer = (
           error: action.error
         }
       }
+
+    case 'REVIEW_PASS_COMPLETED':
+      return { ...state, reviewReport: action.report }
+
+    case 'REVIEW_REPORT_DISMISSED':
+      return { ...state, reviewReport: null }
 
     default:
       return state
