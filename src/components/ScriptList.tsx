@@ -31,7 +31,7 @@ export const ScriptList = ({ scripts, showArchived = false }: ScriptListProps) =
           aria-label={`View script: ${script.title}`}
         >
           <h3>{script.title}</h3>
-          <div>{script.createdAt} · Generated Markdown</div>
+          <div>{script.createdAt}</div>
         </Link>
         {script.comments && (
           <div aria-label={`${script.comments} comments`}>{script.comments}</div>
