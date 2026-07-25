@@ -7,6 +7,7 @@ export type RawConversationAction =
   | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
+  | { type: 'GENERATION_RESTARTED'; conversationId: string }
   | { type: 'SET_GENERATION_PROGRESS'; conversationId: string; isComplete: boolean; error?: string; sectionTitle?: string }
   | { type: 'SET_GENERATION_PHASE'; conversationId: string; phase: GenerationPhase; outline?: ScriptOutline; currentSectionIndex?: number; totalSections?: number; sectionWordCounts?: number[]; error?: string }
 
@@ -108,6 +109,15 @@ export const rawConversationReducer = (
       return {
         ...state,
         conversations: state.conversations.filter(conv => conv.id !== action.conversationId)
+      }
+
+    case 'GENERATION_RESTARTED':
+      // A fresh generation run is starting: clear any completed/errored state
+      // so progress updates for the new run are not blocked or misattributed
+      return {
+        ...state,
+        currentGeneration: null,
+        generationMachine: null
       }
 
     case 'SET_GENERATION_PROGRESS':

@@ -4,6 +4,7 @@ import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
 import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt } from './prompts'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
+import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 
 export interface RawScriptServices {
   scriptService: {
@@ -64,8 +65,47 @@ function parseOutline(text: string): ScriptOutline | null {
   return { title, sections }
 }
 
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(w => w.length > 0).length
+interface ResumeState {
+  outline: ScriptOutline
+  outlineText: string
+  sectionTexts: Map<string, string>
+}
+
+// Inspect an existing conversation for a usable outline and already-generated
+// sections, so an interrupted or failed run can pick up where it left off
+// instead of starting over. Exported for unit testing.
+export function findResumeState(conversation: RawConversation): ResumeState | null {
+  let outline: ScriptOutline | null = null
+  let outlineText = ''
+  let outlineIndex = -1
+
+  for (let i = 0; i < conversation.generations.length; i++) {
+    const parsed = parseOutline(conversation.generations[i].response)
+    if (parsed) {
+      outline = parsed
+      outlineText = conversation.generations[i].response
+      outlineIndex = i
+    }
+  }
+
+  if (!outline) return null
+
+  // An outline that is the conversation's last generation may itself be
+  // truncated (interrupted mid-stream) even though it parses — a shortened
+  // plan would silently produce a shorter script. Only trust an outline the
+  // run demonstrably moved past: section generation starts a new entry, so a
+  // later generation proves the outline finished streaming.
+  if (outlineIndex === conversation.generations.length - 1) return null
+
+  const sectionTexts = new Map<string, string>()
+  for (let i = outlineIndex + 1; i < conversation.generations.length; i++) {
+    const match = conversation.generations[i].response.match(/^##\s+(.+?)\s*\n([\s\S]*)$/)
+    if (match && match[2].trim()) {
+      sectionTexts.set(match[1].trim(), match[2].trim())
+    }
+  }
+
+  return { outline, outlineText, sectionTexts }
 }
 
 export class RawScriptGenerationOrchestrator {
@@ -161,91 +201,127 @@ export class RawScriptGenerationOrchestrator {
     this.activeGenerations.add(generationKey)
 
     try {
+      // A fresh run (first attempt, retry or resume) owns generation state from here
+      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+      this.callbacks.appDispatch({
+        type: 'UPDATE_SCRIPT',
+        scriptId: conversation.scriptId,
+        updates: { status: 'in-progress' }
+      })
+
       // Retrieve examples upfront
       const examples = await this.retrieveExamples(request, conversation)
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 
-      // --- Phase 1: Generate outline ---
-      this.callbacks.dispatch({
-        type: 'SET_GENERATION_PHASE',
-        conversationId,
-        phase: 'generating_outline',
-        currentSectionIndex: 0,
-        totalSections: 0,
-        sectionWordCounts: []
-      })
+      // Reuse an existing outline and completed sections when retrying/resuming
+      const resume = findResumeState(conversation)
+      let outline: ScriptOutline
+      let outlineText: string
 
-      this.callbacks.dispatch({
-        type: 'SET_GENERATION_PROGRESS',
-        conversationId,
-        isComplete: false
-      })
+      if (resume) {
+        outline = resume.outline
+        outlineText = resume.outlineText
+      } else {
+        // --- Phase 1: Generate outline ---
+        this.callbacks.dispatch({
+          type: 'SET_GENERATION_PHASE',
+          conversationId,
+          phase: 'generating_outline',
+          currentSectionIndex: 0,
+          totalSections: 0,
+          sectionWordCounts: []
+        })
 
-      const outlineUserPrompt = request.prompt + '\n\n' + getOutlineGenerationPrompt()
+        this.callbacks.dispatch({
+          type: 'SET_GENERATION_PROGRESS',
+          conversationId,
+          isComplete: false
+        })
 
-      // Start a generation entry for the outline
-      this.callbacks.dispatch({
-        type: 'START_GENERATION',
-        conversationId,
-        messages: [
-          { role: 'system', content: getSystemPrompt() },
-          { role: 'user', content: outlineUserPrompt }
-        ]
-      })
+        const outlineUserPrompt = request.prompt + '\n\n' + getOutlineGenerationPrompt()
 
-      const outlineStream = this.services.scriptService.generateScript(
-        { ...request, prompt: outlineUserPrompt },
-        [],
-        examples,
-        abortSignal
-      )
+        // Start a generation entry for the outline
+        this.callbacks.dispatch({
+          type: 'START_GENERATION',
+          conversationId,
+          messages: [
+            { role: 'system', content: getSystemPrompt() },
+            { role: 'user', content: outlineUserPrompt }
+          ]
+        })
 
-      const outlineText = await this.streamToString(
-        outlineStream,
-        conversationId,
-        abortSignal,
-        (accumulated) => {
-          this.callbacks.dispatch({
-            type: 'UPDATE_CURRENT_GENERATION',
-            conversationId,
-            response: accumulated
-          })
+        const outlineStream = this.services.scriptService.generateScript(
+          { ...request, prompt: outlineUserPrompt },
+          [],
+          examples,
+          abortSignal
+        )
+
+        outlineText = await this.streamToString(
+          outlineStream,
+          conversationId,
+          abortSignal,
+          (accumulated) => {
+            this.callbacks.dispatch({
+              type: 'UPDATE_CURRENT_GENERATION',
+              conversationId,
+              response: accumulated
+            })
+          }
+        )
+
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: outlineText
+        })
+
+        this.persistConversation(conversationId)
+
+        // Parse the outline
+        const parsedOutline = parseOutline(outlineText)
+        if (!parsedOutline) {
+          throw new Error('Failed to parse outline from LLM response')
         }
-      )
-
-      this.callbacks.dispatch({
-        type: 'COMPLETE_GENERATION',
-        conversationId,
-        response: outlineText
-      })
-
-      this.persistConversation(conversationId)
-
-      // Parse the outline
-      const outline = parseOutline(outlineText)
-      if (!outline) {
-        throw new Error('Failed to parse outline from LLM response')
+        outline = parsedOutline
       }
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 
       // --- Phase 2: Generate sections one at a time ---
       const sectionWordCounts: number[] = []
+      let scriptContent = `# ${outline.title}`
+      let startIndex = 0
+
+      if (resume) {
+        // Keep fully generated sections; redo the last present one since it may
+        // have been cut off mid-stream, then continue with the missing ones
+        let firstMissing = outline.sections.findIndex(
+          section => !resume.sectionTexts.has(section.title)
+        )
+        if (firstMissing === -1) firstMissing = outline.sections.length
+        startIndex = Math.max(0, firstMissing - 1)
+
+        for (let i = 0; i < startIndex; i++) {
+          const section = outline.sections[i]
+          const text = resume.sectionTexts.get(section.title) ?? ''
+          sectionWordCounts.push(countWords(text))
+          scriptContent += `\n\n## ${section.title}\n${text}`
+        }
+      }
 
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PHASE',
         conversationId,
         phase: 'generating_section',
         outline,
-        currentSectionIndex: 0,
+        currentSectionIndex: startIndex,
         totalSections: outline.sections.length,
-        sectionWordCounts
+        sectionWordCounts: [...sectionWordCounts]
       })
 
-      let scriptContent = `# ${outline.title}`
-
-      for (let i = 0; i < outline.sections.length; i++) {
+      for (let i = startIndex; i < outline.sections.length; i++) {
         if (abortSignal?.aborted) throw new Error('Generation aborted')
 
         const section = outline.sections[i]
@@ -343,9 +419,45 @@ export class RawScriptGenerationOrchestrator {
         isComplete: true
       })
 
+      const totalWords = sectionWordCounts.reduce((sum, count) => sum + count, 0)
+      this.callbacks.appDispatch({
+        type: 'UPDATE_SCRIPT',
+        scriptId: conversation.scriptId,
+        updates: {
+          status: 'complete',
+          title: outline.title,
+          content: scriptContent,
+          length: formatScriptLength(totalWords)
+        }
+      })
+
       this.persistConversation(conversationId)
 
     } catch (error) {
+      // The user stopped the generation: keep what streamed in and settle as a draft
+      if (abortSignal?.aborted) {
+        this.callbacks.dispatch({
+          type: 'SET_GENERATION_PHASE',
+          conversationId,
+          phase: 'idle'
+        })
+
+        this.callbacks.dispatch({
+          type: 'SET_GENERATION_PROGRESS',
+          conversationId,
+          isComplete: true
+        })
+
+        this.callbacks.appDispatch({
+          type: 'UPDATE_SCRIPT',
+          scriptId: conversation.scriptId,
+          updates: { status: 'draft' }
+        })
+
+        this.persistConversation(conversationId)
+        return
+      }
+
       console.error('Script generation error:', error)
 
       this.callbacks.dispatch({
@@ -361,6 +473,14 @@ export class RawScriptGenerationOrchestrator {
         isComplete: true,
         error: error instanceof Error ? error.message : 'Unknown error'
       })
+
+      this.callbacks.appDispatch({
+        type: 'UPDATE_SCRIPT',
+        scriptId: conversation.scriptId,
+        updates: { status: 'draft' }
+      })
+
+      this.persistConversation(conversationId)
 
       throw error
     } finally {

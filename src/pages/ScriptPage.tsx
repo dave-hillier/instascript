@@ -1,8 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Play, RotateCcw } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
+import { extractDocumentTitle } from '../utils/scriptMetrics'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
 
@@ -94,15 +95,21 @@ const getScriptDocument = (
     }
   }
 
-  // First generation is the outline - extract title from it
-  const outlineGeneration = conversation.generations[0]
-  const { title: documentTitle } = parseSections(outlineGeneration.response)
-
-  // Subsequent generations are individual sections
+  // Outline generations start with a document-level "# Title" heading; section
+  // generations start with "## Section". A retried conversation can contain a
+  // fresh outline after earlier sections, so the last outline's title wins and
+  // outline bodies (plans, not script prose) are excluded from consolidation.
+  let documentTitle: string | undefined
   const consolidatedSections: ScriptDocumentSection[] = []
 
-  for (let i = 1; i < conversation.generations.length; i++) {
-    const generation = conversation.generations[i]
+  for (const generation of conversation.generations) {
+    const isOutline = /^#(?!#)/.test(generation.response.trimStart())
+
+    if (isOutline) {
+      documentTitle = extractDocumentTitle(generation.response) ?? documentTitle
+      continue
+    }
+
     const { sections: genSections } = parseSections(generation.response)
 
     for (const section of genSections) {
@@ -249,7 +256,14 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state } = useAppContext()
-  const { state: conversationState, getConversationByScriptId, regenerateSection, stopGeneration } = useConversationContext()
+  const {
+    state: conversationState,
+    getConversationByScriptId,
+    createConversation,
+    generateScript,
+    regenerateSection,
+    stopGeneration
+  } = useConversationContext()
 
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -279,6 +293,35 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
             : 'Generating...'
     : 'Generating...'
 
+
+  // A failed generation stays visible after the generating flag clears
+  const persistentErrorMessage = !generationState.isGenerating && conversation
+    ? (generationMachine?.conversationId === conversation.id && generationMachine.phase === 'error'
+        ? generationMachine.error ?? 'Unknown error'
+        : currentGeneration?.conversationId === conversation.id && currentGeneration.error
+          ? currentGeneration.error
+          : undefined)
+    : undefined
+
+  // A script left 'in-progress' by a closed or refreshed tab, with nothing running now
+  const wasInterrupted = script
+    ? state.interruptedScriptIds.includes(script.id) &&
+      !generationState.isGenerating &&
+      !persistentErrorMessage
+    : false
+
+  const handleRetry = async () => {
+    if (!script) return
+
+    const prompt = script.initialPrompt ?? script.title
+    const conversationId = conversation?.id ?? createConversation(script.id).id
+
+    try {
+      await generateScript({ prompt, conversationId })
+    } catch (error) {
+      console.error('Error retrying generation:', error)
+    }
+  }
 
   const handleRegenerateSection = async (sectionTitle: string) => {
     if (!script || !conversation) return
@@ -328,6 +371,39 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
           {generationState.error && (
             <p role="alert">Error: {generationState.error}</p>
           )}
+        </div>
+      )}
+
+      {persistentErrorMessage && (
+        <div role="alert" className="generation-notice" data-kind="error">
+          <p>
+            <strong>Generation failed.</strong> {persistentErrorMessage}
+          </p>
+          <button
+            onClick={handleRetry}
+            aria-label="Retry script generation"
+            type="button"
+          >
+            <RotateCcw size={16} />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {wasInterrupted && (
+        <div role="status" className="generation-notice" data-kind="interrupted">
+          <p>
+            This generation was interrupted before it finished. Everything
+            written so far is saved.
+          </p>
+          <button
+            onClick={handleRetry}
+            aria-label="Resume script generation"
+            type="button"
+          >
+            <Play size={16} />
+            Resume
+          </button>
         </div>
       )}
 

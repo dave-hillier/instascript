@@ -2,27 +2,25 @@ import { useReducer, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Script } from '../types/script'
 import { AppContext } from './AppContext'
-import type { AppContextType } from './AppContext'
+import type { AppContextType, AppAction, AppState } from './AppContext'
 import { parseScriptFromYamlMarkdown, serializeScriptToYamlMarkdown, migrateScriptsToYamlMarkdown } from '../services/scriptParser'
-
-type AppAction = 
-  | { type: 'LOAD_SCRIPTS'; scripts: Script[] }
-  | { type: 'ARCHIVE_SCRIPT'; scriptId: string }
-  | { type: 'DELETE_SCRIPT'; scriptId: string }
-  | { type: 'ADD_SCRIPT'; script: Script }
-  | { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }
-  | { type: 'SET_HOVER'; scriptId: string | null }
-  | { type: 'CLEAR_SCRIPTS' }
-
-type AppState = {
-  scripts: Script[]
-  hoveredScript: string | null
-}
 
 const appReducer = (state: AppState, action: AppAction): AppState => {
   switch (action.type) {
-    case 'LOAD_SCRIPTS':
-      return { ...state, scripts: action.scripts }
+    case 'LOAD_SCRIPTS': {
+      // A script still marked 'in-progress' at load time was interrupted
+      // (e.g. the page was closed mid-stream): reconcile it to 'draft' and
+      // remember it so the script page can offer to resume
+      const interruptedScriptIds = action.scripts
+        .filter(script => script.status === 'in-progress')
+        .map(script => script.id)
+      const scripts = action.scripts.map(script =>
+        script.status === 'in-progress'
+          ? { ...script, status: 'draft' as const }
+          : script
+      )
+      return { ...state, scripts, interruptedScriptIds }
+    }
     case 'ARCHIVE_SCRIPT':
       return {
         ...state,
@@ -35,7 +33,8 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'DELETE_SCRIPT':
       return {
         ...state,
-        scripts: state.scripts.filter(script => script.id !== action.scriptId)
+        scripts: state.scripts.filter(script => script.id !== action.scriptId),
+        interruptedScriptIds: state.interruptedScriptIds.filter(id => id !== action.scriptId)
       }
     case 'ADD_SCRIPT':
       return {
@@ -49,12 +48,17 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
           script.id === action.scriptId
             ? { ...script, ...action.updates }
             : script
-        )
+        ),
+        // Any explicit status transition means the script is no longer
+        // waiting as interrupted
+        interruptedScriptIds: action.updates.status !== undefined
+          ? state.interruptedScriptIds.filter(id => id !== action.scriptId)
+          : state.interruptedScriptIds
       }
     case 'SET_HOVER':
       return { ...state, hoveredScript: action.scriptId }
     case 'CLEAR_SCRIPTS':
-      return { ...state, scripts: [] }
+      return { ...state, scripts: [], interruptedScriptIds: [] }
     default:
       return state
   }
@@ -133,7 +137,8 @@ const setStoredScripts = (scripts: Script[]) => {
 export const AppProvider = ({ children }: AppProviderProps) => {
   const [state, dispatch] = useReducer(appReducer, {
     scripts: [],
-    hoveredScript: null
+    hoveredScript: null,
+    interruptedScriptIds: []
   })
 
   const [isLoaded, setIsLoaded] = useState(false)
