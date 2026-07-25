@@ -8,6 +8,7 @@ import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 import { parseOutline, ensureSectionHeading, consolidateSections } from './conversationDocument'
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
+import { KeyedRunGuard } from './runLifecycle'
 
 export interface RawScriptServices {
   scriptService: {
@@ -96,7 +97,7 @@ export class RawScriptGenerationOrchestrator {
   private services: RawScriptServices
   private callbacks: RawGenerationCallbacks
   private options: RawGenerationOptions
-  private activeGenerations = new Set<string>()
+  private activeGenerations = new KeyedRunGuard()
   private completedGenerations = new Set<string>()
   private lastSaveTime = 0
   private saveThrottleMs = 1000
@@ -184,8 +185,7 @@ export class RawScriptGenerationOrchestrator {
     const conversationId = conversation.id
     const generationKey = `${conversationId}-initial`
 
-    if (this.activeGenerations.has(generationKey)) return
-    this.activeGenerations.add(generationKey)
+    if (!this.activeGenerations.tryStart(generationKey)) return
 
     try {
       // A fresh run (first attempt, retry or resume) owns generation state from here
@@ -524,7 +524,7 @@ export class RawScriptGenerationOrchestrator {
 
       throw error
     } finally {
-      this.activeGenerations.delete(generationKey)
+      this.activeGenerations.finish(generationKey)
     }
   }
 
@@ -649,8 +649,7 @@ export class RawScriptGenerationOrchestrator {
     const conversationId = conversation.id
     const generationKey = `${conversationId}-${request.sectionTitle}`
 
-    if (this.activeGenerations.has(generationKey)) return
-    this.activeGenerations.add(generationKey)
+    if (!this.activeGenerations.tryStart(generationKey)) return
 
     try {
       // A fresh regeneration run owns generation state from here; without this
@@ -746,7 +745,7 @@ export class RawScriptGenerationOrchestrator {
 
       throw error
     } finally {
-      this.activeGenerations.delete(generationKey)
+      this.activeGenerations.finish(generationKey)
     }
   }
 
@@ -762,8 +761,7 @@ export class RawScriptGenerationOrchestrator {
     const conversationId = conversation.id
     const generationKey = `${conversationId}-refine`
 
-    if (this.activeGenerations.has(generationKey)) return
-    this.activeGenerations.add(generationKey)
+    if (!this.activeGenerations.tryStart(generationKey)) return
 
     try {
       // A fresh refinement run owns generation state from here
@@ -852,7 +850,7 @@ export class RawScriptGenerationOrchestrator {
 
       throw error
     } finally {
-      this.activeGenerations.delete(generationKey)
+      this.activeGenerations.finish(generationKey)
     }
   }
 }
