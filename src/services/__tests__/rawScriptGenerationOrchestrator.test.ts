@@ -103,6 +103,118 @@ describe('findResumeState', () => {
   })
 })
 
+describe('generateScript resume (story 1.8)', () => {
+  // A body comfortably inside the 250-600 word band, so no quality retry runs
+  const sectionBody = (label: string) =>
+    `${label} ` + Array.from({ length: 300 }, (_, i) => `word${i}`).join(' ')
+
+  const setup = (conversation: RawConversation) => {
+    let outlineCalls = 0
+    const sectionCalls: string[] = []
+    const dispatched: RawConversationAction[] = []
+    const appDispatched: { type: string; updates: { status?: string; content?: string } }[] = []
+
+    const services: RawScriptServices = {
+      scriptService: {
+        generateScript: () => {
+          outlineCalls++
+          return (async function* () { yield outlineText })()
+        },
+        regenerateSection: (request) => {
+          sectionCalls.push(request.sectionTitle)
+          return (async function* () {
+            yield `## ${request.sectionTitle}\n${sectionBody(request.sectionTitle)}`
+          })()
+        }
+      },
+      exampleService: {
+        searchExamples: async () => []
+      }
+    }
+
+    const callbacks: RawGenerationCallbacks = {
+      dispatch: action => { dispatched.push(action) },
+      appDispatch: action => { appDispatched.push(action) },
+      saveConversation: () => {},
+      getConversation: () => conversation
+    }
+
+    return {
+      orchestrator: new RawScriptGenerationOrchestrator(services, callbacks),
+      state: { outlineCalls: () => outlineCalls, sectionCalls, dispatched, appDispatched }
+    }
+  }
+
+  it('with the outline and N complete sections, resumes at section N+1 without regenerating the outline', async () => {
+    // Induction is followed by a later generation, so it is provably complete;
+    // Deepener was interrupted mid-stream and is the first incomplete section
+    const conversation = makeConversation([
+      outlineText,
+      `## Induction\n${sectionBody('Induction')}`,
+      '## Deepener\nOnly a partial line arrived before the interruption.'
+    ])
+    const { orchestrator, state } = setup(conversation)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    expect(state.outlineCalls()).toBe(0)
+    expect(state.sectionCalls).toEqual(['Deepener', 'Awakening'])
+
+    const completion = state.appDispatched.find(a => a.updates.status === 'complete')
+    expect(completion).toBeDefined()
+    // The completed Induction section is kept verbatim, not regenerated
+    expect(completion?.updates.content).toContain(sectionBody('Induction'))
+    expect(completion?.updates.content).toContain(sectionBody('Deepener'))
+    expect(completion?.updates.content).toContain(sectionBody('Awakening'))
+  })
+
+  it('redoes the last persisted section, since without a successor it may be truncated', async () => {
+    const conversation = makeConversation([
+      outlineText,
+      `## Induction\n${sectionBody('Induction')}`
+    ])
+    const { orchestrator, state } = setup(conversation)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    expect(state.outlineCalls()).toBe(0)
+    expect(state.sectionCalls).toEqual(['Induction', 'Deepener', 'Awakening'])
+  })
+
+  it('regenerates everything from scratch when the request asks for a fresh start', async () => {
+    const conversation = makeConversation([
+      outlineText,
+      `## Induction\n${sectionBody('Induction')}`,
+      `## Deepener\n${sectionBody('Deepener')}`
+    ])
+    const { orchestrator, state } = setup(conversation)
+
+    await orchestrator.generateScript(
+      { prompt: 'A deep rest script', fresh: true },
+      conversation
+    )
+
+    expect(
+      state.dispatched.some(action => action.type === 'GENERATIONS_DISCARDED')
+    ).toBe(true)
+    expect(state.outlineCalls()).toBe(1)
+    expect(state.sectionCalls).toEqual(['Induction', 'Deepener', 'Awakening'])
+  })
+
+  it('starts with the outline when there is nothing to resume', async () => {
+    const conversation = makeConversation([])
+    const { orchestrator, state } = setup(conversation)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    expect(state.outlineCalls()).toBe(1)
+    expect(state.sectionCalls).toEqual(['Induction', 'Deepener', 'Awakening'])
+    expect(
+      state.dispatched.some(action => action.type === 'GENERATIONS_DISCARDED')
+    ).toBe(false)
+  })
+})
+
 describe('regenerateSection abort handling', () => {
   const setup = (stream: (signal?: AbortSignal) => AsyncIterable<string>) => {
     const dispatched: RawConversationAction[] = []

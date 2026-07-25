@@ -204,8 +204,19 @@ export class RawScriptGenerationOrchestrator {
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 
+      // An explicit fresh restart (story 1.8) discards the previous outline
+      // and sections so nothing from the abandoned plan survives consolidation
+      if (request.fresh && conversation.generations.length > 0) {
+        this.callbacks.dispatch({ type: 'GENERATIONS_DISCARDED', conversationId })
+        this.callbacks.saveConversation({
+          ...conversation,
+          generations: [],
+          updatedAt: Date.now()
+        })
+      }
+
       // Reuse an existing outline and completed sections when retrying/resuming
-      const resume = findResumeState(conversation)
+      const resume = request.fresh ? null : findResumeState(conversation)
       let outline: ScriptOutline
       let outlineText: string
 

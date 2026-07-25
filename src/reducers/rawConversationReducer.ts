@@ -10,6 +10,7 @@ export type RawConversationAction =
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
   | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
+  | { type: 'GENERATIONS_DISCARDED'; conversationId: string }
   | { type: 'SET_GENERATION_PROGRESS'; conversationId: string; isComplete: boolean; error?: string; sectionTitle?: string }
   | { type: 'SET_GENERATION_PHASE'; conversationId: string; phase: GenerationPhase; outline?: ScriptOutline; currentSectionIndex?: number; totalSections?: number; sectionWordCounts?: number[]; error?: string }
   | { type: 'REVIEW_PASS_COMPLETED'; report: ReviewReport }
@@ -150,6 +151,19 @@ export const rawConversationReducer = (
         currentGeneration: null,
         generationMachine: null,
         reviewReport: null
+      }
+
+    case 'GENERATIONS_DISCARDED':
+      // The user chose an explicit full restart (story 1.8): drop the
+      // conversation's outline and section generations so the new run's
+      // document is not polluted by sections from the abandoned plan
+      return {
+        ...state,
+        conversations: state.conversations.map(conv =>
+          conv.id === action.conversationId
+            ? { ...conv, generations: [], updatedAt: Date.now() }
+            : conv
+        )
       }
 
     case 'GENERATION_RESTARTED':

@@ -286,6 +286,8 @@ export const ScriptPage = ({
   const [editTarget, setEditTarget] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const [refineInstruction, setRefineInstruction] = useState('')
+  // Why the last refinement failed, shown alongside the preserved instruction
+  const [refineError, setRefineError] = useState<string | null>(null)
   const [promotedToExamples, setPromotedToExamples] = useState(false)
 
   const script = state.scripts.find((s: Script) => s.id === id)
@@ -320,8 +322,10 @@ export const ScriptPage = ({
           : 'Generating...'
 
 
-  // A failed generation stays visible after the generating flag clears
-  const persistentErrorMessage = !generationState.isGenerating && conversation
+  // A failed generation stays visible after the generating flag clears. A
+  // failed refinement reports next to the refine form instead (story 1.7),
+  // so it is excluded here to avoid a duplicate banner.
+  const persistentErrorMessage = !generationState.isGenerating && conversation && !refineError
     ? (generationMachine?.conversationId === conversation.id && generationMachine.phase === 'error'
         ? generationMachine.error ?? 'Unknown error'
         : currentGeneration?.conversationId === conversation.id && currentGeneration.error
@@ -336,14 +340,16 @@ export const ScriptPage = ({
       !persistentErrorMessage
     : false
 
-  const handleRetry = async () => {
+  // Retry resumes from the persisted outline and completed sections when
+  // possible (story 1.8); fresh restarts the generation from scratch
+  const handleRetry = async (fresh = false) => {
     if (!script) return
 
     const prompt = script.initialPrompt ?? script.title
     const conversationId = conversation?.id ?? createConversation(script.id).id
 
     try {
-      await generateScript({ prompt, conversationId })
+      await generateScript({ prompt, conversationId, fresh })
     } catch (error) {
       console.error('Error retrying generation:', error)
     }
@@ -424,17 +430,22 @@ export const ScriptPage = ({
     setPromotedToExamples(true)
   }
 
+  // The instruction clears only once the refinement succeeds (story 1.7):
+  // on failure it stays in the input, with the failure reason alongside
   const handleRefineSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!conversation) return
     const instruction = refineInstruction.trim()
     if (!instruction) return
 
-    setRefineInstruction('')
+    setRefineError(null)
     try {
       await refineScript({ conversationId: conversation.id, instruction })
+      setRefineInstruction('')
     } catch (error) {
       console.error('Error refining script:', error)
+      setRefineInstruction(instruction)
+      setRefineError(error instanceof Error ? error.message : 'Unknown error')
     }
   }
 
@@ -492,12 +503,20 @@ export const ScriptPage = ({
             <strong>Generation failed.</strong> {persistentErrorMessage}
           </p>
           <button
-            onClick={handleRetry}
-            aria-label="Retry script generation"
+            onClick={() => handleRetry()}
+            aria-label="Retry script generation from where it stopped"
+            type="button"
+          >
+            <Play size={16} />
+            Retry
+          </button>
+          <button
+            onClick={() => handleRetry(true)}
+            aria-label="Start the script generation over from scratch"
             type="button"
           >
             <RotateCcw size={16} />
-            Retry
+            Start over
           </button>
         </div>
       )}
@@ -509,12 +528,20 @@ export const ScriptPage = ({
             written so far is saved.
           </p>
           <button
-            onClick={handleRetry}
+            onClick={() => handleRetry()}
             aria-label="Resume script generation"
             type="button"
           >
             <Play size={16} />
             Resume
+          </button>
+          <button
+            onClick={() => handleRetry(true)}
+            aria-label="Start the script generation over from scratch"
+            type="button"
+          >
+            <RotateCcw size={16} />
+            Start over
           </button>
         </div>
       )}
@@ -705,29 +732,36 @@ export const ScriptPage = ({
       )}
 
       {conversation && document.sections.length > 0 && !generationState.isGenerating && (
-        <form
-          className="refine-form"
-          aria-label="Refine this script"
-          onSubmit={handleRefineSubmit}
-        >
-          <label className="sr-only" htmlFor="refine-instruction">
-            Refine this script with a follow-up instruction
-          </label>
-          <input
-            id="refine-instruction"
-            type="text"
-            value={refineInstruction}
-            onChange={(event) => setRefineInstruction(event.target.value)}
-            placeholder="Refine this script — e.g. make the induction slower"
-          />
-          <button
-            type="submit"
-            disabled={!refineInstruction.trim()}
-            aria-label="Refine script"
+        <>
+          {refineError && (
+            <p role="alert" className="refine-error">
+              Refinement failed: {refineError}. Your instruction is preserved below.
+            </p>
+          )}
+          <form
+            className="refine-form"
+            aria-label="Refine this script"
+            onSubmit={handleRefineSubmit}
           >
-            <ArrowUp size={18} />
-          </button>
-        </form>
+            <label className="sr-only" htmlFor="refine-instruction">
+              Refine this script with a follow-up instruction
+            </label>
+            <input
+              id="refine-instruction"
+              type="text"
+              value={refineInstruction}
+              onChange={(event) => setRefineInstruction(event.target.value)}
+              placeholder="Refine this script — e.g. make the induction slower"
+            />
+            <button
+              type="submit"
+              disabled={!refineInstruction.trim()}
+              aria-label="Refine script"
+            >
+              <ArrowUp size={18} />
+            </button>
+          </form>
+        </>
       )}
 
       {performanceMode && onExitPerformanceMode && document.sections.length > 0 && (

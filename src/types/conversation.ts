@@ -3,6 +3,9 @@
 export interface GenerationRequest {
   prompt: string
   conversationId?: string
+  // When true, discard any existing outline and sections and start the
+  // generation from scratch instead of resuming (story 1.8)
+  fresh?: boolean
 }
 
 export interface RegenerationRequest {

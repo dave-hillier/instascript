@@ -1206,6 +1206,20 @@ dialog form p.library-transfer-result[data-outcome="failure"] {
 /* Script page: whole-script refinement                                */
 /* ------------------------------------------------------------------ */
 
+.refine-error {
+  max-width: 62ch;
+  margin: 2.5rem auto 0;
+  padding: 0 1.125rem;
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  color: var(--danger);
+}
+
+.refine-error + .refine-form {
+  margin-top: 0.5rem;
+  border-color: var(--danger);
+}
+
 .refine-form {
   display: flex;
   align-items: center;

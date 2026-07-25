@@ -67,14 +67,14 @@ Acceptance criteria:
 - The revised script streams in and replaces/updates the affected sections
 - Each refinement is stored as a new generation in the conversation
 
-### 1.7 Keep my refinement instruction when it fails [Gap]
+### 1.7 Keep my refinement instruction when it fails [Implemented]
 As a user, I want a failed refinement to leave my typed instruction in the input, so that a network hiccup doesn't cost me the text I wrote.
 
 Acceptance criteria:
 - The refinement input clears only after the request succeeds; on failure the typed instruction is restored
 - The failure reason is shown alongside the preserved input
 
-### 1.8 Resume an interrupted generation [Gap]
+### 1.8 Resume an interrupted generation [Implemented]
 As a user, I want Retry after a mid-stream reload or failure to continue from the first incomplete section, so that completed work isn't regenerated from scratch.
 
 Notes: the outline and completed sections are already persisted per-generation, so resumption is a matter of re-entering the section loop at the right index rather than restarting at the outline.
