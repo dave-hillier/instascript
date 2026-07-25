@@ -5,7 +5,7 @@ import sectionGenerationPrompt from '../prompts/section-generation.txt?raw'
 import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
 import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
-import type { RawConversation } from '../types/conversation'
+import type { RawConversation, ChatMessage } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
 import type { DocumentSection } from './conversationDocument'
 
@@ -125,6 +125,14 @@ export function getScriptRefinementPrompt(instruction: string): string {
   return scriptRefinementPrompt.replace('{instruction}', instruction.trim())
 }
 
+// Deliberate exemplar ordering (story 8.8): search returns examples ranked
+// most-relevant-first, but few-shot output quality is swayed most by the
+// exemplar closest to the instruction — so the prompt places the MOST
+// relevant example LAST. This is the single place that ordering rule lives.
+export function orderExamplesForPrompt(examples: ExampleScript[]): ExampleScript[] {
+  return [...examples].reverse()
+}
+
 export function formatExamplesForPrompt(examples: ExampleScript[]): string {
   if (examples.length === 0) {
     console.warn('No examples to format for prompt')
@@ -132,7 +140,50 @@ export function formatExamplesForPrompt(examples: ExampleScript[]): string {
   }
 
   return '\n## Examples\n\n' +
-    examples.map((example, index) =>
+    orderExamplesForPrompt(examples).map((example, index) =>
       `### Example ${index + 1}: ${example.metadata?.filename || 'Unknown'}\n\n${example.content}`
     ).join('\n\n') + '\n'
+}
+
+// Conversation-history normalisation (story 8.13): generations store the
+// complete messages array each request was sent with, so flattening them for
+// a follow-up request can accumulate system messages. Providers behave
+// unpredictably with more than one, so prompt assembly enforces the
+// invariant: exactly one system message, first, with any later system turn
+// that carries different instructions expressed as a user turn instead
+// (identical repeats are dropped).
+export function normaliseConversationHistory(messages: ChatMessage[]): ChatMessage[] {
+  const firstSystem = messages.find(message => message.role === 'system')
+  if (!firstSystem) return [...messages]
+
+  const normalised: ChatMessage[] = [firstSystem]
+  for (const message of messages) {
+    if (message.role !== 'system') {
+      normalised.push(message)
+    } else if (message !== firstSystem && message.content !== firstSystem.content) {
+      normalised.push({ role: 'user', content: message.content })
+    }
+  }
+  return normalised
+}
+
+// Flattens every generation's request messages and response into the history
+// for a follow-up request (refinement or section regeneration), appending the
+// new instruction as a user turn and normalising to a single system message.
+export function buildConversationHistory(
+  conversation: RawConversation,
+  instruction: string
+): ChatMessage[] {
+  const flattened: ChatMessage[] = []
+
+  for (const generation of conversation.generations) {
+    flattened.push(...generation.messages)
+    if (generation.response) {
+      flattened.push({ role: 'assistant', content: generation.response })
+    }
+  }
+
+  flattened.push({ role: 'user', content: instruction })
+
+  return normaliseConversationHistory(flattened)
 }

@@ -2,9 +2,14 @@ import { describe, it, expect } from 'vitest'
 import {
   buildSectionRegenerationPrompt,
   buildSectionRegenerationPromptFromConversation,
-  getScriptRefinementPrompt
+  getScriptRefinementPrompt,
+  orderExamplesForPrompt,
+  formatExamplesForPrompt,
+  normaliseConversationHistory,
+  buildConversationHistory
 } from '../prompts'
-import type { RawConversation, Generation } from '../../types/conversation'
+import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
+import type { ExampleScript } from '../exampleSearchService'
 
 const makeGeneration = (response: string): Generation => ({
   messages: [],
@@ -169,6 +174,135 @@ describe('buildSectionRegenerationPromptFromConversation', () => {
     )
 
     expect(prompt).toContain('slow the pacing right down')
+  })
+})
+
+describe('exemplar ordering (story 8.8)', () => {
+  const makeExample = (filename: string, score: number): ExampleScript => ({
+    content: `Body of ${filename}`,
+    metadata: { filename },
+    score
+  })
+
+  // Search results arrive ranked most-relevant-first
+  const rankedExamples = [
+    makeExample('best.md', 0.9),
+    makeExample('middle.md', 0.5),
+    makeExample('worst.md', 0.1)
+  ]
+
+  it('orders examples so the most relevant is last', () => {
+    const ordered = orderExamplesForPrompt(rankedExamples)
+
+    expect(ordered.map(example => example.metadata?.filename)).toEqual([
+      'worst.md',
+      'middle.md',
+      'best.md'
+    ])
+  })
+
+  it('does not mutate the ranked input', () => {
+    const input = [...rankedExamples]
+    orderExamplesForPrompt(input)
+
+    expect(input).toEqual(rankedExamples)
+  })
+
+  it('places the most relevant example closest to the end of the formatted block', () => {
+    const formatted = formatExamplesForPrompt(rankedExamples)
+
+    const bestIndex = formatted.indexOf('best.md')
+    const middleIndex = formatted.indexOf('middle.md')
+    const worstIndex = formatted.indexOf('worst.md')
+
+    expect(worstIndex).toBeGreaterThan(-1)
+    expect(worstIndex).toBeLessThan(middleIndex)
+    expect(middleIndex).toBeLessThan(bestIndex)
+    expect(formatted).toContain('### Example 3: best.md')
+  })
+})
+
+describe('conversation history normalisation (story 8.13)', () => {
+  const systemPrompt = 'You are a hypnosis script writer.'
+
+  const makeRefinedConversation = (): RawConversation => {
+    // Generations store the complete messages array each request was sent
+    // with, so after two refinements the flattened history holds three
+    // system messages plus a stray divergent one
+    const initialMessages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'Write a relaxation script' }
+    ]
+    const firstRefinementMessages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'Write a relaxation script' },
+      { role: 'assistant', content: '## Induction\nFirst draft.' },
+      { role: 'user', content: 'Make the induction slower' }
+    ]
+    const secondRefinementMessages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'system', content: 'Focus on breathing imagery.' },
+      { role: 'user', content: 'Make the induction slower' },
+      { role: 'assistant', content: '## Induction\nSlower draft.' },
+      { role: 'user', content: 'Remove the counting' }
+    ]
+
+    return {
+      id: 'conv-1',
+      scriptId: 'script-1',
+      generations: [
+        { messages: initialMessages, response: '## Induction\nFirst draft.', timestamp: 0 },
+        { messages: firstRefinementMessages, response: '## Induction\nSlower draft.', timestamp: 1 },
+        { messages: secondRefinementMessages, response: '## Induction\nFinal draft.', timestamp: 2 }
+      ],
+      createdAt: 0,
+      updatedAt: 0
+    }
+  }
+
+  it('flattens a multi-refinement conversation to exactly one system message', () => {
+    const history = buildConversationHistory(makeRefinedConversation(), 'Add a longer awakening')
+
+    const systemMessages = history.filter(message => message.role === 'system')
+    expect(systemMessages).toHaveLength(1)
+    expect(systemMessages[0].content).toBe(systemPrompt)
+  })
+
+  it('puts the single system message first and the new instruction last', () => {
+    const history = buildConversationHistory(makeRefinedConversation(), 'Add a longer awakening')
+
+    expect(history[0]).toEqual({ role: 'system', content: systemPrompt })
+    expect(history[history.length - 1]).toEqual({ role: 'user', content: 'Add a longer awakening' })
+  })
+
+  it('expresses a divergent later system turn as a user turn', () => {
+    const history = buildConversationHistory(makeRefinedConversation(), 'Add a longer awakening')
+
+    expect(history).toContainEqual({ role: 'user', content: 'Focus on breathing imagery.' })
+  })
+
+  it('leaves a history with no system message unchanged', () => {
+    const messages: ChatMessage[] = [
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi' }
+    ]
+
+    expect(normaliseConversationHistory(messages)).toEqual(messages)
+  })
+
+  it('drops repeated identical system messages without adding user turns', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'First' },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'Second' }
+    ]
+
+    expect(normaliseConversationHistory(messages)).toEqual([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'First' },
+      { role: 'user', content: 'Second' }
+    ])
   })
 })
 

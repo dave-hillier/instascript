@@ -2,7 +2,7 @@ import type { RawConversation, GenerationRequest, RegenerationRequest, Refinemen
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
-import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildSectionRegenerationPromptFromConversation } from './prompts'
+import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory } from './prompts'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 import { parseOutline, ensureSectionHeading, consolidateSections } from './conversationDocument'
@@ -674,17 +674,9 @@ export class RawScriptGenerationOrchestrator {
         sectionTitle: request.sectionTitle
       })
 
-      // Build complete conversation history from all generations
-      const messages: ChatMessage[] = []
-
-      for (const generation of conversation.generations) {
-        messages.push(...generation.messages)
-        if (generation.response) {
-          messages.push({ role: 'assistant', content: generation.response })
-        }
-      }
-
-      messages.push({ role: 'user', content: request.prompt })
+      // Build complete conversation history from all generations, normalised
+      // to a single system message (story 8.13)
+      const messages = buildConversationHistory(conversation, request.prompt)
 
       this.callbacks.dispatch({
         type: 'START_GENERATION',
@@ -784,17 +776,9 @@ export class RawScriptGenerationOrchestrator {
         isComplete: false
       })
 
-      // Build complete conversation history from all generations
-      const messages: ChatMessage[] = []
-
-      for (const generation of conversation.generations) {
-        messages.push(...generation.messages)
-        if (generation.response) {
-          messages.push({ role: 'assistant', content: generation.response })
-        }
-      }
-
-      messages.push({ role: 'user', content: request.prompt })
+      // Build complete conversation history from all generations, normalised
+      // to a single system message (story 8.13)
+      const messages = buildConversationHistory(conversation, request.prompt)
 
       this.callbacks.dispatch({
         type: 'START_GENERATION',
