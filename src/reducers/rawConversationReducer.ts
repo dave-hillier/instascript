@@ -3,7 +3,7 @@ import type { RawConversation, ChatMessage, GenerationPhase, ScriptOutline } fro
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
   | { type: 'CREATE_CONVERSATION'; conversation: RawConversation }
-  | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[] }
+  | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[] }
   | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
@@ -54,7 +54,8 @@ export const rawConversationReducer = (
                 generations: [...conv.generations, {
                   messages: action.messages,
                   response: '',
-                  timestamp: Date.now()
+                  timestamp: Date.now(),
+                  exampleIds: action.exampleIds
                 }],
                 updatedAt: Date.now()
               }

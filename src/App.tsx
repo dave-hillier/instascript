@@ -1,10 +1,11 @@
 import { useReducer, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Settings, ArrowLeft, Eye, EyeOff } from 'lucide-react'
+import { Settings, ArrowLeft, Eye, EyeOff, Library } from 'lucide-react'
 import { useAppContext } from './hooks/useAppContext'
 import { SettingsModal } from './components/SettingsModal'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
+import { ExamplesPage } from './pages/ExamplesPage'
 import type { APIProvider } from './services/config'
 import './App.css'
 
@@ -182,6 +183,7 @@ function AppContent() {
     : uiState.theme
 
   const isScriptPage = location.pathname.startsWith('/script/')
+  const isExamplesPage = location.pathname === '/examples'
 
   // Extract script ID from URL and get script title
   const scriptId = isScriptPage ? location.pathname.split('/script/')[1] : null
@@ -239,7 +241,7 @@ function AppContent() {
     <div data-theme={effectiveTheme}>
       <header role="banner">
         <div>
-          {isScriptPage && (
+          {(isScriptPage || isExamplesPage) && (
             <button
               onClick={() => navigate('/')}
               aria-label="Go back"
@@ -274,6 +276,15 @@ function AppContent() {
               {uiState.showSectionTitles ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           )}
+          {!isExamplesPage && (
+            <button
+              onClick={() => navigate('/examples')}
+              aria-label="Manage example corpus"
+              type="button"
+            >
+              <Library size={18} />
+            </button>
+          )}
           <button
             onClick={handleOpenSettings}
             aria-label="Open settings"
@@ -288,6 +299,7 @@ function AppContent() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/script/:id" element={<ScriptPage showSectionTitles={uiState.showSectionTitles} />} />
+          <Route path="/examples" element={<ExamplesPage />} />
         </Routes>
       </main>
 

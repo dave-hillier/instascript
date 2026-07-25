@@ -48,6 +48,7 @@ export interface Generation {
   response: string // Assistant response received
   timestamp: number
   cachedTokens?: number // From OpenAI response for monitoring cache hits
+  exampleIds?: string[] // Ids of the corpus examples that informed this generation
 }
 
 export interface RawConversation {

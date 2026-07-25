@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, Play, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, ArrowUp, BookmarkPlus, Play, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
+import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
 
@@ -271,6 +272,7 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const [instructionTarget, setInstructionTarget] = useState<string | null>(null)
   const [instructionText, setInstructionText] = useState('')
   const [refineInstruction, setRefineInstruction] = useState('')
+  const [promotedToExamples, setPromotedToExamples] = useState(false)
 
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -356,6 +358,24 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
     setInstructionText('')
     // An empty instruction falls back to the default regeneration prompt
     await handleRegenerateSection(sectionTitle, instruction || undefined)
+  }
+
+  // Which corpus examples informed this script's generations, for traceability
+  const informingExampleIds = conversation
+    ? [...new Set(conversation.generations.flatMap(generation => generation.exampleIds ?? []))]
+    : []
+  const exampleTitleById = new Map(
+    getAllExamples().map(example => [example.id, example.title])
+  )
+
+  const handlePromoteToExample = () => {
+    if (!script || !document.fullContent) return
+    promoteScriptToExample(
+      document.title ?? script.title,
+      document.fullContent,
+      script.tags ?? []
+    )
+    setPromotedToExamples(true)
   }
 
   const handleRefineSubmit = async (event: React.FormEvent) => {
@@ -532,6 +552,41 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
           <p>No content yet. Script is being generated...</p>
         )}
       </article>
+
+      {!generationState.isGenerating &&
+        (informingExampleIds.length > 0 || (script.status === 'complete' && document.fullContent)) && (
+        <footer className="script-utility">
+          {informingExampleIds.length > 0 ? (
+            <details className="example-provenance">
+              <summary>
+                Grounded in {informingExampleIds.length}{' '}
+                {informingExampleIds.length === 1 ? 'example' : 'examples'}
+              </summary>
+              <ul>
+                {informingExampleIds.map(exampleId => (
+                  <li key={exampleId}>{exampleTitleById.get(exampleId) ?? exampleId}</li>
+                ))}
+              </ul>
+            </details>
+          ) : (
+            <span />
+          )}
+          {script.status === 'complete' && document.fullContent && (
+            promotedToExamples ? (
+              <p className="example-promoted" role="status">Saved to your example corpus</p>
+            ) : (
+              <button
+                onClick={handlePromoteToExample}
+                aria-label="Save this script as an example"
+                type="button"
+              >
+                <BookmarkPlus size={16} />
+                Save as example
+              </button>
+            )
+          )}
+        </footer>
+      )}
 
       {conversation && document.sections.length > 0 && !generationState.isGenerating && (
         <form

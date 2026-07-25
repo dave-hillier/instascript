@@ -1107,6 +1107,242 @@ dialog footer button:last-child:hover {
 }
 
 /* ------------------------------------------------------------------ */
+/* Script page: utility row — provenance and promote-to-example        */
+/* ------------------------------------------------------------------ */
+
+.script-utility {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 62ch;
+  margin: 2.5rem auto 0;
+}
+
+.script-utility button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+  padding: 0.375rem 0.875rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.script-utility button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.example-promoted {
+  margin: 0;
+  max-width: none;
+  font-size: 0.8125rem;
+  color: var(--accent-2);
+}
+
+.example-provenance {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.example-provenance summary {
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.example-provenance summary:hover {
+  color: var(--ink);
+}
+
+.example-provenance ul {
+  list-style: none;
+  padding: 0.375rem 0 0 1rem;
+  margin: 0;
+}
+
+.example-provenance ul li {
+  display: list-item;
+  padding: 0.125rem 0;
+  border-bottom: none;
+  gap: 0;
+}
+
+.example-provenance ul li:hover {
+  background: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Examples corpus page                                                */
+/* ------------------------------------------------------------------ */
+
+.examples-page > header {
+  margin: 2rem 0 1.75rem;
+}
+
+.examples-page > header h2 {
+  font-family: var(--font-display);
+  font-size: 1.875rem;
+  font-weight: 500;
+  margin: 0 0 0.625rem;
+  line-height: 1.2;
+}
+
+.examples-page > header p {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--ink-muted);
+}
+
+.examples-page > p {
+  text-align: center;
+  color: var(--ink-muted);
+  padding: 3rem 0;
+  margin: 0;
+}
+
+.example-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding: 1rem 1.125rem;
+  margin-bottom: 2rem;
+}
+
+.example-import label {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.example-import input[type="file"] {
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.example-import input[type="file"]::file-selector-button {
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.375rem 0.875rem;
+  margin-right: 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.example-import input[type="file"]::file-selector-button:hover {
+  background-color: var(--accent-soft);
+}
+
+.example-list li {
+  align-items: flex-start;
+  padding: 1rem 0.25rem;
+}
+
+.example-list li:hover {
+  background: none;
+}
+
+.example-summary {
+  flex: 1;
+  min-width: 0;
+}
+
+.example-summary h3 {
+  white-space: normal;
+}
+
+.example-meta {
+  margin: 0.125rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.example-tags-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.625rem;
+}
+
+.example-tags-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background-color: var(--surface);
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  transition: border-color 0.15s ease;
+}
+
+.example-tags-form input::placeholder {
+  color: var(--ink-muted);
+}
+
+.example-tags-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.example-tags-form button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.example-tags-form button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.example-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.example-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0.375rem;
+  border-radius: 8px;
+  color: var(--ink-muted);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.example-actions button:hover {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ */
 /* Motion                                                              */
 /* ------------------------------------------------------------------ */
 

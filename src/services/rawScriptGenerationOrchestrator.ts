@@ -179,8 +179,11 @@ export class RawScriptGenerationOrchestrator {
         updates: { status: 'in-progress' }
       })
 
-      // Retrieve examples upfront
+      // Retrieve examples upfront; record which ones inform this generation
       const examples = await this.retrieveExamples(request, conversation)
+      const exampleIds = examples
+        .map(example => String(example.metadata?.id ?? example.metadata?.filename ?? ''))
+        .filter(Boolean)
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 
@@ -218,7 +221,8 @@ export class RawScriptGenerationOrchestrator {
           messages: [
             { role: 'system', content: getSystemPrompt() },
             { role: 'user', content: outlineUserPrompt }
-          ]
+          ],
+          exampleIds: exampleIds.length > 0 ? exampleIds : undefined
         })
 
         const outlineStream = this.services.scriptService.generateScript(

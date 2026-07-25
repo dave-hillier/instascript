@@ -11,6 +11,7 @@ interface YamlBlock {
   updatedAt?: number
   cachedTokens?: number
   model?: string
+  exampleIds?: string[]
 }
 
 export function parseConversationFromYamlMarkdown(content: string): RawConversation | null {
@@ -65,7 +66,10 @@ export function parseConversationFromYamlMarkdown(content: string): RawConversat
             messages: [...currentMessages],
             response: nextBlock,
             timestamp: parsed.timestamp || Date.now(),
-            cachedTokens: parsed.cachedTokens
+            cachedTokens: parsed.cachedTokens,
+            exampleIds: Array.isArray(parsed.exampleIds)
+              ? parsed.exampleIds.map(String)
+              : undefined
           })
           
           pendingPrompt = null
@@ -102,6 +106,9 @@ export function serializeConversationToYamlMarkdown(conversation: RawConversatio
   for (const generation of conversation.generations) {
     const userMessage = generation.messages.find(m => m.role === 'user')
     const assistantMessage = generation.messages.find(m => m.role === 'assistant')
+    // The generation's own response is authoritative; some generations (e.g.
+    // the outline) carry no assistant message in their request messages
+    const responseContent = generation.response || assistantMessage?.content
     
     if (userMessage) {
       lines.push('---')
@@ -115,16 +122,19 @@ export function serializeConversationToYamlMarkdown(conversation: RawConversatio
       lines.push('')
     }
     
-    if (assistantMessage) {
+    if (responseContent) {
       lines.push('---')
       lines.push(YAML.stringify({
         type: 'response',
         timestamp: generation.timestamp,
         role: 'assistant',
-        cachedTokens: generation.cachedTokens
+        cachedTokens: generation.cachedTokens,
+        ...(generation.exampleIds && generation.exampleIds.length > 0
+          ? { exampleIds: generation.exampleIds }
+          : {})
       }).trim())
       lines.push('---')
-      lines.push(assistantMessage.content)
+      lines.push(responseContent)
       lines.push('')
     }
   }
