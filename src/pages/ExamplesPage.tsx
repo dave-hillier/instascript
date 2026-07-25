@@ -4,6 +4,7 @@ import type { ExampleRecord } from '../types/example'
 import {
   backfillMissingEmbeddings,
   getAllExamples,
+  getExampleSelectionCounts,
   importExampleFile,
   deleteUserExample,
   updateUserExampleTags,
@@ -50,6 +51,12 @@ interface UserExampleTagsFormProps {
   onTagsSaved: (id: string, tags: string[]) => void
 }
 
+// How often the example has actually informed a generation (story 8.11)
+const describeSelectionCount = (count: number): string => {
+  if (count === 0) return 'Never selected for a generation'
+  return `Selected for ${count} ${count === 1 ? 'generation' : 'generations'}`
+}
+
 const UserExampleTagsForm = ({ example, onTagsSaved }: UserExampleTagsFormProps) => {
   const [tagText, setTagText] = useState(example.tags.join(', '))
 
@@ -88,6 +95,7 @@ export const ExamplesPage = () => {
     undefined,
     (): ExamplesState => ({ examples: getAllExamples(), importCount: 0 })
   )
+  const selectionCounts = getExampleSelectionCounts()
 
   // Migration: examples saved before embeddings existed get theirs computed
   // once in the background; retrieval works without them in the meantime
@@ -159,6 +167,8 @@ export const ExamplesPage = () => {
                   {example.source === 'bundled' ? 'Bundled · read-only' : 'Yours'}
                   {' · '}
                   {countWords(example.content).toLocaleString('en-US')} words
+                  {' · '}
+                  {describeSelectionCount(selectionCounts[example.id] ?? 0)}
                   {example.source === 'bundled' && example.tags.length > 0 && (
                     <> · {example.tags.join(', ')}</>
                   )}

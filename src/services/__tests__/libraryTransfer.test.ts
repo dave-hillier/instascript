@@ -80,6 +80,53 @@ describe('serializeLibraryExport and parseLibraryExport', () => {
     expect(() => parseLibraryExport(missingConversationScript)).toThrow('missing its scriptId')
   })
 
+  it('round-trips example selection counts (story 8.11)', () => {
+    const json = serializeLibraryExport(
+      [makeScript('s1')],
+      [makeConversation('c1', 's1')],
+      { example_a: 3, example_b: 1 }
+    )
+
+    const parsed = parseLibraryExport(json)
+
+    expect(parsed.exampleSelectionCounts).toEqual({ example_a: 3, example_b: 1 })
+  })
+
+  it('defaults selection counts to empty for older exports without them', () => {
+    const json = JSON.stringify({
+      format: LIBRARY_EXPORT_FORMAT,
+      scripts: [],
+      conversations: []
+    })
+
+    expect(parseLibraryExport(json).exampleSelectionCounts).toEqual({})
+  })
+
+  it('drops malformed selection count entries instead of failing', () => {
+    const json = JSON.stringify({
+      format: LIBRARY_EXPORT_FORMAT,
+      scripts: [],
+      conversations: [],
+      exampleSelectionCounts: {
+        example_ok: 2,
+        example_negative: -1,
+        example_string: 'five',
+        example_nan: null
+      }
+    })
+
+    expect(parseLibraryExport(json).exampleSelectionCounts).toEqual({ example_ok: 2 })
+  })
+
+  it('round-trips the exampleIds recorded on a generation', () => {
+    const conversation = makeConversation('c1', 's1')
+    conversation.generations[0].exampleIds = ['example_a', 'bundled_b']
+
+    const parsed = parseLibraryExport(serializeLibraryExport([], [conversation]))
+
+    expect(parsed.conversations[0].generations[0].exampleIds).toEqual(['example_a', 'bundled_b'])
+  })
+
   it('fills defaults for optional script fields', () => {
     const json = JSON.stringify({
       format: LIBRARY_EXPORT_FORMAT,

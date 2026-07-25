@@ -4,6 +4,8 @@ import { ArrowLeft, ArrowUp, BookmarkPlus, Check, Pencil, Play, RotateCcw, Slide
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
+import { ScriptCostSummary } from '../components/ScriptCostSummary'
+import { getModel } from '../services/config'
 import { PerformanceMode } from '../components/PerformanceMode'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
@@ -573,6 +575,11 @@ export const ScriptPage = ({
       />
 
       <TokenUsageBar conversation={conversation} />
+
+      <ScriptCostSummary
+        conversation={conversation}
+        model={script.model ?? getModel()}
+      />
 
       <article>
         {document.sections.length > 0 ? (

@@ -171,9 +171,117 @@ export function promoteScriptToExample(
   return createUserExample(title, tags, content)
 }
 
+// --- Example selection counts (story 8.11) -------------------------------
+// How many generation runs each example has been selected for, keyed by
+// example id. Kept as one JSON map in localStorage alongside the corpus so
+// counts cover bundled and user examples alike, and included in the library
+// export so they survive moving browsers.
+
+export const SELECTION_COUNTS_KEY = 'exampleSelectionCounts'
+
+// Pure: parses a stored counts map, dropping anything that is not a
+// positive finite number
+export function parseSelectionCounts(raw: string | null): Record<string, number> {
+  if (!raw) return {}
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return sanitizeSelectionCounts(parsed)
+  } catch {
+    return {}
+  }
+}
+
+// Pure: keeps only entries whose value is a positive finite number
+export function sanitizeSelectionCounts(value: unknown): Record<string, number> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const counts: Record<string, number> = {}
+  for (const [id, count] of Object.entries(value)) {
+    if (typeof count === 'number' && Number.isFinite(count) && count > 0) {
+      counts[id] = Math.floor(count)
+    }
+  }
+  return counts
+}
+
+// Pure: one more selection recorded for each of the given example ids
+export function incrementSelectionCounts(
+  counts: Record<string, number>,
+  exampleIds: string[]
+): Record<string, number> {
+  const next = { ...counts }
+  for (const id of exampleIds) {
+    next[id] = (next[id] ?? 0) + 1
+  }
+  return next
+}
+
+// Pure: merges imported counts into existing ones. An import never lowers a
+// count, and re-importing the same file does not inflate it — each id keeps
+// the higher of the two values.
+export function mergeSelectionCounts(
+  existing: Record<string, number>,
+  imported: Record<string, number>
+): Record<string, number> {
+  const merged = { ...existing }
+  for (const [id, count] of Object.entries(imported)) {
+    if (count > (merged[id] ?? 0)) {
+      merged[id] = count
+    }
+  }
+  return merged
+}
+
+export function getExampleSelectionCounts(): Record<string, number> {
+  try {
+    return parseSelectionCounts(window.localStorage.getItem(SELECTION_COUNTS_KEY))
+  } catch (error) {
+    console.warn('Error loading example selection counts:', error)
+    return {}
+  }
+}
+
+function saveExampleSelectionCounts(counts: Record<string, number>): void {
+  window.localStorage.setItem(SELECTION_COUNTS_KEY, JSON.stringify(counts))
+}
+
+// Records that these examples were selected for one generation run
+export function recordExampleSelections(exampleIds: string[]): void {
+  if (exampleIds.length === 0) return
+  // The orchestrator also runs under test in Node, where there is no storage
+  if (typeof window === 'undefined') return
+  try {
+    saveExampleSelectionCounts(
+      incrementSelectionCounts(getExampleSelectionCounts(), exampleIds)
+    )
+  } catch (error) {
+    console.warn('Error recording example selections:', error)
+  }
+}
+
+// Applies counts arriving from a library import (story 7.2 round-trip)
+export function importExampleSelectionCounts(imported: Record<string, number>): void {
+  try {
+    saveExampleSelectionCounts(
+      mergeSelectionCounts(getExampleSelectionCounts(), sanitizeSelectionCounts(imported))
+    )
+  } catch (error) {
+    console.warn('Error importing example selection counts:', error)
+  }
+}
+
 export function deleteUserExample(id: string): void {
   if (!id.startsWith(EXAMPLE_KEY_PREFIX)) return
   window.localStorage.removeItem(id)
+  // A deleted example's selection history goes with it
+  try {
+    const counts = getExampleSelectionCounts()
+    if (id in counts) {
+      delete counts[id]
+      saveExampleSelectionCounts(counts)
+    }
+  } catch (error) {
+    console.warn('Error clearing selection count for deleted example:', error)
+  }
 }
 
 export function updateUserExampleTags(id: string, tags: string[]): void {

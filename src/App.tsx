@@ -12,6 +12,7 @@ import { ExamplesPage } from './pages/ExamplesPage'
 import type { APIProvider } from './services/config'
 import { clearStoredConversations, loadStoredConversations, saveStoredConversation } from './services/conversationStorage'
 import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryImportCounts } from './services/libraryTransfer'
+import { getExampleSelectionCounts, importExampleSelectionCounts } from './services/exampleCorpus'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -321,7 +322,7 @@ function AppContent() {
   // source of truth whether they live in OPFS or localStorage.
   const handleExportLibrary = async () => {
     const conversations = await loadStoredConversations()
-    const json = serializeLibraryExport(state.scripts, conversations)
+    const json = serializeLibraryExport(state.scripts, conversations, getExampleSelectionCounts())
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = window.document.createElement('a')
@@ -337,6 +338,9 @@ function AppContent() {
   // shows it inline.
   const handleImportLibrary = async (file: File): Promise<LibraryImportCounts> => {
     const imported = parseLibraryExport(await file.text())
+    // Selection counts merge per example, keeping the higher value, so an
+    // import never lowers or double-counts what this browser already knows
+    importExampleSelectionCounts(imported.exampleSelectionCounts)
     const storedConversations = await loadStoredConversations()
     const result = mergeLibrary(imported, {
       scriptIds: state.scripts.map(script => script.id),

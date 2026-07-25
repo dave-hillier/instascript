@@ -5,6 +5,7 @@
 
 import type { Script } from '../types/script'
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
+import { sanitizeSelectionCounts } from './exampleCorpus'
 
 export const LIBRARY_EXPORT_FORMAT = 'instascript-library'
 export const LIBRARY_EXPORT_VERSION = 1
@@ -15,6 +16,9 @@ export interface LibraryExport {
   exportedAt: string
   scripts: Script[]
   conversations: RawConversation[]
+  // How many generation runs each corpus example has been selected for
+  // (story 8.11), keyed by example id. Absent in exports from older versions.
+  exampleSelectionCounts: Record<string, number>
 }
 
 export interface LibraryImportCounts {
@@ -39,19 +43,22 @@ export interface ExistingLibrary {
 
 export const buildLibraryExport = (
   scripts: Script[],
-  conversations: RawConversation[]
+  conversations: RawConversation[],
+  exampleSelectionCounts: Record<string, number> = {}
 ): LibraryExport => ({
   format: LIBRARY_EXPORT_FORMAT,
   version: LIBRARY_EXPORT_VERSION,
   exportedAt: new Date().toISOString(),
   scripts,
-  conversations
+  conversations,
+  exampleSelectionCounts
 })
 
 export const serializeLibraryExport = (
   scripts: Script[],
-  conversations: RawConversation[]
-): string => JSON.stringify(buildLibraryExport(scripts, conversations), null, 2)
+  conversations: RawConversation[],
+  exampleSelectionCounts: Record<string, number> = {}
+): string => JSON.stringify(buildLibraryExport(scripts, conversations, exampleSelectionCounts), null, 2)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -159,7 +166,9 @@ export const parseLibraryExport = (json: string): LibraryExport => {
     version: typeof parsed.version === 'number' ? parsed.version : LIBRARY_EXPORT_VERSION,
     exportedAt: typeof parsed.exportedAt === 'string' ? parsed.exportedAt : '',
     scripts: parsed.scripts.map(validateScript),
-    conversations: parsed.conversations.map(validateConversation)
+    conversations: parsed.conversations.map(validateConversation),
+    // Older exports have no counts; malformed entries are dropped, not fatal
+    exampleSelectionCounts: sanitizeSelectionCounts(parsed.exampleSelectionCounts)
   }
 }
 

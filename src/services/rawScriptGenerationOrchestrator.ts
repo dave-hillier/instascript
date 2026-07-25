@@ -10,6 +10,7 @@ import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sec
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 import { KeyedRunGuard } from './runLifecycle'
+import { recordExampleSelections } from './exampleCorpus'
 
 export interface RawScriptServices {
   scriptService: {
@@ -205,6 +206,10 @@ export class RawScriptGenerationOrchestrator {
       const exampleIds = examples
         .map(example => String(example.metadata?.id ?? example.metadata?.filename ?? ''))
         .filter(Boolean)
+
+      // Aggregate traceability (story 8.11): one selection per generation run
+      // for each example that informs it
+      recordExampleSelections(exampleIds)
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 

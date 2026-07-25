@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest'
 import {
   parseExampleMarkdown,
   serializeExampleToMarkdown,
-  parseTags
+  parseTags,
+  parseSelectionCounts,
+  sanitizeSelectionCounts,
+  incrementSelectionCounts,
+  mergeSelectionCounts
 } from '../exampleCorpus'
 import type { ExampleRecord } from '../../types/example'
 
@@ -118,6 +122,52 @@ embedding:
 Body.`
     const parsed = parseExampleMarkdown(raw, 'fallback')
     expect(parsed.embedding).toBeUndefined()
+  })
+})
+
+describe('selection counts (story 8.11)', () => {
+  it('parses a stored counts map', () => {
+    expect(parseSelectionCounts('{"example_a": 2, "bundled_b": 5}')).toEqual({
+      example_a: 2,
+      bundled_b: 5
+    })
+  })
+
+  it('returns empty counts for missing or malformed storage', () => {
+    expect(parseSelectionCounts(null)).toEqual({})
+    expect(parseSelectionCounts('not json')).toEqual({})
+    expect(parseSelectionCounts('[1,2]')).toEqual({})
+  })
+
+  it('sanitizes non-numeric and non-positive values', () => {
+    expect(
+      sanitizeSelectionCounts({ ok: 3, zero: 0, negative: -2, text: 'nope', fractional: 2.7 })
+    ).toEqual({ ok: 3, fractional: 2 })
+  })
+
+  it('increments one selection per example id without mutating the input', () => {
+    const before = { example_a: 1 }
+    const after = incrementSelectionCounts(before, ['example_a', 'example_b'])
+
+    expect(after).toEqual({ example_a: 2, example_b: 1 })
+    expect(before).toEqual({ example_a: 1 })
+  })
+
+  it('merges imported counts by keeping the higher value per example', () => {
+    const merged = mergeSelectionCounts(
+      { example_a: 4, example_b: 1 },
+      { example_a: 2, example_b: 3, example_c: 1 }
+    )
+
+    expect(merged).toEqual({ example_a: 4, example_b: 3, example_c: 1 })
+  })
+
+  it('is idempotent when re-importing the same counts', () => {
+    const existing = { example_a: 2 }
+    const once = mergeSelectionCounts(existing, { example_a: 2 })
+    const twice = mergeSelectionCounts(once, { example_a: 2 })
+
+    expect(twice).toEqual({ example_a: 2 })
   })
 })
 
