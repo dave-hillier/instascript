@@ -23,6 +23,13 @@ export interface ScriptRefinementRequest {
   instruction: string
 }
 
+// A manual, in-place edit of one section's text (story 2.3)
+export interface SectionEditRequest {
+  conversationId: string
+  sectionTitle: string
+  content: string
+}
+
 // The fully built refinement prompt handed to the orchestrator
 export interface RefinementRequest {
   prompt: string

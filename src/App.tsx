@@ -1,8 +1,11 @@
 import { useReducer, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
-import { Settings, ArrowLeft, Eye, EyeOff, Library } from 'lucide-react'
+import { Settings, ArrowLeft, Check, Copy, Download, Eye, EyeOff, Library, Theater } from 'lucide-react'
 import { useAppContext } from './hooks/useAppContext'
+import { useConversationContext } from './hooks/useConversationContext'
 import { SettingsModal } from './components/SettingsModal'
+import { InlineTitleEditor } from './components/InlineTitleEditor'
+import { buildConsolidatedMarkdown, markdownFilename } from './utils/scriptExport'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import { ExamplesPage } from './pages/ExamplesPage'
@@ -15,14 +18,18 @@ type Theme = 'light' | 'dark' | 'system'
 type ThemeAction = { type: 'SET_THEME'; theme: Theme }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
 type SectionTitlesAction = { type: 'TOGGLE_SECTION_TITLES' }
+type PerformanceModeAction =
+  | { type: 'PERFORMANCE_MODE_TOGGLED' }
+  | { type: 'PERFORMANCE_MODE_EXITED' }
 
 type UIState = {
   theme: Theme
   showSettingsModal: boolean
   showSectionTitles: boolean
+  performanceMode: boolean
 }
 
-type UIAction = ThemeAction | ModalAction | SectionTitlesAction
+type UIAction = ThemeAction | ModalAction | SectionTitlesAction | PerformanceModeAction
 
 
 const uiReducer = (state: UIState, action: UIAction): UIState => {
@@ -33,6 +40,10 @@ const uiReducer = (state: UIState, action: UIAction): UIState => {
       return { ...state, showSettingsModal: !state.showSettingsModal }
     case 'TOGGLE_SECTION_TITLES':
       return { ...state, showSectionTitles: !state.showSectionTitles }
+    case 'PERFORMANCE_MODE_TOGGLED':
+      return { ...state, performanceMode: !state.performanceMode }
+    case 'PERFORMANCE_MODE_EXITED':
+      return state.performanceMode ? { ...state, performanceMode: false } : state
     default:
       return state
   }
@@ -42,6 +53,7 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
+  const { getConversationByScriptId } = useConversationContext()
 
   const [uiState, uiDispatch] = useReducer(uiReducer, {
     theme: (() => {
@@ -60,8 +72,12 @@ function AppContent() {
       } catch {
         return true
       }
-    })()
+    })(),
+    performanceMode: false
   })
+
+  // Brief "Copied" confirmation after copying the script to the clipboard
+  const [copyConfirmed, setCopyConfirmed] = useState(false)
 
   const [apiKey, setApiKey] = useState(() => {
     try {
@@ -191,6 +207,51 @@ function AppContent() {
   const currentScript = scriptId ? state.scripts.find(s => s.id === scriptId) : null
   const headerTitle = isScriptPage && currentScript ? currentScript.title : 'InstaScript'
 
+  // The full consolidated markdown for copy/export (story 4.1): built from the
+  // conversation so it always reflects regenerated and edited sections
+  const currentConversation = currentScript ? getConversationByScriptId(currentScript.id) : undefined
+  const exportMarkdown = currentScript && currentConversation
+    ? buildConsolidatedMarkdown(
+        currentConversation,
+        currentScript.title,
+        // Once complete, the stored title is canonical (the orchestrator syncs
+        // it from the outline), so a manual rename carries into the export
+        currentScript.status === 'complete' ? currentScript.title : undefined
+      )
+    : ''
+
+  // Leaving the script page always leaves performance mode with it
+  useEffect(() => {
+    uiDispatch({ type: 'PERFORMANCE_MODE_EXITED' })
+  }, [location.pathname])
+
+  const handleCopyScript = async () => {
+    if (!exportMarkdown) return
+    try {
+      await navigator.clipboard.writeText(exportMarkdown)
+      setCopyConfirmed(true)
+      window.setTimeout(() => setCopyConfirmed(false), 2000)
+    } catch (error) {
+      console.error('Error copying script to clipboard:', error)
+    }
+  }
+
+  const handleDownloadScript = () => {
+    if (!exportMarkdown || !currentScript) return
+    const blob = new Blob([exportMarkdown], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const anchor = window.document.createElement('a')
+    anchor.href = url
+    anchor.download = markdownFilename(currentScript.title)
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleRenameScript = (title: string) => {
+    if (!currentScript) return
+    dispatch({ type: 'UPDATE_SCRIPT', scriptId: currentScript.id, updates: { title } })
+  }
+
 
   const handleSaveSettings = (newApiKey: string, newOpenRouterApiKey: string, newApiProvider: APIProvider, newModel: string) => {
     if (newApiKey.trim()) {
@@ -255,9 +316,16 @@ function AppContent() {
             </button>
           )}
           <div>
-            <h1>
-              {headerTitle}
-            </h1>
+            {isScriptPage && currentScript ? (
+              <InlineTitleEditor
+                title={currentScript.title}
+                onRename={handleRenameScript}
+              />
+            ) : (
+              <h1>
+                {headerTitle}
+              </h1>
+            )}
             {isScriptPage && currentScript && (
               <div>
                 <span>{currentScript.createdAt}</span>
@@ -272,13 +340,42 @@ function AppContent() {
         </div>
         <nav>
           {isScriptPage && (
-            <button
-              onClick={() => uiDispatch({ type: 'TOGGLE_SECTION_TITLES' })}
-              aria-label={uiState.showSectionTitles ? "Hide section titles" : "Show section titles"}
-              type="button"
-            >
-              {uiState.showSectionTitles ? <EyeOff size={18} /> : <Eye size={18} />}
-            </button>
+            <>
+              <button
+                onClick={handleCopyScript}
+                disabled={!exportMarkdown}
+                aria-label="Copy script to clipboard"
+                type="button"
+              >
+                {copyConfirmed ? <Check size={18} /> : <Copy size={18} />}
+              </button>
+              <span className="sr-only" role="status" aria-live="polite">
+                {copyConfirmed ? 'Copied to clipboard' : ''}
+              </span>
+              <button
+                onClick={handleDownloadScript}
+                disabled={!exportMarkdown}
+                aria-label="Download script as Markdown"
+                type="button"
+              >
+                <Download size={18} />
+              </button>
+              <button
+                onClick={() => uiDispatch({ type: 'PERFORMANCE_MODE_TOGGLED' })}
+                disabled={!exportMarkdown}
+                aria-label="Enter performance mode"
+                type="button"
+              >
+                <Theater size={18} />
+              </button>
+              <button
+                onClick={() => uiDispatch({ type: 'TOGGLE_SECTION_TITLES' })}
+                aria-label={uiState.showSectionTitles ? "Hide section titles" : "Show section titles"}
+                type="button"
+              >
+                {uiState.showSectionTitles ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </>
           )}
           {!isExamplesPage && (
             <button
@@ -302,7 +399,16 @@ function AppContent() {
       <main>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/script/:id" element={<ScriptPage showSectionTitles={uiState.showSectionTitles} />} />
+          <Route
+            path="/script/:id"
+            element={
+              <ScriptPage
+                showSectionTitles={uiState.showSectionTitles}
+                performanceMode={uiState.performanceMode}
+                onExitPerformanceMode={() => uiDispatch({ type: 'PERFORMANCE_MODE_EXITED' })}
+              />
+            }
+          />
           <Route path="/examples" element={<ExamplesPage />} />
         </Routes>
       </main>

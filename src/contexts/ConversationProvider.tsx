@@ -1,6 +1,6 @@
 import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { RawConversation, GenerationRequest, RegenerationRequest, SectionRegenerationRequest, ScriptRefinementRequest } from '../types/conversation'
+import type { RawConversation, Generation, GenerationRequest, RegenerationRequest, SectionRegenerationRequest, ScriptRefinementRequest, SectionEditRequest } from '../types/conversation'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
@@ -9,6 +9,7 @@ import { useAppContext } from '../hooks/useAppContext'
 // Extracted modules
 import { rawConversationReducer } from '../reducers/rawConversationReducer'
 import { loadStoredConversations, saveStoredConversation, createRawConversation, duplicateRawConversation } from '../services/conversationStorage'
+import { ensureSectionHeading } from '../services/conversationDocument'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 import { buildSectionRegenerationPromptFromConversation, getScriptRefinementPrompt } from '../services/prompts'
 
@@ -155,6 +156,39 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   }, [scriptService, exampleService, stopGeneration, buildCallbacks])
 
 
+  // Persists a manual section edit as a completed generation of its own
+  // (story 2.3): the response carries the "## Title" heading so
+  // consolidation-by-title replaces the section, and later regenerations see
+  // the edited text both in conversation history and in their prompts
+  const editSection = useCallback((request: SectionEditRequest): void => {
+    // Appending a generation while one is streaming would let the stream
+    // overwrite the edit (streaming always updates the latest generation)
+    if (abortControllerRef.current) {
+      throw new Error('Cannot edit a section while a generation is in progress')
+    }
+
+    const conversation = conversationsRef.current.find(c => c.id === request.conversationId)
+    if (!conversation) {
+      throw new Error(`Conversation ${request.conversationId} not found`)
+    }
+
+    const generation: Generation = {
+      messages: [{
+        role: 'user',
+        content: `I have manually edited the "${request.sectionTitle}" section. The version below replaces the previous one.`
+      }],
+      response: ensureSectionHeading(request.sectionTitle, request.content.trim()),
+      timestamp: Date.now()
+    }
+
+    dispatch({ type: 'SECTION_EDITED', conversationId: conversation.id, generation })
+    saveStoredConversation({
+      ...conversation,
+      generations: [...conversation.generations, generation],
+      updatedAt: Date.now()
+    })
+  }, [])
+
   // Initial load from persistent storage (OPFS, or localStorage fallback).
   // Loading is async, so anything created in the meantime is preserved by
   // the reducer merging loaded conversations underneath existing ones.
@@ -212,6 +246,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     generateScript,
     regenerateSection,
     refineScript,
+    editSection,
     stopGeneration
   }
 

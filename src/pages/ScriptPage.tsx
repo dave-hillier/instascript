@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, BookmarkPlus, Play, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, ArrowUp, BookmarkPlus, Check, Pencil, Play, RotateCcw, SlidersHorizontal, X } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
+import { PerformanceMode } from '../components/PerformanceMode'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
 import type { Script } from '../types/script'
@@ -252,9 +253,15 @@ const WordCountMeter = ({ sections, generationMachine }: WordCountMeterProps) =>
 
 interface ScriptPageProps {
   showSectionTitles?: boolean
+  performanceMode?: boolean
+  onExitPerformanceMode?: () => void
 }
 
-export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
+export const ScriptPage = ({
+  showSectionTitles = true,
+  performanceMode = false,
+  onExitPerformanceMode
+}: ScriptPageProps) => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { state } = useAppContext()
@@ -266,12 +273,16 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
     generateScript,
     regenerateSection,
     refineScript,
+    editSection,
     stopGeneration
   } = useConversationContext()
 
   // Which section's regenerate-with-instructions form is open, and its text
   const [instructionTarget, setInstructionTarget] = useState<string | null>(null)
   const [instructionText, setInstructionText] = useState('')
+  // Which section is being manually edited, and its draft text
+  const [editTarget, setEditTarget] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
   const [refineInstruction, setRefineInstruction] = useState('')
   const [promotedToExamples, setPromotedToExamples] = useState(false)
 
@@ -350,6 +361,35 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const handleToggleInstructionForm = (sectionTitle: string) => {
     setInstructionText('')
     setInstructionTarget(current => current === sectionTitle ? null : sectionTitle)
+  }
+
+  const handleStartEdit = (sectionTitle: string, content: string) => {
+    setInstructionTarget(null)
+    setEditTarget(sectionTitle)
+    setEditDraft(content)
+  }
+
+  const handleCancelEdit = () => {
+    setEditTarget(null)
+    setEditDraft('')
+  }
+
+  const handleEditSubmit = (event: React.FormEvent, sectionTitle: string) => {
+    event.preventDefault()
+    if (!conversation || !editDraft.trim()) return
+
+    try {
+      editSection({
+        conversationId: conversation.id,
+        sectionTitle,
+        content: editDraft
+      })
+    } catch (error) {
+      console.error('Error saving section edit:', error)
+      return
+    }
+    setEditTarget(null)
+    setEditDraft('')
   }
 
   const handleInstructionSubmit = async (event: React.FormEvent, sectionTitle: string) => {
@@ -492,6 +532,14 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
                     {!generationState.shouldDisableRegenerate && conversation && (
                       <div className="section-actions">
                         <button
+                          onClick={() => handleStartEdit(section.title, section.content)}
+                          aria-label={`Edit ${section.title} section`}
+                          type="button"
+                        >
+                          <Pencil size={16} />
+                          Edit
+                        </button>
+                        <button
                           onClick={() => handleRegenerateSection(section.title)}
                           disabled={generationState.shouldDisableRegenerate}
                           aria-label={`Regenerate ${section.title} section`}
@@ -540,15 +588,46 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
                   )}
                 </>
               )}
-              <div>
-                {section.content
-                  .split('\n')
-                  .map((line, lineIndex) => ({ text: line, key: `line-${lineIndex}` }))
-                  .filter(({ text }) => !text.startsWith('## ') && text.trim())
-                  .map(({ text, key }) => (
-                    <p key={key}>{text}</p>
-                  ))}
-              </div>
+              {editTarget === section.title &&
+                !generationState.shouldDisableRegenerate &&
+                conversation ? (
+                <form
+                  className="section-edit-form"
+                  aria-label={`Edit ${section.title} section`}
+                  onSubmit={(event) => handleEditSubmit(event, section.title)}
+                >
+                  <label className="sr-only" htmlFor={`${section.id}_edit_input`}>
+                    Text of the {section.title} section
+                  </label>
+                  <textarea
+                    id={`${section.id}_edit_input`}
+                    value={editDraft}
+                    onChange={(event) => setEditDraft(event.target.value)}
+                    rows={Math.max(6, editDraft.split('\n').length + 1)}
+                    autoFocus
+                  />
+                  <div className="section-edit-actions">
+                    <button type="submit" disabled={!editDraft.trim()}>
+                      <Check size={16} />
+                      Save
+                    </button>
+                    <button type="button" onClick={handleCancelEdit}>
+                      <X size={16} />
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div>
+                  {section.content
+                    .split('\n')
+                    .map((line, lineIndex) => ({ text: line, key: `line-${lineIndex}` }))
+                    .filter(({ text }) => !text.startsWith('## ') && text.trim())
+                    .map(({ text, key }) => (
+                      <p key={key}>{text}</p>
+                    ))}
+                </div>
+              )}
             </section>
           ))
         ) : document.fullContent ? (
@@ -623,6 +702,15 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
             <ArrowUp size={18} />
           </button>
         </form>
+      )}
+
+      {performanceMode && onExitPerformanceMode && document.sections.length > 0 && (
+        <PerformanceMode
+          title={script.status === 'complete' ? script.title : (document.title ?? script.title)}
+          sections={document.sections}
+          showSectionTitles={showSectionTitles}
+          onExit={onExitPerformanceMode}
+        />
       )}
     </section>
   )

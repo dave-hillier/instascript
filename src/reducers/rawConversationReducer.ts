@@ -1,8 +1,9 @@
-import type { RawConversation, ChatMessage, GenerationPhase, ScriptOutline } from '../types/conversation'
+import type { RawConversation, ChatMessage, Generation, GenerationPhase, ScriptOutline } from '../types/conversation'
 
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
   | { type: 'CREATE_CONVERSATION'; conversation: RawConversation }
+  | { type: 'SECTION_EDITED'; conversationId: string; generation: Generation }
   | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[] }
   | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
@@ -48,6 +49,23 @@ export const rawConversationReducer = (
       return {
         ...state,
         conversations: [...state.conversations, action.conversation]
+      }
+
+    case 'SECTION_EDITED':
+      // A manual edit is stored as a completed generation of its own, so
+      // consolidation-by-title replaces the section and regeneration history
+      // includes the edited text
+      return {
+        ...state,
+        conversations: state.conversations.map(conv =>
+          conv.id === action.conversationId
+            ? {
+                ...conv,
+                generations: [...conv.generations, action.generation],
+                updatedAt: Date.now()
+              }
+            : conv
+        )
       }
 
     case 'START_GENERATION':
