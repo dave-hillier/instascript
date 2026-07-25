@@ -8,7 +8,7 @@ import { useAppContext } from '../hooks/useAppContext'
 
 // Extracted modules
 import { rawConversationReducer } from '../reducers/rawConversationReducer'
-import { getStoredConversations, setStoredConversation, createRawConversation } from '../services/conversationStorage'
+import { loadStoredConversations, saveStoredConversation, createRawConversation } from '../services/conversationStorage'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 import { buildSectionRegenerationPromptFromConversation, getScriptRefinementPrompt } from '../services/prompts'
 
@@ -23,7 +23,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     generationMachine: null
   })
 
-  const [, setIsLoaded] = useState(false)
+  const [isLoaded, setIsLoaded] = useState(false)
   const { scriptService, exampleService } = useServices()
   const { dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<RawConversation | null>(null)
@@ -43,7 +43,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   const buildCallbacks = useCallback((): RawGenerationCallbacks => ({
     dispatch,
     appDispatch,
-    saveConversation: setStoredConversation,
+    saveConversation: saveStoredConversation,
     getConversation: (conversationId: string) =>
       conversationsRef.current.find(c => c.id === conversationId)
   }), [dispatch, appDispatch])
@@ -155,13 +155,23 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   }, [scriptService, exampleService, stopGeneration, buildCallbacks])
 
 
-  // Initial load from localStorage
+  // Initial load from persistent storage (OPFS, or localStorage fallback).
+  // Loading is async, so anything created in the meantime is preserved by
+  // the reducer merging loaded conversations underneath existing ones.
   useEffect(() => {
-    const stored = getStoredConversations()
-    if (stored.length > 0) {
-      dispatch({ type: 'LOAD_CONVERSATIONS', conversations: stored })
+    let cancelled = false
+    const load = async () => {
+      const stored = await loadStoredConversations()
+      if (cancelled) return
+      if (stored.length > 0) {
+        dispatch({ type: 'LOAD_CONVERSATIONS', conversations: stored })
+      }
+      setIsLoaded(true)
     }
-    setIsLoaded(true)
+    void load()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Note: Conversations are now saved directly by the orchestrator after API interactions
@@ -182,6 +192,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   const contextValue: ConversationContextType = {
     state,
+    isLoaded,
     dispatch,
     getConversationByScriptId,
     createConversation,

@@ -1,92 +1,97 @@
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
-import { parseConversationFromYamlMarkdown, serializeConversationToYamlMarkdown, migrateJsonToYamlMarkdown } from './conversationParser'
+import {
+  QueuedConversationStore,
+  OpfsConversationBackend,
+  LocalStorageConversationBackend,
+  type ConversationStore,
+  type DirectoryHandle,
+  type KeyValueStore
+} from './conversationStore'
 
-export const getStoredConversations = (): RawConversation[] => {
+const browserLocalStorage: KeyValueStore = {
+  getItem: (key) => window.localStorage.getItem(key),
+  setItem: (key, value) => {
+    window.localStorage.setItem(key, value)
+  },
+  removeItem: (key) => {
+    window.localStorage.removeItem(key)
+  },
+  keys: () => Object.keys(window.localStorage)
+}
+
+// Feature-detect the Origin Private File System. Returns the app's
+// conversations directory, or null when OPFS (or writable-stream support,
+// missing in older Safari) is unavailable.
+const openConversationsDirectory = async (): Promise<DirectoryHandle | null> => {
   try {
-    // Check for old format and migrate if needed
-    const oldItem = window.localStorage.getItem('conversations')
-    if (oldItem) {
-      // Migrate from old format
-      const oldConversations = JSON.parse(oldItem)
-      const migrated = migrateJsonToYamlMarkdown(oldConversations)
-      
-      // Save in new format
-      migrated.forEach((yamlContent, key) => {
-        window.localStorage.setItem(key, yamlContent)
-      })
-      
-      // Remove old format
-      window.localStorage.removeItem('conversations')
-      
-      // Return migrated data
-      return oldConversations
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.storage ||
+      typeof navigator.storage.getDirectory !== 'function'
+    ) {
+      return null
     }
-    
-    // Load from new format
-    const conversations: RawConversation[] = []
-    const keys = Object.keys(window.localStorage)
-    
-    for (const key of keys) {
-      if (key.startsWith('conversation_')) {
-        const yamlContent = window.localStorage.getItem(key)
-        if (yamlContent) {
-          const parsed = parseConversationFromYamlMarkdown(yamlContent)
-          if (parsed) {
-            conversations.push(parsed)
-          }
-        }
-      }
-    }
-    
-    return conversations
+    const root = await navigator.storage.getDirectory()
+    const directory = await root.getDirectoryHandle('conversations', { create: true })
+    const probe = await directory.getFileHandle('.probe', { create: true })
+    const supportsWritableStreams =
+      typeof (probe as { createWritable?: unknown }).createWritable === 'function'
+    await directory.removeEntry('.probe')
+    if (!supportsWritableStreams) return null
+    return directory as unknown as DirectoryHandle
+  } catch {
+    return null
+  }
+}
+
+let storePromise: Promise<ConversationStore> | null = null
+
+// Lazily selects OPFS with localStorage migration, or falls back to
+// localStorage transparently behind the same interface.
+export const getConversationStore = (): Promise<ConversationStore> => {
+  if (!storePromise) {
+    storePromise = openConversationsDirectory().then(directory =>
+      directory
+        ? new QueuedConversationStore(new OpfsConversationBackend(directory), browserLocalStorage)
+        : new QueuedConversationStore(new LocalStorageConversationBackend(browserLocalStorage))
+    )
+  }
+  return storePromise
+}
+
+export const loadStoredConversations = async (): Promise<RawConversation[]> => {
+  try {
+    const store = await getConversationStore()
+    return await store.loadAll()
   } catch (error) {
-    console.warn('Error loading conversations from localStorage:', error)
+    console.warn('Error loading conversations:', error)
     return []
   }
 }
 
-export const setStoredConversations = (conversations: RawConversation[]): void => {
-  try {
-    console.debug(`Saving ${conversations.length} conversations to localStorage`)
-    
-    // Clear old conversation keys
-    const keys = Object.keys(window.localStorage)
-    for (const key of keys) {
-      if (key.startsWith('conversation_')) {
-        window.localStorage.removeItem(key)
-      }
-    }
-    
-    // Save each conversation in new format
-    for (const conversation of conversations) {
-      if (conversation.scriptId) {
-        const key = `conversation_${conversation.scriptId}`
-        const yamlContent = serializeConversationToYamlMarkdown(conversation)
-        console.debug(`Saved conversation ${conversation.id} with ${conversation.generations.length} generations`)
-        window.localStorage.setItem(key, yamlContent)
-      }
-    }
-  } catch (error) {
-    console.error('Error saving conversations to localStorage:', error)
-  }
+// Non-blocking: enqueues the write and returns immediately, so throttled
+// saves during streaming never block the main thread.
+export const saveStoredConversation = (conversation: RawConversation): void => {
+  void getConversationStore()
+    .then(store => store.save(conversation))
+    .catch(error => {
+      console.error('Error saving conversation:', error)
+    })
 }
 
-export const setStoredConversation = (conversation: RawConversation): void => {
+export const clearStoredConversations = async (): Promise<void> => {
   try {
-    if (conversation.scriptId) {
-      const key = `conversation_${conversation.scriptId}`
-      const yamlContent = serializeConversationToYamlMarkdown(conversation)
-      window.localStorage.setItem(key, yamlContent)
-    }
+    const store = await getConversationStore()
+    await store.clearAll()
   } catch (error) {
-    console.error('Error saving conversation to localStorage:', error)
+    console.error('Error clearing conversations:', error)
   }
 }
 
 // Helper functions for working with generations
 export const addGenerationToConversation = (
-  conversations: RawConversation[], 
-  conversationId: string, 
+  conversations: RawConversation[],
+  conversationId: string,
   generation: Generation
 ): RawConversation[] => {
   return conversations.map(conv =>
@@ -97,15 +102,15 @@ export const addGenerationToConversation = (
 }
 
 export const updateLatestGeneration = (
-  conversations: RawConversation[], 
-  conversationId: string, 
+  conversations: RawConversation[],
+  conversationId: string,
   response: string,
   cachedTokens?: number
 ): RawConversation[] => {
   return conversations.map(conv =>
     conv.id === conversationId && conv.generations.length > 0
-      ? { 
-          ...conv, 
+      ? {
+          ...conv,
           generations: [
             ...conv.generations.slice(0, -1),
             {
@@ -114,7 +119,7 @@ export const updateLatestGeneration = (
               cachedTokens
             }
           ],
-          updatedAt: Date.now() 
+          updatedAt: Date.now()
         }
       : conv
   )

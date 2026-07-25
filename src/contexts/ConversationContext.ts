@@ -4,6 +4,8 @@ import type { RawConversationAction, RawConversationState } from '../reducers/ra
 
 export type ConversationContextType = {
   state: RawConversationState
+  // False until the initial async load from persistent storage completes
+  isLoaded: boolean
   dispatch: (action: RawConversationAction) => void
   getConversationByScriptId: (scriptId: string) => RawConversation | undefined
   createConversation: (scriptId: string) => RawConversation

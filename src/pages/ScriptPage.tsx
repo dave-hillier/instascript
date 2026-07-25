@@ -260,6 +260,7 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const { state } = useAppContext()
   const {
     state: conversationState,
+    isLoaded: conversationsLoaded,
     getConversationByScriptId,
     createConversation,
     generateScript,
@@ -406,6 +407,16 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
         <h1>Script not found</h1>
         <p>The script you're looking for doesn't exist.</p>
       </div>
+    )
+  }
+
+  // The conversation history loads asynchronously from persistent storage;
+  // until it arrives there is nothing meaningful to render for this script
+  if (!conversation && !conversationsLoaded) {
+    return (
+      <section aria-busy="true">
+        <p role="status">Loading script...</p>
+      </section>
     )
   }
 

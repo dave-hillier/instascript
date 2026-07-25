@@ -35,8 +35,14 @@ export const rawConversationReducer = (
   action: RawConversationAction
 ): RawConversationState => {
   switch (action.type) {
-    case 'LOAD_CONVERSATIONS':
-      return { ...state, conversations: action.conversations }
+    case 'LOAD_CONVERSATIONS': {
+      // Loading is async, so a conversation may already have been created
+      // (and be generating) before storage finishes loading — keep those,
+      // merging the loaded ones underneath
+      const existingIds = new Set(state.conversations.map(conv => conv.id))
+      const loaded = action.conversations.filter(conv => !existingIds.has(conv.id))
+      return { ...state, conversations: [...loaded, ...state.conversations] }
+    }
 
     case 'CREATE_CONVERSATION':
       return {

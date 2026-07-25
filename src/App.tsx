@@ -7,6 +7,7 @@ import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import { ExamplesPage } from './pages/ExamplesPage'
 import type { APIProvider } from './services/config'
+import { clearStoredConversations } from './services/conversationStorage'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -214,6 +215,9 @@ function AppContent() {
       // Also clear old formats if they exist
       localStorage.removeItem('conversations')
       localStorage.removeItem('scripts')
+      // Conversations persist to OPFS (with localStorage as fallback);
+      // clear that store too
+      void clearStoredConversations()
       // Clear scripts from state (they're stored in localStorage via AppProvider)
       dispatch({ type: 'CLEAR_SCRIPTS' })
       // Close the modal
