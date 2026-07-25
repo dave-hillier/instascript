@@ -9,6 +9,7 @@ export interface RankableExample {
   title: string
   tags: string[]
   content: string
+  embedding?: number[]
 }
 
 export interface RankedExample<T extends RankableExample> {
@@ -108,6 +109,67 @@ export function rankExamples<T extends RankableExample>(
   return examples
     .map((example, index) => ({ example, score: scores[index] }))
     .sort((a, b) => b.score - a.score)
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length === 0 || a.length !== b.length) return 0
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB)
+  return denominator === 0 ? 0 : dot / denominator
+}
+
+// Dense ranking by cosine similarity between the query embedding and each
+// example's stored embedding. Examples without an embedding are omitted —
+// they still reach the final ranking through the lexical list, so a corpus
+// with partial embedding coverage keeps working.
+export function rankExamplesByEmbedding<T extends RankableExample>(
+  queryEmbedding: number[],
+  examples: T[]
+): RankedExample<T>[] {
+  return examples
+    .filter(example => example.embedding && example.embedding.length > 0)
+    .map(example => ({
+      example,
+      score: cosineSimilarity(queryEmbedding, example.embedding!)
+    }))
+    .sort((a, b) => b.score - a.score)
+}
+
+const RRF_K = 60
+
+// Reciprocal rank fusion: each list contributes 1 / (k + rank) per document,
+// so agreement between lexical and dense signals compounds while a document
+// missing from one list (e.g. no stored embedding) still scores from the
+// other. With a single list this is a monotone rescoring — order preserved —
+// which is exactly the graceful degradation the hybrid retrieval needs.
+export function fuseRankings<T extends RankableExample>(
+  rankings: RankedExample<T>[][]
+): RankedExample<T>[] {
+  const fused = new Map<string, { example: T; score: number; firstSeen: number }>()
+  let order = 0
+
+  for (const ranking of rankings) {
+    ranking.forEach(({ example }, rank) => {
+      const contribution = 1 / (RRF_K + rank + 1)
+      const existing = fused.get(example.id)
+      if (existing) {
+        existing.score += contribution
+      } else {
+        fused.set(example.id, { example, score: contribution, firstSeen: order++ })
+      }
+    })
+  }
+
+  return [...fused.values()]
+    .sort((a, b) => b.score - a.score || a.firstSeen - b.firstSeen)
+    .map(({ example, score }) => ({ example, score }))
 }
 
 // Jaccard similarity over the documents' token sets — cheap, symmetric, and

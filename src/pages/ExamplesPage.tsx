@@ -1,7 +1,8 @@
-import { useReducer, useState } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import { Trash2, Check } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import {
+  backfillMissingEmbeddings,
   getAllExamples,
   importExampleFile,
   deleteUserExample,
@@ -87,6 +88,12 @@ export const ExamplesPage = () => {
     undefined,
     (): ExamplesState => ({ examples: getAllExamples(), importCount: 0 })
   )
+
+  // Migration: examples saved before embeddings existed get theirs computed
+  // once in the background; retrieval works without them in the meantime
+  useEffect(() => {
+    void backfillMissingEmbeddings()
+  }, [])
 
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])

@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest'
 import {
   tokenize,
   rankExamples,
+  rankExamplesByEmbedding,
+  fuseRankings,
   selectDiverseExamples,
-  type RankableExample
+  type RankableExample,
+  type RankedExample
 } from '../exampleRanking'
 
 const example = (
@@ -112,5 +115,81 @@ describe('selectDiverseExamples', () => {
   it('returns nothing for a zero limit', () => {
     const ranked = rankExamples('sleep', nearDuplicates)
     expect(selectDiverseExamples(ranked, { limit: 0 })).toEqual([])
+  })
+})
+
+describe('rankExamplesByEmbedding', () => {
+  const embedded = (id: string, embedding?: number[]): RankableExample => ({
+    id,
+    title: id,
+    tags: [],
+    content: 'body text',
+    embedding
+  })
+
+  it('ranks by cosine similarity to the query embedding', () => {
+    const corpus = [
+      embedded('orthogonal', [0, 1, 0]),
+      embedded('aligned', [1, 0, 0]),
+      embedded('opposed', [-1, 0, 0])
+    ]
+    const ranked = rankExamplesByEmbedding([1, 0, 0], corpus)
+    expect(ranked.map(entry => entry.example.id)).toEqual([
+      'aligned', 'orthogonal', 'opposed'
+    ])
+    expect(ranked[0].score).toBeCloseTo(1)
+    expect(ranked[2].score).toBeCloseTo(-1)
+  })
+
+  it('omits examples without a stored embedding', () => {
+    const corpus = [
+      embedded('no-embedding'),
+      embedded('empty-embedding', []),
+      embedded('has-embedding', [1, 0])
+    ]
+    const ranked = rankExamplesByEmbedding([1, 0], corpus)
+    expect(ranked.map(entry => entry.example.id)).toEqual(['has-embedding'])
+  })
+
+  it('scores mismatched vector lengths as zero rather than crashing', () => {
+    const ranked = rankExamplesByEmbedding([1, 0, 0], [embedded('short', [1, 0])])
+    expect(ranked[0].score).toBe(0)
+  })
+})
+
+describe('fuseRankings', () => {
+  const plain = (id: string): RankableExample => ({
+    id,
+    title: id,
+    tags: [],
+    content: 'body'
+  })
+  const ranking = (...ids: string[]): RankedExample<RankableExample>[] =>
+    ids.map((id, index) => ({ example: plain(id), score: 10 - index }))
+
+  it('promotes documents that both signals agree on', () => {
+    const fused = fuseRankings([ranking('a', 'b', 'c'), ranking('b', 'c', 'd')])
+    // b places high in both lists (ranks 2 and 1), beating a — which leads
+    // one list but misses the other; d, low in a single list, lands last
+    expect(fused[0].example.id).toBe('b')
+    expect(fused[fused.length - 1].example.id).toBe('d')
+  })
+
+  it('still scores documents present in only one list', () => {
+    const fused = fuseRankings([ranking('a', 'b'), ranking('c')])
+    const ids = fused.map(entry => entry.example.id)
+    expect(ids).toContain('c')
+    expect(fused.find(entry => entry.example.id === 'c')!.score).toBeGreaterThan(0)
+  })
+
+  it('preserves order when only one signal is available (BM25 degradation)', () => {
+    const lexicalOnly = ranking('sleep', 'calm', 'focus')
+    const fused = fuseRankings([lexicalOnly])
+    expect(fused.map(entry => entry.example.id)).toEqual(['sleep', 'calm', 'focus'])
+    expect(fused.every(entry => entry.score > 0)).toBe(true)
+  })
+
+  it('returns an empty ranking for no input lists', () => {
+    expect(fuseRankings([])).toEqual([])
   })
 })

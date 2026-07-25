@@ -5,4 +5,5 @@ export interface ExampleRecord {
   content: string
   source: 'bundled' | 'user'
   createdAt?: number
+  embedding?: number[]
 }

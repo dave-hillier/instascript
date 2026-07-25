@@ -66,6 +66,59 @@ Content.`
     expect(parsed.content).toBe(record.content)
     expect(parsed.createdAt).toBe(1234567890)
   })
+
+  it('round-trips a stored embedding through serialization', () => {
+    const record: ExampleRecord = {
+      id: 'example_embedded',
+      title: 'Embedded',
+      tags: ['calm'],
+      content: 'Body text.',
+      source: 'user',
+      createdAt: 1,
+      embedding: [0.123456789, -0.5, 1]
+    }
+
+    const parsed = parseExampleMarkdown(serializeExampleToMarkdown(record), 'fallback')
+    expect(parsed.embedding).toEqual([0.12346, -0.5, 1])
+    expect(parsed.content).toBe('Body text.')
+  })
+
+  it('omits the embedding key entirely when absent', () => {
+    const record: ExampleRecord = {
+      id: 'example_plain',
+      title: 'Plain',
+      tags: [],
+      content: 'Body.',
+      source: 'user',
+      createdAt: 1
+    }
+    expect(serializeExampleToMarkdown(record)).not.toContain('embedding')
+  })
+
+  it('migrates pre-embedding entries: parses cleanly with no embedding', () => {
+    const legacy = `---
+title: Old Entry
+tags:
+  - sleep
+createdAt: 42
+---
+Legacy body.`
+    const parsed = parseExampleMarkdown(legacy, 'fallback')
+    expect(parsed.embedding).toBeUndefined()
+    expect(parsed.title).toBe('Old Entry')
+  })
+
+  it('ignores malformed embedding front matter', () => {
+    const raw = `---
+title: Broken
+embedding:
+  - 0.1
+  - not-a-number
+---
+Body.`
+    const parsed = parseExampleMarkdown(raw, 'fallback')
+    expect(parsed.embedding).toBeUndefined()
+  })
 })
 
 describe('parseTags', () => {

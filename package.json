@@ -12,6 +12,7 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "lucide-react": "^0.541.0",
     "openai": "^5.15.0",
     "react": "^19.1.1",
