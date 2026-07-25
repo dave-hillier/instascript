@@ -4,7 +4,6 @@ import { Settings, ArrowLeft, Check, Copy, Download, Eye, EyeOff, Library, Theat
 import { useAppContext } from './hooks/useAppContext'
 import { useConversationContext } from './hooks/useConversationContext'
 import { SettingsModal } from './components/SettingsModal'
-import { AgeGate } from './components/AgeGate'
 import { InlineTitleEditor } from './components/InlineTitleEditor'
 import { buildConsolidatedMarkdown, markdownFilename } from './utils/scriptExport'
 import { HomePage } from './pages/HomePage'
@@ -376,7 +375,6 @@ function AppContent() {
 
   return (
     <div data-theme={effectiveTheme}>
-      <AgeGate>
       <header role="banner">
         <div>
           {(isScriptPage || isExamplesPage) && (
@@ -501,7 +499,6 @@ function AppContent() {
         onExportLibrary={handleExportLibrary}
         onImportLibrary={handleImportLibrary}
       />
-      </AgeGate>
     </div>
   )
 }

@@ -231,15 +231,6 @@ Acceptance criteria:
 - A short note in settings stating data is stored locally, unencrypted, in the browser
 - The Clear All Data action is referenced as the removal mechanism
 
-## Epic 6: Content Safeguards
-
-### 6.1 Age acknowledgement [Implemented]
-As the operator, I want a one-time 18+ acknowledgement before the app can be used, so that the adult nature of the content is disclosed up front.
-
-Acceptance criteria:
-- A blocking, accessible dialog on first visit describing the content
-- Acknowledgement persists in localStorage; declining shows a neutral exit page
-
 ## Epic 7: Data Portability
 
 ### 7.1 Persist everything across sessions [Implemented]
