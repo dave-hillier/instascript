@@ -1,5 +1,5 @@
 import { createContext } from 'react'
-import type { RawConversation, GenerationRequest, SectionRegenerationRequest } from '../types/conversation'
+import type { RawConversation, GenerationRequest, SectionRegenerationRequest, ScriptRefinementRequest } from '../types/conversation'
 import type { RawConversationAction, RawConversationState } from '../reducers/rawConversationReducer'
 
 export type ConversationContextType = {
@@ -9,6 +9,7 @@ export type ConversationContextType = {
   createConversation: (scriptId: string) => RawConversation
   generateScript: (request: GenerationRequest) => Promise<void>
   regenerateSection: (request: SectionRegenerationRequest) => Promise<void>
+  refineScript: (request: ScriptRefinementRequest) => Promise<void>
   stopGeneration: () => void
 }
 

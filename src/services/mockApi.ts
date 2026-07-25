@@ -174,16 +174,65 @@ Continue to breathe... continue to follow... continue to let go. Everything is u
     yield* this.streamContent(content, abortSignal)
   }
 
+  private extractSectionTitles(messages: ChatMessage[]): string[] {
+    const titles: string[] = []
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue
+      for (const line of message.content.split('\n')) {
+        const match = line.match(/^##\s+(.+?)\s*$/)
+        if (match && !titles.includes(match[1])) {
+          titles.push(match[1])
+        }
+      }
+    }
+    return titles
+  }
+
+  private generateRefinedSectionContent(): string {
+    return `Let everything slow down now... even more than before. Feel how each breath arrives on its own, unhurried, complete. There is nothing to reach for here... nothing to hold. Only this soft, patient rhythm carrying you along, the way a slow river carries a leaf.
+
+Notice the quiet spreading through you. It begins somewhere behind your eyes... drifts down through your jaw... your throat... your chest. Every place it touches grows heavier, warmer, more at ease. You are settling, layer by layer, into a stillness that feels familiar now... as though your body has been waiting all day for permission to rest this deeply.
+
+⏤
+
+And in this stillness, the words you hear sink further than they did before. They do not need your attention to work. They move beneath thought, beneath effort, finding the places that are ready to change. You can simply listen... or not listen... and either way the change continues, gentle and certain.
+
+Feel how good it is to be carried like this. To trust the process. To let each suggestion settle where it belongs, the way snow settles on a quiet field... evenly, softly, without a single sound. Whatever brought you here is being tended to now, in this deeper, slower way.
+
+⏤
+
+Breathe in... and feel the calm gather. Breathe out... and feel it spread. Each cycle smooths another edge, loosens another knot, opens another door. You are further along than you realise, and every moment takes you further still.
+
+There is no hurry. There was never any hurry. The pace is yours, and the pace is perfect. Simply continue... breathing... listening... drifting... while everything you came here for unfolds exactly as it should, at exactly the depth you need.`
+  }
+
+  private generateRefinementContent(messages: ChatMessage[]): string {
+    // A refinement rewrites only the sections that change: pick up to two
+    // known section titles from the conversation and rewrite those
+    const titles = this.extractSectionTitles(messages).slice(0, 2)
+    if (titles.length === 0) {
+      return `## Refined Section\n\n${this.generateRefinedSectionContent()}`
+    }
+
+    return titles
+      .map(title => `## ${title}\n\n${this.generateRefinedSectionContent()}`)
+      .join('\n\n')
+  }
+
   async *regenerateSection(
     request: RegenerationRequest,
-    _messages: ChatMessage[],
+    messages: ChatMessage[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     await this.delay(300, 800)
     if (abortSignal?.aborted) return
 
-    // Generate ~400 word section content (no header - orchestrator adds ## Title)
-    const content = this.generateSectionContent(request.sectionTitle)
+    // An empty section title marks a whole-script refinement: respond with
+    // full "## Section" blocks for the sections that change.
+    // Otherwise generate ~400 word section content (no header - orchestrator adds ## Title)
+    const content = request.sectionTitle === ''
+      ? this.generateRefinementContent(messages)
+      : this.generateSectionContent(request.sectionTitle)
     yield* this.streamContent(content, abortSignal)
   }
 }

@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Play, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Play, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
@@ -262,8 +263,14 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
     createConversation,
     generateScript,
     regenerateSection,
+    refineScript,
     stopGeneration
   } = useConversationContext()
+
+  // Which section's regenerate-with-instructions form is open, and its text
+  const [instructionTarget, setInstructionTarget] = useState<string | null>(null)
+  const [instructionText, setInstructionText] = useState('')
+  const [refineInstruction, setRefineInstruction] = useState('')
 
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -281,17 +288,17 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
   const isThisConversation = conversation && generationMachine &&
     generationMachine.conversationId === conversation.id
 
-  const phaseLabel = isThisConversation
-    ? generationMachine.phase === 'generating_outline'
-      ? 'Drafting outline...'
-      : generationMachine.phase === 'generating_section'
-        ? `Writing section ${generationMachine.currentSectionIndex + 1} of ${generationMachine.totalSections}...`
-        : generationMachine.phase === 'complete'
-          ? 'Complete'
-          : generationMachine.phase === 'error'
-            ? 'Error'
-            : 'Generating...'
-    : 'Generating...'
+  // Section regeneration and whole-script refinement run without the outline
+  // state machine, so fall back to the current generation for their labels
+  const phaseLabel = isThisConversation && generationMachine.phase === 'generating_outline'
+    ? 'Drafting outline...'
+    : isThisConversation && generationMachine.phase === 'generating_section'
+      ? `Writing section ${generationMachine.currentSectionIndex + 1} of ${generationMachine.totalSections}...`
+      : currentGeneration && !currentGeneration.isComplete
+        ? currentGeneration.sectionTitle
+          ? `Rewriting "${currentGeneration.sectionTitle}"...`
+          : 'Refining script...'
+        : 'Generating...'
 
 
   // A failed generation stays visible after the generating flag clears
@@ -323,16 +330,45 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
     }
   }
 
-  const handleRegenerateSection = async (sectionTitle: string) => {
+  const handleRegenerateSection = async (sectionTitle: string, instruction?: string) => {
     if (!script || !conversation) return
 
     try {
       await regenerateSection({
         conversationId: conversation.id,
-        sectionTitle: sectionTitle
+        sectionTitle: sectionTitle,
+        instruction
       })
     } catch (error) {
       console.error('Error regenerating section:', error)
+    }
+  }
+
+  const handleToggleInstructionForm = (sectionTitle: string) => {
+    setInstructionText('')
+    setInstructionTarget(current => current === sectionTitle ? null : sectionTitle)
+  }
+
+  const handleInstructionSubmit = async (event: React.FormEvent, sectionTitle: string) => {
+    event.preventDefault()
+    const instruction = instructionText.trim()
+    setInstructionTarget(null)
+    setInstructionText('')
+    // An empty instruction falls back to the default regeneration prompt
+    await handleRegenerateSection(sectionTitle, instruction || undefined)
+  }
+
+  const handleRefineSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!conversation) return
+    const instruction = refineInstruction.trim()
+    if (!instruction) return
+
+    setRefineInstruction('')
+    try {
+      await refineScript({ conversationId: conversation.id, instruction })
+    } catch (error) {
+      console.error('Error refining script:', error)
     }
   }
 
@@ -419,20 +455,59 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
           document.sections.map((section, index) => (
             <section key={`section-${index}`}>
               {showSectionTitles && (
-                <header>
-                  <h2>{section.title}</h2>
-                  {!generationState.shouldDisableRegenerate && conversation && (
-                    <button
-                      onClick={() => handleRegenerateSection(section.title)}
-                      disabled={generationState.shouldDisableRegenerate}
-                      aria-label={`${generationState.shouldDisableRegenerate ? 'Regenerating' : 'Regenerate'} ${section.title} section`}
-                      type="button"
+                <>
+                  <header>
+                    <h2>{section.title}</h2>
+                    {!generationState.shouldDisableRegenerate && conversation && (
+                      <div className="section-actions">
+                        <button
+                          onClick={() => handleRegenerateSection(section.title)}
+                          disabled={generationState.shouldDisableRegenerate}
+                          aria-label={`Regenerate ${section.title} section`}
+                          type="button"
+                        >
+                          <RotateCcw size={16} />
+                          Regenerate
+                        </button>
+                        <button
+                          onClick={() => handleToggleInstructionForm(section.title)}
+                          aria-expanded={instructionTarget === section.title}
+                          aria-controls={`${section.id}_instruction`}
+                          aria-label={`Regenerate ${section.title} section with instructions`}
+                          type="button"
+                        >
+                          <SlidersHorizontal size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </header>
+                  {instructionTarget === section.title &&
+                    !generationState.shouldDisableRegenerate &&
+                    conversation && (
+                    <form
+                      className="regenerate-form"
+                      id={`${section.id}_instruction`}
+                      aria-label={`Regenerate ${section.title} with instructions`}
+                      onSubmit={(event) => handleInstructionSubmit(event, section.title)}
                     >
-                      <RotateCcw size={16} />
-                      {generationState.shouldDisableRegenerate ? 'Regenerating...' : 'Regenerate'}
-                    </button>
+                      <label className="sr-only" htmlFor={`${section.id}_instruction_input`}>
+                        How should the {section.title} section change? Leave empty for a standard rewrite.
+                      </label>
+                      <input
+                        id={`${section.id}_instruction_input`}
+                        type="text"
+                        value={instructionText}
+                        onChange={(event) => setInstructionText(event.target.value)}
+                        placeholder="e.g. less repetition, more breathing focus"
+                        autoFocus
+                      />
+                      <button type="submit">
+                        <RotateCcw size={14} />
+                        Regenerate
+                      </button>
+                    </form>
                   )}
-                </header>
+                </>
               )}
               <div>
                 {section.content
@@ -457,6 +532,32 @@ export const ScriptPage = ({ showSectionTitles = true }: ScriptPageProps) => {
           <p>No content yet. Script is being generated...</p>
         )}
       </article>
+
+      {conversation && document.sections.length > 0 && !generationState.isGenerating && (
+        <form
+          className="refine-form"
+          aria-label="Refine this script"
+          onSubmit={handleRefineSubmit}
+        >
+          <label className="sr-only" htmlFor="refine-instruction">
+            Refine this script with a follow-up instruction
+          </label>
+          <input
+            id="refine-instruction"
+            type="text"
+            value={refineInstruction}
+            onChange={(event) => setRefineInstruction(event.target.value)}
+            placeholder="Refine this script — e.g. make the induction slower"
+          />
+          <button
+            type="submit"
+            disabled={!refineInstruction.trim()}
+            aria-label="Refine script"
+          >
+            <ArrowUp size={18} />
+          </button>
+        </form>
+      )}
     </section>
   )
 }

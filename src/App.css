@@ -979,6 +979,134 @@ dialog footer button:last-child:hover {
 }
 
 /* ------------------------------------------------------------------ */
+/* Script page: section actions and regenerate-with-instructions       */
+/* ------------------------------------------------------------------ */
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+/* Neutralize the composer styles from `main form` for the inline form */
+.regenerate-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+  margin: 0 0 1.5rem;
+}
+
+.regenerate-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background-color: var(--surface);
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  transition: border-color 0.15s ease;
+}
+
+.regenerate-form input::placeholder {
+  color: var(--ink-muted);
+}
+
+.regenerate-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.regenerate-form button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 0.375rem 0.875rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 0.15s ease;
+}
+
+.regenerate-form button:hover {
+  background-color: var(--accent-soft);
+}
+
+/* ------------------------------------------------------------------ */
+/* Script page: whole-script refinement                                */
+/* ------------------------------------------------------------------ */
+
+.refine-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 62ch;
+  margin: 2.5rem auto 0;
+  padding: 0.375rem 0.375rem 0.375rem 1.125rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background-color: var(--surface);
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.refine-form:focus-within {
+  border-color: var(--accent);
+}
+
+.refine-form input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 0.9375rem;
+  padding: 0.5rem 0;
+}
+
+.refine-form input:focus {
+  outline: none;
+}
+
+.refine-form input::placeholder {
+  color: var(--ink-muted);
+}
+
+.refine-form button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--accent);
+  color: var(--bg);
+  transition: opacity 0.2s ease;
+}
+
+.refine-form button:hover {
+  opacity: 0.85;
+}
+
+.refine-form button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ------------------------------------------------------------------ */
 /* Motion                                                              */
 /* ------------------------------------------------------------------ */
 

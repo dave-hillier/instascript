@@ -1,10 +1,12 @@
-import type { RawConversation, GenerationRequest, RegenerationRequest, ChatMessage, ScriptOutline, OutlineSection } from '../types/conversation'
+import type { RawConversation, GenerationRequest, RegenerationRequest, RefinementRequest, ChatMessage, ScriptOutline } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
 import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt } from './prompts'
 import { getRecommendedExampleCount } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
+import { parseOutline, ensureSectionHeading } from './conversationDocument'
+import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
 
 export interface RawScriptServices {
   scriptService: {
@@ -31,38 +33,6 @@ export interface RawGenerationCallbacks {
   appDispatch: (action: { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }) => void
   saveConversation: (conversation: RawConversation) => void
   getConversation: (conversationId: string) => RawConversation | undefined
-}
-
-function parseOutline(text: string): ScriptOutline | null {
-  const lines = text.trim().split('\n')
-  const titleMatch = lines[0]?.match(/^#\s+(.+)$/)
-  if (!titleMatch) return null
-
-  const title = titleMatch[1].trim()
-  const sections: OutlineSection[] = []
-  let currentSectionTitle = ''
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]
-    const sectionMatch = line.match(/^##\s+(.+)$/)
-    if (sectionMatch) {
-      // If we had a previous section without a description, add it
-      if (currentSectionTitle && !sections.find(s => s.title === currentSectionTitle)) {
-        sections.push({ title: currentSectionTitle, description: '' })
-      }
-      currentSectionTitle = sectionMatch[1].trim()
-    } else if (currentSectionTitle && line.trim() && !sections.find(s => s.title === currentSectionTitle)) {
-      sections.push({ title: currentSectionTitle, description: line.trim() })
-    }
-  }
-
-  // Handle last section if no description was found
-  if (currentSectionTitle && !sections.find(s => s.title === currentSectionTitle)) {
-    sections.push({ title: currentSectionTitle, description: '' })
-  }
-
-  if (sections.length === 0) return null
-  return { title, sections }
 }
 
 interface ResumeState {
@@ -339,55 +309,84 @@ export class RawScriptGenerationOrchestrator {
         const sectionPrompt = getSectionGenerationPrompt(section.title, section.description)
         const sectionUserMessage = `Here is the outline for the full script:\n\n${outlineText}\n\nHere is what has been written so far:\n\n${scriptContent}\n\n${sectionPrompt}`
 
-        const sectionMessages: ChatMessage[] = [
-          { role: 'system', content: getSystemPrompt() },
-          { role: 'user', content: request.prompt },
-          { role: 'assistant', content: outlineText },
-          { role: 'user', content: sectionUserMessage }
-        ]
+        const runSectionAttempt = async (userMessage: string): Promise<string> => {
+          const sectionMessages: ChatMessage[] = [
+            { role: 'system', content: getSystemPrompt() },
+            { role: 'user', content: request.prompt },
+            { role: 'assistant', content: outlineText },
+            { role: 'user', content: userMessage }
+          ]
 
-        this.callbacks.dispatch({
-          type: 'START_GENERATION',
-          conversationId,
-          messages: sectionMessages
-        })
+          this.callbacks.dispatch({
+            type: 'START_GENERATION',
+            conversationId,
+            messages: sectionMessages
+          })
 
-        this.callbacks.dispatch({
-          type: 'SET_GENERATION_PROGRESS',
-          conversationId,
-          isComplete: false,
-          sectionTitle: section.title
-        })
+          this.callbacks.dispatch({
+            type: 'SET_GENERATION_PROGRESS',
+            conversationId,
+            isComplete: false,
+            sectionTitle: section.title
+          })
 
-        const sectionStream = this.services.scriptService.regenerateSection(
-          { prompt: sectionUserMessage, conversationId, sectionTitle: section.title },
-          sectionMessages,
-          abortSignal
-        )
+          const sectionStream = this.services.scriptService.regenerateSection(
+            { prompt: userMessage, conversationId, sectionTitle: section.title },
+            sectionMessages,
+            abortSignal
+          )
 
-        const sectionText = await this.streamToString(
-          sectionStream,
-          conversationId,
-          abortSignal,
-          (accumulated) => {
+          const text = await this.streamToString(
+            sectionStream,
+            conversationId,
+            abortSignal,
+            (accumulated) => {
+              this.callbacks.dispatch({
+                type: 'UPDATE_CURRENT_GENERATION',
+                conversationId,
+                response: ensureSectionHeading(section.title, accumulated)
+              })
+            }
+          )
+
+          this.callbacks.dispatch({
+            type: 'COMPLETE_GENERATION',
+            conversationId,
+            response: ensureSectionHeading(section.title, text)
+          })
+
+          return text
+        }
+
+        let sectionText = await runSectionAttempt(sectionUserMessage)
+        let wordCount = countWords(sectionText)
+
+        // A section well outside the word target gets one corrective retry;
+        // the attempt closer to the target is kept
+        if (shouldRetrySection(wordCount)) {
+          this.persistConversation(conversationId)
+
+          const retryText = await runSectionAttempt(
+            `${sectionUserMessage}\n\n${buildRetryNote(wordCount)}`
+          )
+
+          sectionText = pickBetterSectionText(sectionText, retryText)
+          wordCount = countWords(sectionText)
+
+          if (sectionText !== retryText) {
+            // The first attempt won: overwrite the retry generation's stored
+            // response so consolidation-by-title lands on the kept text
             this.callbacks.dispatch({
-              type: 'UPDATE_CURRENT_GENERATION',
+              type: 'COMPLETE_GENERATION',
               conversationId,
-              response: `## ${section.title}\n${accumulated}`
+              response: ensureSectionHeading(section.title, sectionText)
             })
           }
-        )
+        }
 
-        const wordCount = countWords(sectionText)
         sectionWordCounts.push(wordCount)
 
-        scriptContent += `\n\n## ${section.title}\n${sectionText}`
-
-        this.callbacks.dispatch({
-          type: 'COMPLETE_GENERATION',
-          conversationId,
-          response: `## ${section.title}\n${sectionText}`
-        })
+        scriptContent += '\n\n' + ensureSectionHeading(section.title, sectionText)
 
         this.callbacks.dispatch({
           type: 'SET_GENERATION_PHASE',
@@ -500,6 +499,10 @@ export class RawScriptGenerationOrchestrator {
     this.activeGenerations.add(generationKey)
 
     try {
+      // A fresh regeneration run owns generation state from here; without this
+      // a previously completed run's state would swallow the progress updates
+      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
@@ -541,7 +544,7 @@ export class RawScriptGenerationOrchestrator {
           this.callbacks.dispatch({
             type: 'UPDATE_CURRENT_GENERATION',
             conversationId,
-            response: accumulated
+            response: ensureSectionHeading(request.sectionTitle, accumulated)
           })
         }
       )
@@ -558,13 +561,119 @@ export class RawScriptGenerationOrchestrator {
       this.callbacks.dispatch({
         type: 'COMPLETE_GENERATION',
         conversationId,
-        response: sectionText
+        response: ensureSectionHeading(request.sectionTitle, sectionText)
       })
 
       this.persistConversation(conversationId)
 
     } catch (error) {
       console.error('Section regeneration error:', error)
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: true,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+
+      throw error
+    } finally {
+      this.activeGenerations.delete(generationKey)
+    }
+  }
+
+  // Whole-script refinement: sends the full conversation history plus the
+  // user's instruction; the model replies with ONLY the changed sections in
+  // "## Section" format, stored as a new generation so consolidation-by-title
+  // replaces them in the document
+  async refineScript(
+    request: RefinementRequest,
+    conversation: RawConversation,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const conversationId = conversation.id
+    const generationKey = `${conversationId}-refine`
+
+    if (this.activeGenerations.has(generationKey)) return
+    this.activeGenerations.add(generationKey)
+
+    try {
+      // A fresh refinement run owns generation state from here
+      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: false
+      })
+
+      // Build complete conversation history from all generations
+      const messages: ChatMessage[] = []
+
+      for (const generation of conversation.generations) {
+        messages.push(...generation.messages)
+        if (generation.response) {
+          messages.push({ role: 'assistant', content: generation.response })
+        }
+      }
+
+      messages.push({ role: 'user', content: request.prompt })
+
+      this.callbacks.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages
+      })
+
+      this.persistConversation(conversationId)
+
+      const stream = this.services.scriptService.regenerateSection(
+        { prompt: request.prompt, conversationId, sectionTitle: '' },
+        messages,
+        abortSignal
+      )
+
+      const responseText = await this.streamToString(
+        stream,
+        conversationId,
+        abortSignal,
+        (accumulated) => {
+          this.callbacks.dispatch({
+            type: 'UPDATE_CURRENT_GENERATION',
+            conversationId,
+            response: accumulated
+          })
+        }
+      )
+
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: responseText
+      })
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: true
+      })
+
+      this.persistConversation(conversationId)
+
+    } catch (error) {
+      // The user stopped the refinement: keep what streamed in
+      if (abortSignal?.aborted) {
+        this.callbacks.dispatch({
+          type: 'SET_GENERATION_PROGRESS',
+          conversationId,
+          isComplete: true
+        })
+
+        this.persistConversation(conversationId)
+        return
+      }
+
+      console.error('Script refinement error:', error)
 
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PROGRESS',

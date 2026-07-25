@@ -14,6 +14,19 @@ export interface RegenerationRequest {
 export interface SectionRegenerationRequest {
   conversationId: string
   sectionTitle: string
+  instruction?: string
+}
+
+// A whole-script refinement instruction from the user (story 1.6)
+export interface ScriptRefinementRequest {
+  conversationId: string
+  instruction: string
+}
+
+// The fully built refinement prompt handed to the orchestrator
+export interface RefinementRequest {
+  prompt: string
+  conversationId: string
 }
 
 export interface GenerationProgress {

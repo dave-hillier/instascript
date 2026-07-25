@@ -1,1 +1,10 @@
-Please regenerate the "{sectionTitle}" section of the script to be at least 400 words long. Keep the same overall theme and structure to fit in with the flow of the document. The regenerated section should be substantially longer and more detailed than the original while maintaining the therapeutic flow and hypnotic language patterns.
+Now rewrite the "{sectionTitle}" section of the script.
+
+This section should be: {sectionDescription}
+{continuity}
+Requirements:
+- Write approximately 400 words for this section
+- Output ONLY the section content (do NOT include the ## header, it will be added automatically)
+- Maintain continuity with the surrounding sections and the overall arc of the outline
+- Follow all the style rules from the system prompt
+- Do not include any preamble or meta-commentary

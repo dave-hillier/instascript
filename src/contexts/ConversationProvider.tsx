@@ -1,6 +1,6 @@
 import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { RawConversation, GenerationRequest, RegenerationRequest, SectionRegenerationRequest } from '../types/conversation'
+import type { RawConversation, GenerationRequest, RegenerationRequest, SectionRegenerationRequest, ScriptRefinementRequest } from '../types/conversation'
 import { ConversationContext } from './ConversationContext'
 import type { ConversationContextType } from './ConversationContext'
 import { useServices } from '../hooks/useServices'
@@ -10,7 +10,7 @@ import { useAppContext } from '../hooks/useAppContext'
 import { rawConversationReducer } from '../reducers/rawConversationReducer'
 import { getStoredConversations, setStoredConversation, createRawConversation } from '../services/conversationStorage'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
-import { getSectionRegenerationPrompt } from '../services/prompts'
+import { buildSectionRegenerationPromptFromConversation, getScriptRefinementPrompt } from '../services/prompts'
 
 type ConversationProviderProps = {
   children: ReactNode
@@ -92,8 +92,13 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
       throw new Error(`Conversation ${request.conversationId} not found`)
     }
 
-    // Generate the prompt internally - encapsulate the prompt logic
-    const prompt = getSectionRegenerationPrompt(request.sectionTitle)
+    // Build the prompt from the section's outline entry, the current
+    // surrounding sections, and any custom instruction from the user
+    const prompt = buildSectionRegenerationPromptFromConversation(
+      conversation,
+      request.sectionTitle,
+      request.instruction
+    )
 
     const regenerationRequest: RegenerationRequest = {
       prompt,
@@ -109,6 +114,39 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     try {
       const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
       await orchestrator.regenerateSection(regenerationRequest, conversation, controller.signal)
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
+    }
+  }, [scriptService, exampleService, stopGeneration, buildCallbacks])
+
+  const refineScript = useCallback(async (request: ScriptRefinementRequest): Promise<void> => {
+    // Abort any existing generation
+    stopGeneration()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    // Find conversation in current state
+    const conversation = conversationsRef.current.find(c => c.id === request.conversationId)
+    if (!conversation) {
+      throw new Error(`Conversation ${request.conversationId} not found`)
+    }
+
+    const prompt = getScriptRefinementPrompt(request.instruction)
+
+    const services: RawScriptServices = {
+      scriptService,
+      exampleService
+    }
+
+    try {
+      const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+      await orchestrator.refineScript(
+        { prompt, conversationId: request.conversationId },
+        conversation,
+        controller.signal
+      )
     } finally {
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null
@@ -149,6 +187,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     createConversation,
     generateScript,
     regenerateSection,
+    refineScript,
     stopGeneration
   }
 

@@ -1,0 +1,14 @@
+The user wants to refine the script above. Their instruction:
+
+{instruction}
+
+Apply this instruction by rewriting ONLY the sections that need to change.
+
+Requirements:
+- Output each changed section in full, starting with its "## Section Title" header line
+- Use the exact existing section titles; do not rename sections or invent new ones
+- Do not output sections that do not need to change
+- Do not include the document title ("# ...") or any preamble or meta-commentary
+- Keep each rewritten section at approximately 400 words
+- Maintain continuity with the sections that are not being rewritten
+- Follow all the style rules from the system prompt
