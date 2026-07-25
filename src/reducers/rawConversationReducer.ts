@@ -8,6 +8,7 @@ export type RawConversationAction =
   | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
+  | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
   | { type: 'SET_GENERATION_PROGRESS'; conversationId: string; isComplete: boolean; error?: string; sectionTitle?: string }
   | { type: 'SET_GENERATION_PHASE'; conversationId: string; phase: GenerationPhase; outline?: ScriptOutline; currentSectionIndex?: number; totalSections?: number; sectionWordCounts?: number[]; error?: string }
@@ -138,6 +139,17 @@ export const rawConversationReducer = (
       return {
         ...state,
         conversations: state.conversations.filter(conv => conv.id !== action.conversationId)
+      }
+
+    case 'CONVERSATIONS_CLEARED':
+      // Clear All Conversations wiped persistent storage; drop the in-memory
+      // copies too so nothing stale is re-saved or blocks a later import
+      return {
+        ...state,
+        conversations: [],
+        currentGeneration: null,
+        generationMachine: null,
+        reviewReport: null
       }
 
     case 'GENERATION_RESTARTED':

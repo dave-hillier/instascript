@@ -965,6 +965,162 @@ dialog footer button:last-child:hover {
   opacity: 0.85;
 }
 
+/* API key row: the key input with its Test connection action (story 5.4) */
+.api-key-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.api-key-row input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.test-connection-btn {
+  padding: 0 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.test-connection-btn:hover:not(:disabled) {
+  background-color: var(--accent-soft);
+  color: var(--ink);
+}
+
+.test-connection-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Inline outcome beneath the key row; empty until a test has run */
+dialog form p.connection-test-result[data-outcome="success"] {
+  color: var(--accent-2);
+}
+
+dialog form p.connection-test-result[data-outcome="failure"] {
+  color: var(--danger);
+}
+
+/* Library export/import (story 7.2) */
+.library-transfer {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.export-library-btn,
+.import-library-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+/* The import control is a label wrapping a visually hidden file input, so
+   it keeps native keyboard behaviour; margins from `dialog label` are reset */
+dialog label.import-library-btn {
+  margin-bottom: 0;
+}
+
+.export-library-btn:hover,
+.import-library-btn:hover {
+  background-color: var(--accent-soft);
+}
+
+.import-library-btn:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+dialog form p.library-transfer-result[data-outcome="success"] {
+  color: var(--accent-2);
+}
+
+dialog form p.library-transfer-result[data-outcome="failure"] {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ */
+/* Age acknowledgement gate (story 6.1)                                */
+/* ------------------------------------------------------------------ */
+
+dialog.age-gate {
+  max-width: 26rem;
+}
+
+dialog.age-gate section {
+  padding: 1.5rem;
+}
+
+dialog.age-gate section p {
+  margin: 0 0 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+dialog.age-gate section p:last-child {
+  margin-bottom: 0;
+}
+
+dialog.age-gate footer {
+  flex-wrap: wrap;
+}
+
+/* Neutral page shown after declining the age notice */
+.age-declined {
+  justify-content: center;
+  text-align: center;
+}
+
+.age-declined h2 {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 500;
+  margin: 0 0 1rem;
+}
+
+.age-declined p {
+  max-width: 34rem;
+  margin: 0 0 0.75rem;
+  color: var(--ink-muted);
+  line-height: 1.6;
+}
+
+.age-declined button {
+  margin-top: 1rem;
+  padding: 0.5rem 1.125rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-muted);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.age-declined button:hover {
+  background-color: var(--accent-soft);
+  color: var(--ink);
+}
+
 /* ------------------------------------------------------------------ */
 /* Script page: generation lifecycle notices (failed / interrupted)    */
 /* ------------------------------------------------------------------ */

@@ -4,13 +4,15 @@ import { Settings, ArrowLeft, Check, Copy, Download, Eye, EyeOff, Library, Theat
 import { useAppContext } from './hooks/useAppContext'
 import { useConversationContext } from './hooks/useConversationContext'
 import { SettingsModal } from './components/SettingsModal'
+import { AgeGate } from './components/AgeGate'
 import { InlineTitleEditor } from './components/InlineTitleEditor'
 import { buildConsolidatedMarkdown, markdownFilename } from './utils/scriptExport'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import { ExamplesPage } from './pages/ExamplesPage'
 import type { APIProvider } from './services/config'
-import { clearStoredConversations } from './services/conversationStorage'
+import { clearStoredConversations, loadStoredConversations, saveStoredConversation } from './services/conversationStorage'
+import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryImportCounts } from './services/libraryTransfer'
 import './App.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -53,7 +55,11 @@ function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
   const { state, dispatch } = useAppContext()
-  const { getConversationByScriptId } = useConversationContext()
+  const {
+    getConversationByScriptId,
+    state: conversationState,
+    dispatch: conversationDispatch
+  } = useConversationContext()
 
   const [uiState, uiDispatch] = useReducer(uiReducer, {
     theme: (() => {
@@ -297,8 +303,9 @@ function AppContent() {
       localStorage.removeItem('conversations')
       localStorage.removeItem('scripts')
       // Conversations persist to OPFS (with localStorage as fallback);
-      // clear that store too
+      // clear that store too, and the in-memory conversation state with it
       void clearStoredConversations()
+      conversationDispatch({ type: 'CONVERSATIONS_CLEARED' })
       // Clear scripts from state (they're stored in localStorage via AppProvider)
       dispatch({ type: 'CLEAR_SCRIPTS' })
       // Close the modal
@@ -308,6 +315,51 @@ function AppContent() {
         navigate('/')
       }
     }
+  }
+
+  // Exports every script and conversation as one JSON file (story 7.2).
+  // Conversations are read back through the storage layer, which is the
+  // source of truth whether they live in OPFS or localStorage.
+  const handleExportLibrary = async () => {
+    const conversations = await loadStoredConversations()
+    const json = serializeLibraryExport(state.scripts, conversations)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = window.document.createElement('a')
+    anchor.href = url
+    anchor.download = `instascript-library-${new Date().toISOString().slice(0, 10)}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // Imports a previously exported library, merging it into this browser:
+  // anything whose id already exists here is skipped, never overwritten.
+  // Throws with a readable reason on an invalid file; the settings dialog
+  // shows it inline.
+  const handleImportLibrary = async (file: File): Promise<LibraryImportCounts> => {
+    const imported = parseLibraryExport(await file.text())
+    const storedConversations = await loadStoredConversations()
+    const result = mergeLibrary(imported, {
+      scriptIds: state.scripts.map(script => script.id),
+      // Collision checks cover both what is persisted and anything created
+      // in memory this session that storage has not caught up with yet
+      conversations: [...storedConversations, ...conversationState.conversations]
+    })
+    for (const script of result.newScripts) {
+      // A script exported mid-generation cannot still be generating here —
+      // reconcile it to draft, as the loader does for interrupted scripts
+      dispatch({
+        type: 'ADD_SCRIPT',
+        script: script.status === 'in-progress' ? { ...script, status: 'draft' } : script
+      })
+    }
+    for (const conversation of result.newConversations) {
+      saveStoredConversation(conversation)
+    }
+    if (result.newConversations.length > 0) {
+      conversationDispatch({ type: 'LOAD_CONVERSATIONS', conversations: result.newConversations })
+    }
+    return result
   }
 
   const handleOpenSettings = () => {
@@ -324,6 +376,7 @@ function AppContent() {
 
   return (
     <div data-theme={effectiveTheme}>
+      <AgeGate>
       <header role="banner">
         <div>
           {(isScriptPage || isExamplesPage) && (
@@ -445,7 +498,10 @@ function AppContent() {
         reviewPass={reviewPass}
         onSave={handleSaveSettings}
         onClearConversations={handleClearConversations}
+        onExportLibrary={handleExportLibrary}
+        onImportLibrary={handleImportLibrary}
       />
+      </AgeGate>
     </div>
   )
 }
