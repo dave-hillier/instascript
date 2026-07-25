@@ -1,6 +1,6 @@
 # InstaScript User Stories
 
-InstaScript is a client-side React app that generates spoken-word hypnosis scripts from a short brief. Generation is powered by the OpenAI API (or a mock provider), grounded with example scripts retrieved from an OpenAI vector store. Everything persists to localStorage.
+InstaScript is a client-side React app that generates spoken-word hypnosis scripts from a short brief. Generation is powered by OpenAI or OpenRouter (or a mock provider), outline-first, grounded with example scripts selected from a local corpus. Scripts persist to localStorage; conversations persist to OPFS.
 
 Stories are grouped by epic. Each story is marked:
 
@@ -32,24 +32,24 @@ Acceptance criteria:
 As a user, I want generation to draw on relevant example scripts, so that output quality and style match proven material.
 
 Acceptance criteria:
-- The prompt is used to search a vector store for relevant examples
+- The prompt is used to search the local example corpus for relevant examples
 - The number of examples adapts to the available context window
 - Generation proceeds gracefully with zero examples if the store is unavailable
 
 ### 1.4 Stop a generation in progress [Implemented]
 As a user, I want to press Stop while a script is generating, so that I can abandon a generation that has gone in the wrong direction without waiting or paying for the rest.
 
-Notes: `stopGeneration` aborts the in-flight request and streamed content is kept. The script's stored status is not updated on stop — that remains part of story 1.5.
+Notes: `stopGeneration` aborts the in-flight request; streamed content is kept and the script is marked draft.
 
 Acceptance criteria:
 - Pressing Stop aborts the in-flight API request
 - Content streamed so far is kept and the script is marked as stopped/draft
 - Regeneration is re-enabled after stopping
 
-### 1.5 Recover from a failed or interrupted generation [Gap]
+### 1.5 Recover from a failed or interrupted generation [Implemented]
 As a user, I want a clear error and a Retry action when generation fails (network error, invalid API key, page refresh mid-stream), so that I am not left with a permanently half-finished script.
 
-Notes: today an error is only visible while the generating flag is set, and a refresh mid-stream leaves the script stuck with whatever was last throttled to storage; script `status` is never updated from `in-progress`.
+Notes: on completion the script status becomes complete and its title/length update from the generated document; stop or terminal error settles to draft. Interrupted scripts (in-progress with no active generation at load) are reconciled to draft and offered Retry.
 
 Acceptance criteria:
 - A failed generation shows a persistent error state on the script page with the reason
@@ -57,7 +57,7 @@ Acceptance criteria:
 - On app load, scripts stuck in `in-progress` with no active generation are shown as interrupted, with a resume/retry option
 - Script status transitions correctly: in-progress → complete (or draft/failed)
 
-### 1.6 Refine the whole script with a follow-up instruction [Gap]
+### 1.6 Refine the whole script with a follow-up instruction [Implemented]
 As a user, I want to give a follow-up instruction after generation (e.g. "make the induction slower and remove the counting"), so that I can iterate on the script conversationally instead of only regenerating sections verbatim.
 
 Notes: conversations already store the full message history per generation, so multi-turn refinement is a natural extension.
@@ -78,17 +78,17 @@ Acceptance criteria:
 - The regenerated section streams in live and replaces the original in the consolidated document
 - Regenerate is disabled while any generation is in progress
 
-### 2.2 Regenerate a section with custom instructions [Gap]
+### 2.2 Regenerate a section with custom instructions [Implemented]
 As a user, I want to tell the app *how* to regenerate a section (e.g. "less repetition, more breathing focus"), so that regeneration is directed rather than a fixed "make it longer" prompt.
 
-Notes: the current regeneration prompt is hardcoded to "at least 400 words / substantially longer".
+Notes: an optional instruction input on each section header is appended to the outline-aware regeneration prompt.
 
 Acceptance criteria:
 - The Regenerate action optionally accepts a free-text instruction
 - The instruction is combined with the section-regeneration prompt
 - Leaving it empty falls back to the default behaviour
 
-### 2.3 Manually edit script content [Gap]
+### 2.3 Manually edit script content [Implemented]
 As a user, I want to edit section text and the script title directly, so that I can make small wording fixes without burning a regeneration.
 
 Acceptance criteria:
@@ -130,7 +130,7 @@ Notes: action buttons are now always rendered and revealed on `:hover`/`:focus-w
 Acceptance criteria:
 - Actions become visible/focusable when the list item or its contents receive keyboard focus
 
-### 3.4 Search and sort the library [Gap]
+### 3.4 Search and sort the library [Implemented]
 As a user with many scripts, I want to search by title/prompt and sort by date, so that I can find a script quickly as the library grows.
 
 Acceptance criteria:
@@ -138,7 +138,7 @@ Acceptance criteria:
 - Sort by newest/oldest; newest first by default
 - Search and sort state live in the URL query string, consistent with the tab pattern
 
-### 3.5 See meaningful metadata on each script [Partial]
+### 3.5 See meaningful metadata on each script [Implemented]
 As a user, I want each list item to show useful facts (word count, estimated spoken duration, model used), so that I can tell scripts apart at a glance.
 
 Notes: the list renders `comments`, `status` and `length` fields, but nothing in the app ever sets `comments` or `length`; every item shows the static text "Generated Markdown". Word counts are already computed per section but never displayed.
@@ -151,7 +151,7 @@ Acceptance criteria:
 
 ## Epic 4: Using the Finished Script
 
-### 4.1 Copy or export a script [Gap]
+### 4.1 Copy or export a script [Implemented]
 As a user, I want to copy the whole script to the clipboard or download it as a markdown/text file, so that I can use it outside the app (print it, load it into a teleprompter, share it).
 
 Acceptance criteria:
@@ -159,7 +159,7 @@ Acceptance criteria:
 - Download as `.md` with the title as filename
 - Export reflects the current consolidated state, including regenerated sections
 
-### 4.2 Read-aloud / performance mode [Gap]
+### 4.2 Read-aloud / performance mode [Implemented]
 As a user performing the script, I want a distraction-free reading view with larger text and controllable scrolling, so that I can read it aloud comfortably.
 
 Notes: scripts are explicitly written to be spoken (pacing marks `…` and `⏤`, bracketed stage directions), but the app has no reading affordance beyond the normal page.
@@ -169,7 +169,7 @@ Acceptance criteria:
 - Pacing marks and stage directions visually distinguished
 - Optional auto-scroll at an adjustable speed
 
-### 4.3 Duplicate a script as a starting point [Gap]
+### 4.3 Duplicate a script as a starting point [Implemented]
 As a user, I want to duplicate an existing script into a new conversation, so that I can create a variant without destroying the original.
 
 Acceptance criteria:
@@ -205,10 +205,10 @@ Acceptance criteria:
 - Example retrieval still works when the provider is OpenRouter (via local search, or degrades gracefully to none)
 - The script's stored provider/model metadata reflects the OpenRouter model used
 
-### 5.4 Validate the API key and surface configuration problems [Gap]
+### 5.4 Validate the API key and surface configuration problems [Implemented]
 As a user, I want to know immediately if my API key is invalid or the vector store is missing, so that I don't discover it via a failed generation.
 
-Notes: the vector store name (`hypno-default`) is hardcoded and failures are only logged to the console.
+Notes: implemented as a Test connection button per provider (OpenAI/OpenRouter) performing a cheap authenticated models call with an inline result. The vector-store criteria below are obsolete — hosted retrieval was removed in favour of the local corpus (8.1).
 
 Acceptance criteria:
 - A "test connection" action in settings verifies the key
@@ -222,10 +222,10 @@ Acceptance criteria:
 - Clear action in settings with a confirmation dialog
 - Removes all script and conversation storage, including legacy formats, and returns to the home page
 
-### 5.6 Understand how my data and key are stored [Gap]
+### 5.6 Understand how my data and key are stored [Implemented]
 As a privacy-conscious user of an adult-content app, I want to know that scripts and my API key live only in this browser's storage, so that I can make an informed decision about using it on a shared device.
 
-Notes: API keys now live in sessionStorage (cleared when the browser closes) rather than localStorage — a real improvement. The in-UI disclosure is still missing.
+Notes: a factual disclosure in Settings' data section covers localStorage scripts, OPFS conversations, sessionStorage keys, and Clear All Conversations as the removal mechanism.
 
 Acceptance criteria:
 - A short note in settings stating data is stored locally, unencrypted, in the browser
@@ -233,7 +233,7 @@ Acceptance criteria:
 
 ## Epic 6: Content Safeguards
 
-### 6.1 Age acknowledgement [Gap]
+### 6.1 Age acknowledgement [Implemented]
 As the operator, I want a one-time 18+ acknowledgement before the app can be used, so that the adult nature of the content is disclosed up front.
 
 Acceptance criteria:
@@ -249,17 +249,17 @@ Acceptance criteria:
 - Scripts stored per-key as YAML front-matter + markdown; legacy JSON is migrated on load
 - Conversations store the complete message history and every generation, saved throttled during streaming and on completion
 
-### 7.2 Export and import my library [Gap]
+### 7.2 Export and import my library [Implemented]
 As a user, I want to export my whole library to a file and import it elsewhere, so that I can back it up or move between browsers, since localStorage is device-bound and evictable.
 
 Acceptance criteria:
 - Export produces a single file containing all scripts and conversations
 - Import merges without duplicating existing IDs and validates the format
 
-### 7.3 Store conversation history in OPFS [Gap]
+### 7.3 Store conversation history in OPFS [Implemented]
 As a user with a large script library, I want conversation history stored in the Origin Private File System instead of localStorage, so that storage is not constrained by localStorage quotas or blocking synchronous writes during streaming.
 
-Notes: scripts already serialize as YAML front-matter + markdown; the same hybrid format would suit conversation files in OPFS.
+Notes: conversations persist to OPFS (one file per conversation, YAML front-matter + markdown) behind a small storage interface with a serialized write queue; legacy localStorage conversations migrate on first load, and localStorage remains the fallback where OPFS is unavailable.
 
 Acceptance criteria:
 - Conversations persist to OPFS with localStorage data migrated on first load
@@ -268,25 +268,18 @@ Acceptance criteria:
 
 ## Epic 8: Example Retrieval & Generation Quality
 
-### Background: rethinking the retrieval and generation pipeline
+### Background: why the pipeline is shaped this way
 
-**Current pipeline.** The user's brief is sent to OpenAI's hosted vector store search (`hypno-default`), which returns top-k *chunks* of example scripts. Those chunks are prepended to the prompt alongside the system prompt, and the whole script is generated in a single streamed completion. The example count adapts to the context budget (`getRecommendedExampleCount`), but selection is pure similarity ranking.
+**This is few-shot style transfer, not RAG.** The app originally used OpenAI's hosted vector store, retrieving top-k *chunks* of example scripts by similarity. That was the wrong shape twice over: RAG grounds answers in knowledge the model lacks, whereas InstaScript shows the model exemplars of register, pacing and structure — so whole scripts matter (the arc is the point), and diversity matters more than raw similarity (five near-duplicates teach less than three deliberately different scripts). Hosted retrieval also coupled examples to an OpenAI key and sent every brief to a second service — a privacy cost given the content.
 
-**Is this RAG, and is RAG still a good idea?** RAG as a concept remains standard practice, but naive top-k chunk retrieval — which is what this is — is the version that has aged poorly. More importantly, this use case is not really RAG at all. RAG grounds answers in knowledge the model lacks; InstaScript is doing *few-shot style transfer* — showing the model exemplars of the register, pacing and structure it should produce. Framed that way, the current implementation has two concrete defects:
+**Why retrieval is local.** The corpus is tens-to-hundreds of scripts, so brute-force lexical search (hand-rolled BM25 over title/tags/content) runs in microseconds, works offline with any provider, and keeps briefs on-device. Selection applies MMR-style diversity and fits whole scripts to the context-window budget. In-browser embeddings (transformers.js cached in IndexedDB) remain the upgrade path if lexical selection ever proves visibly worse.
 
-1. **It retrieves chunks, not scripts.** The vector search returns mid-script fragments joined with newlines, so the model never sees a complete arc — while the system prompt's whole thesis is the induction → transformation → return arc. Whole scripts as exemplars teach structure, not just vocabulary.
-2. **Top-k similarity on a narrow corpus returns near-duplicates.** Five very similar examples teach less than three deliberately different ones. Selection needs diversity (MMR or tag-bucket spreading), not just relevance.
+**Why generation is outline-first.** A single streamed completion is bad at pacing, the 20–30 minute spoken target, and controlled escalation. Generating an outline (sections, themes, per-section word targets) and then writing each section against it makes those properties enforceable: word counts become targets with automatic retry, section regeneration has a real spec, and Stop lands on section boundaries. The optional critique pass (8.5) closes the loop by checking drafts against the system prompt's style rules and revising violations, turning the rules from a request into an enforcement mechanism.
 
-It also couples retrieval to an OpenAI key, which blocks OpenRouter (story 5.3), and sends every brief to a second hosted service — a privacy cost given the content.
-
-**Why local retrieval is easy here.** The corpus is tens-to-hundreds of scripts, not millions of documents. At that scale brute-force search over every example runs in microseconds — no vector database or ANN index is needed. Plain lexical search (BM25) is often competitive with embeddings on a corpus this small; in-browser embeddings (transformers.js, computed once per example and cached in IndexedDB) are the upgrade path if lexical selection proves visibly worse. Local retrieval works with any provider, costs nothing per query, works offline, and keeps briefs on the device.
-
-**Improving the generation algorithm.** The highest-leverage change is outline-first generation (8.4): brief → structured plan (sections, themes, escalation curve, per-section word targets) → sections generated against the plan. This directly attacks what one-shot generation is bad at — pacing, hitting the 20–30 minute spoken target, controlled escalation — and improves existing features for free: section regeneration gets a real spec instead of the hardcoded "make it longer" prompt, the per-section word counts already computed (and currently discarded) become enforceable targets, and Stop gets clean section boundaries. The second, cheaper win is a critique pass (8.5): the system prompt states 14 explicit style rules; a review step that checks the draft against them and revises violating sections turns those rules from a request into an enforcement mechanism. Both are additions, not replacements — single-shot generation stays as the fast path.
-
-### 8.1 Local example search [Partial]
+### 8.1 Local example search [Implemented]
 As a user, I want example retrieval to run entirely in my browser against a local corpus, so that examples work with any provider, cost nothing per query, and my briefs are not sent to a second service.
 
-Notes: the hosted vector store has been replaced by `bundledExamples.ts` — retrieval is now local, offline, key-free and provider-agnostic. However `searchExamples` ignores the query entirely and returns the first N bundled examples, so there is no *search*: no relevance ranking and no diversity. The remaining work is the selection itself. The corpus is small (tens to low hundreds of scripts), so brute-force search is fine — no ANN index needed. Two viable levels: (a) lexical search (BM25 via a small library such as minisearch) over title/tags/body, which is likely competitive at this corpus size; (b) embeddings via transformers.js (e.g. bge-small) computed at import time and stored in IndexedDB, with the query embedded on device. Start with (a); add (b) only if selection quality demands it.
+Notes: hand-rolled BM25 lexical ranking over tokenized title/tags/content of the merged bundled + user corpus, unit-tested; whole scripts, no chunks, no network, no key.
 
 Acceptance criteria:
 - Example scripts live locally (bundled corpus and/or user-imported files) with metadata (title, tags, themes)
@@ -294,7 +287,7 @@ Acceptance criteria:
 - Search runs offline with no API key and works identically for OpenAI and OpenRouter providers
 - The hosted vector store path is removed (or kept behind a flag during transition)
 
-### 8.2 Manage my example corpus [Gap]
+### 8.2 Manage my example corpus [Implemented]
 As a user, I want to import, tag and remove my own example scripts, so that generation is grounded in material whose style I actually want.
 
 Acceptance criteria:
@@ -302,20 +295,20 @@ Acceptance criteria:
 - Examples carry editable tags/themes used in selection
 - A corpus view lists examples with the ability to delete or re-tag
 
-### 8.3 Diverse, budget-aware exemplar selection [Gap]
+### 8.3 Diverse, budget-aware exemplar selection [Implemented]
 As a user, I want the app to pick a small set of *different* high-quality examples that fit the context budget, so that the model sees range rather than five variations of the same script.
 
-Notes: the context-window-aware count logic already exists (`getRecommendedExampleCount`); this story changes *which* examples fill that budget. Select by relevance, then apply diversity (e.g. maximal marginal relevance or simple tag-bucket spreading), preferring whole scripts whose combined size fits the budget.
+Notes: relevance-ranked candidates are filtered by greedy MMR-style diversity (token-overlap penalty against already-selected examples) and fitted to the token budget using actual example sizes. The examples that informed a generation are recorded on the conversation and shown on the script page.
 
 Acceptance criteria:
 - Selected examples are deduplicated by similarity/tags, not just top-k
 - Selection respects the computed token budget using real example sizes
 - The script page (or a debug view) can show which examples informed a generation
 
-### 8.4 Outline-first generation [Partial]
+### 8.4 Outline-first generation [Implemented]
 As a user, I want generation to first produce a plan — section list, themes, escalation arc, per-section word targets — and then write each section against that plan, so that pacing and structure are controlled rather than hoped for.
 
-Notes: the core pipeline is implemented — an outline-then-sections state machine generates each section against its outline entry (~400-word target), the outline is stored as generation 0, and the word-count meter shows per-section progress against the target during generation. Remaining: out-of-range sections are not automatically retried, and *regeneration* of an existing section still uses the old hardcoded "make it longer" prompt rather than the section's outline entry.
+Notes: an outline-then-sections state machine generates each section against its outline entry (~400-word target); the outline is stored as generation 0 and the word-count meter shows per-section progress. Sections completing outside roughly 250–600 words are retried once, keeping the attempt closer to target. Section regeneration builds its prompt from the outline entry and surrounding sections.
 
 Acceptance criteria:
 - Stage 1 produces a structured outline from the brief (and exemplars); stage 2 generates sections sequentially with the outline and prior sections as context
@@ -323,7 +316,7 @@ Acceptance criteria:
 - The outline is stored with the conversation and shown on the script page
 - Section regeneration uses the section's outline entry plus surrounding sections, replacing the current hardcoded "make it longer" prompt
 
-### 8.5 Style-rule critique pass [Gap]
+### 8.5 Style-rule critique pass [Implemented]
 As a user, I want an optional automatic review pass that checks the draft against the style rules (pacing marks, breathwork, affirmative language, no clichéd visualisations, escalation) and revises sections that violate them, so that quality is enforced rather than requested.
 
 Acceptance criteria:
