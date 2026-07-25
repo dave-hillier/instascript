@@ -36,10 +36,10 @@ Acceptance criteria:
 - The number of examples adapts to the available context window
 - Generation proceeds gracefully with zero examples if the store is unavailable
 
-### 1.4 Stop a generation in progress [Partial]
+### 1.4 Stop a generation in progress [Implemented]
 As a user, I want to press Stop while a script is generating, so that I can abandon a generation that has gone in the wrong direction without waiting or paying for the rest.
 
-Notes: a Stop button is rendered and `AbortSignal` plumbing exists end-to-end, but the button only logs to the console — no abort controller is ever created or passed.
+Notes: `stopGeneration` aborts the in-flight request and streamed content is kept. The script's stored status is not updated on stop — that remains part of story 1.5.
 
 Acceptance criteria:
 - Pressing Stop aborts the in-flight API request
@@ -119,16 +119,15 @@ As a user, I want to archive scripts I'm done with and delete ones I don't want,
 Acceptance criteria:
 - Archive toggles between the active list and the archive
 - Delete asks for confirmation and is irreversible
-- Actions are available on hover (desktop) and via left-swipe (touch)
+- Actions are available on hover/focus (desktop) and always visible on touch widths
 
-### 3.3 Reach archive/delete actions from the keyboard [Gap]
+### 3.3 Reach archive/delete actions from the keyboard [Implemented]
 As a keyboard or screen-reader user, I want the archive and delete actions to be reachable without a mouse or touch gesture, so that the library is fully accessible.
 
-Notes: action buttons only render on hover or swipe, so keyboard focus can never reveal them (WCAG 2.1.1).
+Notes: action buttons are now always rendered and revealed on `:hover`/`:focus-within` (always visible on touch widths). The swipe gesture was removed in favour of this simpler model.
 
 Acceptance criteria:
 - Actions become visible/focusable when the list item or its contents receive keyboard focus
-- Swipe and hover behaviour is unchanged
 
 ### 3.4 Search and sort the library [Gap]
 As a user with many scripts, I want to search by title/prompt and sort by date, so that I can find a script quickly as the library grows.
@@ -192,10 +191,10 @@ Acceptance criteria:
 - API key field shown only for OpenAI, masked, with saved-state feedback
 - Settings persist and are used by subsequent generations
 
-### 5.3 Generate via OpenRouter [Gap]
+### 5.3 Generate via OpenRouter [Implemented]
 As a user, I want OpenRouter as a provider alongside OpenAI and mock, so that I can use a single key to reach many models — including ones better suited to adult creative writing than OpenAI's.
 
-Notes: OpenRouter exposes an OpenAI-compatible API (`https://openrouter.ai/api/v1`), so the existing `openai` client works with a `baseURL` override. The blocker is that example retrieval currently goes through OpenAI's hosted vector store, which coupled RAG to the OpenAI key — see story 8.1 (local example search), which is a prerequisite for OpenRouter being a first-class provider.
+Notes: implemented via `openrouter.ts` with its own sessionStorage key, preset model shortlist plus a custom model-id input. The hosted vector store was removed at the same time, so example retrieval no longer depends on an OpenAI key. Model shortlist is hardcoded rather than fetched from OpenRouter's `/models` endpoint.
 
 Acceptance criteria:
 - Provider select gains OpenRouter, with its own key field and stored key
@@ -222,7 +221,9 @@ Acceptance criteria:
 - Removes all script and conversation storage, including legacy formats, and returns to the home page
 
 ### 5.6 Understand how my data and key are stored [Gap]
-As a privacy-conscious user of an adult-content app, I want to know that scripts and my API key live only in this browser's localStorage, so that I can make an informed decision about using it on a shared device.
+As a privacy-conscious user of an adult-content app, I want to know that scripts and my API key live only in this browser's storage, so that I can make an informed decision about using it on a shared device.
+
+Notes: API keys now live in sessionStorage (cleared when the browser closes) rather than localStorage — a real improvement. The in-UI disclosure is still missing.
 
 Acceptance criteria:
 - A short note in settings stating data is stored locally, unencrypted, in the browser
@@ -270,10 +271,10 @@ It also couples retrieval to an OpenAI key, which blocks OpenRouter (story 5.3),
 
 **Improving the generation algorithm.** The highest-leverage change is outline-first generation (8.4): brief → structured plan (sections, themes, escalation curve, per-section word targets) → sections generated against the plan. This directly attacks what one-shot generation is bad at — pacing, hitting the 20–30 minute spoken target, controlled escalation — and improves existing features for free: section regeneration gets a real spec instead of the hardcoded "make it longer" prompt, the per-section word counts already computed (and currently discarded) become enforceable targets, and Stop gets clean section boundaries. The second, cheaper win is a critique pass (8.5): the system prompt states 14 explicit style rules; a review step that checks the draft against them and revises violating sections turns those rules from a request into an enforcement mechanism. Both are additions, not replacements — single-shot generation stays as the fast path.
 
-### 8.1 Local example search [Gap]
+### 8.1 Local example search [Partial]
 As a user, I want example retrieval to run entirely in my browser against a local corpus, so that examples work with any provider, cost nothing per query, and my briefs are not sent to a second service.
 
-Notes: the corpus is small (tens to low hundreds of scripts), so brute-force search is fine — no ANN index needed. Two viable levels: (a) lexical search (BM25 via a small library such as minisearch) over title/tags/body, which is likely competitive at this corpus size; (b) embeddings via transformers.js (e.g. bge-small) computed at import time and stored in IndexedDB, with the query embedded on device. Start with (a); add (b) only if selection quality demands it.
+Notes: the hosted vector store has been replaced by `bundledExamples.ts` — retrieval is now local, offline, key-free and provider-agnostic. However `searchExamples` ignores the query entirely and returns the first N bundled examples, so there is no *search*: no relevance ranking and no diversity. The remaining work is the selection itself. The corpus is small (tens to low hundreds of scripts), so brute-force search is fine — no ANN index needed. Two viable levels: (a) lexical search (BM25 via a small library such as minisearch) over title/tags/body, which is likely competitive at this corpus size; (b) embeddings via transformers.js (e.g. bge-small) computed at import time and stored in IndexedDB, with the query embedded on device. Start with (a); add (b) only if selection quality demands it.
 
 Acceptance criteria:
 - Example scripts live locally (bundled corpus and/or user-imported files) with metadata (title, tags, themes)
@@ -299,10 +300,10 @@ Acceptance criteria:
 - Selection respects the computed token budget using real example sizes
 - The script page (or a debug view) can show which examples informed a generation
 
-### 8.4 Outline-first generation [Gap]
+### 8.4 Outline-first generation [Partial]
 As a user, I want generation to first produce a plan — section list, themes, escalation arc, per-section word targets — and then write each section against that plan, so that pacing and structure are controlled rather than hoped for.
 
-Notes: this also makes section regeneration natural (each section already has a spec to regenerate against) and gives the Stop button clean section boundaries. Single-shot generation stays available as a fast mode.
+Notes: the core pipeline is implemented — an outline-then-sections state machine generates each section against its outline entry (~400-word target), the outline is stored as generation 0, and the word-count meter shows per-section progress against the target during generation. Remaining: out-of-range sections are not automatically retried, and *regeneration* of an existing section still uses the old hardcoded "make it longer" prompt rather than the section's outline entry.
 
 Acceptance criteria:
 - Stage 1 produces a structured outline from the brief (and exemplars); stage 2 generates sections sequentially with the outline and prior sections as context
@@ -318,12 +319,18 @@ Acceptance criteria:
 - Violations produce targeted section revisions, not a full rewrite
 - The pass is optional (adds cost/latency) and reports what it changed
 
+### 8.6 See generation resource usage [Implemented]
+As a user, I want to see the context-token composition of the conversation behind a script, so that I understand what each generation costs and how close it is to context limits.
+
+Acceptance criteria:
+- A token usage bar on the script page segments estimated context by role (system/user/assistant), with per-segment tooltips and a legend
+
 ## Epic 9: Visual Design
 
-### 9.1 Design pass over the whole UI [Gap]
+### 9.1 Design pass over the whole UI [Implemented]
 As a user, I want the app to have a deliberate visual identity — typography, spacing, colour, and motion chosen with intent — so that it feels like a finished product rather than unstyled semantic HTML.
 
-Notes: the app's classless-CSS approach and theme system are sound foundations, but the current look is functional-default. A design pass should establish an aesthetic direction suited to the content (calm, low-stimulation, reading-focused — the script page is effectively a long-form reading surface) and apply it consistently across home, script page, settings dialog, and empty/error states. It should also sweep the handful of inline `style` attributes in TSX (header spacing in `App.tsx`, generation status layout in `ScriptPage.tsx`) into the stylesheet, keeping only the genuinely dynamic swipe transform in `ScriptList.tsx`. Both themes must be treated as first-class, not dark-as-afterthought.
+Notes: implemented as the "dusk" system — theme tokens (violet-cast paper light / midnight dark, one dusk-violet accent), the script reading surface in Spectral at book scale with Cormorant Garamond display type, a breathing generation indicator and `· · ·` pacing marks between sections, visible focus rings, and reduced-motion support. Inline styles were swept out of TSX except genuinely dynamic values.
 
 Acceptance criteria:
 - A defined type scale and reading-optimised script page (measure, line-height, generous body size)
