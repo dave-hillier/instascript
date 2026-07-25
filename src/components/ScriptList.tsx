@@ -2,6 +2,7 @@ import { Archive, Copy, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
+import { duplicateScriptStatus } from '../utils/scriptLibrary'
 import type { Script } from '../types/script'
 
 type ScriptListProps = {
@@ -37,7 +38,7 @@ export const ScriptList = ({ scripts, showArchived = false, searchQuery = '' }: 
       title: `Copy of ${script.title}`,
       createdAt: new Date().toLocaleDateString(),
       isArchived: false,
-      status: script.content.trim() ? 'complete' : 'draft',
+      status: duplicateScriptStatus(script),
       conversationId: conversation.id
     }
     appDispatch({ type: 'ADD_SCRIPT', script: copy })

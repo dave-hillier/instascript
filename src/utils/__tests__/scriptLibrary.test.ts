@@ -4,7 +4,8 @@ import {
   parseSortOrder,
   getScriptTimestamp,
   filterScriptsByQuery,
-  sortScriptsByCreation
+  sortScriptsByCreation,
+  duplicateScriptStatus
 } from '../scriptLibrary'
 
 const makeScript = (overrides: Partial<Script>): Script => ({
@@ -74,6 +75,26 @@ describe('filterScriptsByQuery', () => {
 
   it('returns an empty array when nothing matches', () => {
     expect(filterScriptsByQuery(scripts, 'volcano')).toEqual([])
+  })
+})
+
+describe('duplicateScriptStatus', () => {
+  it('duplicates an in-progress source as a draft, even with content', () => {
+    expect(duplicateScriptStatus({ status: 'in-progress', content: 'streamed so far' })).toBe('draft')
+    expect(duplicateScriptStatus({ status: 'in-progress', content: '' })).toBe('draft')
+  })
+
+  it('duplicates a complete source with content as complete', () => {
+    expect(duplicateScriptStatus({ status: 'complete', content: 'full script' })).toBe('complete')
+  })
+
+  it('duplicates an empty source as a draft', () => {
+    expect(duplicateScriptStatus({ status: 'draft', content: '' })).toBe('draft')
+    expect(duplicateScriptStatus({ status: undefined, content: '   ' })).toBe('draft')
+  })
+
+  it('derives complete from content when the source has no status', () => {
+    expect(duplicateScriptStatus({ status: undefined, content: 'imported text' })).toBe('complete')
   })
 })
 

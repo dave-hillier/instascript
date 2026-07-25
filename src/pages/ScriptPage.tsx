@@ -581,72 +581,72 @@ export const ScriptPage = ({
         model={script.model ?? getModel()}
       />
 
-      <article>
+      {/* With titles hidden (story 2.5) the header stays in the DOM: the
+          heading is visually hidden via CSS and the section actions reveal
+          on hover or keyboard focus of the section, so functionality is
+          reachable in both modes */}
+      <article data-section-titles={showSectionTitles ? 'visible' : 'hidden'}>
         {document.sections.length > 0 ? (
           document.sections.map((section, index) => (
             <section key={`section-${index}`}>
-              {showSectionTitles && (
-                <>
-                  <header>
-                    <h2>{section.title}</h2>
-                    {!generationState.shouldDisableRegenerate && conversation && (
-                      <div className="section-actions">
-                        <button
-                          onClick={() => handleStartEdit(section.title, section.content)}
-                          aria-label={`Edit ${section.title} section`}
-                          type="button"
-                        >
-                          <Pencil size={16} />
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleRegenerateSection(section.title)}
-                          disabled={generationState.shouldDisableRegenerate}
-                          aria-label={`Regenerate ${section.title} section`}
-                          type="button"
-                        >
-                          <RotateCcw size={16} />
-                          Regenerate
-                        </button>
-                        <button
-                          onClick={() => handleToggleInstructionForm(section.title)}
-                          aria-expanded={instructionTarget === section.title}
-                          aria-controls={`${section.id}_instruction`}
-                          aria-label={`Regenerate ${section.title} section with instructions`}
-                          type="button"
-                        >
-                          <SlidersHorizontal size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </header>
-                  {instructionTarget === section.title &&
-                    !generationState.shouldDisableRegenerate &&
-                    conversation && (
-                    <form
-                      className="regenerate-form"
-                      id={`${section.id}_instruction`}
-                      aria-label={`Regenerate ${section.title} with instructions`}
-                      onSubmit={(event) => handleInstructionSubmit(event, section.title)}
+              <header>
+                <h2>{section.title}</h2>
+                {!generationState.shouldDisableRegenerate && conversation && (
+                  <div className="section-actions">
+                    <button
+                      onClick={() => handleStartEdit(section.title, section.content)}
+                      aria-label={`Edit ${section.title} section`}
+                      type="button"
                     >
-                      <label className="sr-only" htmlFor={`${section.id}_instruction_input`}>
-                        How should the {section.title} section change? Leave empty for a standard rewrite.
-                      </label>
-                      <input
-                        id={`${section.id}_instruction_input`}
-                        type="text"
-                        value={instructionText}
-                        onChange={(event) => setInstructionText(event.target.value)}
-                        placeholder="e.g. less repetition, more breathing focus"
-                        autoFocus
-                      />
-                      <button type="submit">
-                        <RotateCcw size={14} />
-                        Regenerate
-                      </button>
-                    </form>
-                  )}
-                </>
+                      <Pencil size={16} />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleRegenerateSection(section.title)}
+                      disabled={generationState.shouldDisableRegenerate}
+                      aria-label={`Regenerate ${section.title} section`}
+                      type="button"
+                    >
+                      <RotateCcw size={16} />
+                      Regenerate
+                    </button>
+                    <button
+                      onClick={() => handleToggleInstructionForm(section.title)}
+                      aria-expanded={instructionTarget === section.title}
+                      aria-controls={`${section.id}_instruction`}
+                      aria-label={`Regenerate ${section.title} section with instructions`}
+                      type="button"
+                    >
+                      <SlidersHorizontal size={16} />
+                    </button>
+                  </div>
+                )}
+              </header>
+              {instructionTarget === section.title &&
+                !generationState.shouldDisableRegenerate &&
+                conversation && (
+                <form
+                  className="regenerate-form"
+                  id={`${section.id}_instruction`}
+                  aria-label={`Regenerate ${section.title} with instructions`}
+                  onSubmit={(event) => handleInstructionSubmit(event, section.title)}
+                >
+                  <label className="sr-only" htmlFor={`${section.id}_instruction_input`}>
+                    How should the {section.title} section change? Leave empty for a standard rewrite.
+                  </label>
+                  <input
+                    id={`${section.id}_instruction_input`}
+                    type="text"
+                    value={instructionText}
+                    onChange={(event) => setInstructionText(event.target.value)}
+                    placeholder="e.g. less repetition, more breathing focus"
+                    autoFocus
+                  />
+                  <button type="submit">
+                    <RotateCcw size={14} />
+                    Regenerate
+                  </button>
+                </form>
               )}
               {editTarget === section.title &&
                 !generationState.shouldDisableRegenerate &&

@@ -29,6 +29,17 @@ export function filterScriptsByQuery(scripts: Script[], query: string): Script[]
   )
 }
 
+// Status for a duplicated script (story 4.3). The copy never inherits a
+// running generation, so an in-progress source duplicates as a draft
+// holding whatever content has streamed so far; otherwise the status is
+// derived from whether any content exists.
+export function duplicateScriptStatus(
+  source: Pick<Script, 'status' | 'content'>
+): NonNullable<Script['status']> {
+  if (source.status === 'in-progress') return 'draft'
+  return source.content.trim() ? 'complete' : 'draft'
+}
+
 // Returns a new array sorted by creation time; ties keep their input order
 export function sortScriptsByCreation(scripts: Script[], order: SortOrder): Script[] {
   const direction = order === 'oldest' ? 1 : -1

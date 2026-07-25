@@ -127,7 +127,7 @@ Acceptance criteria:
 - An eye toggle in the header on the script page
 - The preference persists across sessions
 
-### 2.5 Reach section actions with titles hidden [Gap]
+### 2.5 Reach section actions with titles hidden [Implemented]
 As a user reading continuous prose, I want section-level Edit and Regenerate to remain reachable when section titles are toggled off, so that hiding structure doesn't hide functionality.
 
 Acceptance criteria:
@@ -199,13 +199,13 @@ Acceptance criteria:
 - Pacing marks and stage directions visually distinguished
 - Optional auto-scroll at an adjustable speed
 
-### 4.3 Duplicate a script as a starting point [Partial]
+### 4.3 Duplicate a script as a starting point [Implemented]
 As a user, I want to duplicate an existing script into a new conversation, so that I can create a variant without destroying the original.
 
 Acceptance criteria:
 - Duplicate creates a new script and conversation seeded with the original content and prompt
 - The copy is clearly titled (e.g. "Copy of ...")
-- Duplicating a script whose generation is still streaming gives the copy an honest status (the remaining gap: the copy is currently marked complete regardless)
+- Duplicating a script whose generation is still streaming gives the copy an honest status (an in-progress source duplicates as a draft)
 
 ### 4.4 Hear the script read aloud [Gap]
 As a user, I want an optional read-aloud mode using the browser's speech synthesis, so that I can listen to the script — or rehearse against it — without any external service.
@@ -256,13 +256,13 @@ Acceptance criteria:
 - Missing vector store surfaces as a visible warning (generation still works without examples)
 - The vector store name is configurable in settings (superseded by story 8.1 if retrieval moves local)
 
-### 5.5 Clear all data [Partial]
+### 5.5 Clear all data [Implemented]
 As a user, I want to wipe all conversations and scripts, so that I can remove everything from this browser in one action.
 
 Acceptance criteria:
 - Clear action in settings with a confirmation dialog
 - Removes all script and conversation storage, including legacy formats, and returns to the home page
-- In-memory conversation state is reset in the same action, so cleared data cannot reappear before a reload (the remaining gap: loaded conversations currently linger in React state until reload)
+- In-memory conversation state is reset in the same action, so cleared data cannot reappear before a reload
 
 ### 5.6 Understand how my data and key are stored [Implemented]
 As a privacy-conscious user of an adult-content app, I want to know that scripts and my API key live only in this browser's storage, so that I can make an informed decision about using it on a shared device.
