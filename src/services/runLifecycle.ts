@@ -11,6 +11,13 @@ export class RunLifecycle {
   // this so the previous run's abort-path cleanup settles before the new run
   // claims the singleton state.
   private activeRun: Promise<void> | null = null
+  // Admissions are serialized on this chain: each admission's critical
+  // section (abort the predecessor, await its settlement, install a fresh
+  // controller) runs strictly after the previous admission's. Without this,
+  // two concurrent admits waiting on the same settling predecessor would both
+  // resume and both be admitted — the later one silently overwriting the
+  // earlier one's controller without aborting it.
+  private admissionChain: Promise<unknown> = Promise.resolve()
 
   // True while a run holds an installed AbortController (i.e. a generation
   // is in progress and has not been stopped)
@@ -32,14 +39,24 @@ export class RunLifecycle {
   // Run admission: aborts any existing run and waits until it has fully
   // settled (including its abort-path cleanup), then installs and returns a
   // fresh AbortController for the run about to start
-  async admit(): Promise<AbortController> {
-    this.stop()
-    if (this.activeRun) {
-      await this.activeRun
-    }
-    const controller = new AbortController()
-    this.activeController = controller
-    return controller
+  // Deliberately not an async function: the returned promise must be the
+  // chained admission itself, so a caller's continuation (which registers the
+  // run via track) runs before the next queued admission's critical section.
+  // An async wrapper would add promise-adoption hops that reverse that order.
+  admit(): Promise<AbortController> {
+    const admitted = this.admissionChain.then(async () => {
+      this.stop()
+      if (this.activeRun) {
+        await this.activeRun
+      }
+      const controller = new AbortController()
+      this.activeController = controller
+      return controller
+    })
+    // The chain must survive an admission failing, so a rejection never
+    // wedges every later admission
+    this.admissionChain = admitted.catch(() => {})
+    return admitted
   }
 
   // Tracks an admitted run until it settles, then releases its controller and

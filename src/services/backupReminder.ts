@@ -36,6 +36,10 @@ export interface BackupReminderInput {
   currentScriptIds: string[]
   dismissal: ReminderDismissal | null
   now: number
+  // When the library's conversations last changed (section regenerations,
+  // refinements, manual edits) — work that never creates a new script id but
+  // still exists only in this browser until re-exported
+  latestConversationUpdateAt?: number | null
 }
 
 export interface BackupReminderStatus {
@@ -56,12 +60,24 @@ export const countNewScripts = (
 }
 
 export const evaluateBackupReminder = (input: BackupReminderInput): BackupReminderStatus => {
-  const { enabled, snapshot, currentScriptIds, dismissal, now } = input
+  const { enabled, snapshot, currentScriptIds, dismissal, now, latestConversationUpdateAt } = input
   const newScriptCount = countNewScripts(snapshot, currentScriptIds)
   const lastExportedAt = snapshot ? snapshot.exportedAt : null
   const status = { newScriptCount, lastExportedAt }
 
-  if (!enabled || currentScriptIds.length === 0 || newScriptCount === 0) {
+  // Conversation-level work (regenerated, refined or hand-edited sections)
+  // since the last export counts as unexported work even though it creates
+  // no new script ids
+  const conversationsChangedSinceExport =
+    snapshot !== null &&
+    typeof latestConversationUpdateAt === 'number' &&
+    latestConversationUpdateAt > snapshot.exportedAt
+
+  if (
+    !enabled ||
+    currentScriptIds.length === 0 ||
+    (newScriptCount === 0 && !conversationsChangedSinceExport)
+  ) {
     return { ...status, due: false }
   }
 
@@ -93,13 +109,19 @@ export const autoBackupDelay = (lastWrittenAt: number | null, now: number): numb
   lastWrittenAt === null ? 0 : Math.max(0, AUTO_BACKUP_THROTTLE_MS - (now - lastWrittenAt))
 
 // A cheap fingerprint of the library, so the automatic backup only rewrites
-// the file when something has actually changed since the last write
+// the file when something has actually changed since the last write.
+// Conversations are included because section regenerations, refinements and
+// manual edits live solely in the conversation and never touch script fields.
 export const librarySignature = (
-  scripts: Array<{ id: string; title: string; status?: string; content: string }>
+  scripts: Array<{ id: string; title: string; status?: string; content: string }>,
+  conversations: Array<{ id: string; updatedAt: number }> = []
 ): string =>
-  scripts
-    .map(script => `${script.id}:${script.title}:${script.status ?? ''}:${script.content.length}`)
-    .join('|')
+  [
+    ...scripts.map(
+      script => `${script.id}:${script.title}:${script.status ?? ''}:${script.content.length}`
+    ),
+    ...conversations.map(conversation => `${conversation.id}@${conversation.updatedAt}`)
+  ].join('|')
 
 // ---------------------------------------------------------------------------
 // localStorage persistence, all failure-tolerant

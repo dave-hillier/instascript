@@ -128,6 +128,37 @@ describe('evaluateBackupReminder', () => {
     expect(result.due).toBe(true)
   })
 
+  it('treats conversation edits after an old export as unexported work even with no new scripts', () => {
+    const result = evaluateBackupReminder({
+      ...base,
+      snapshot: snapshotOf(['a'], NOW - STALE_EXPORT_AFTER_MS * 2),
+      currentScriptIds: ['a'],
+      latestConversationUpdateAt: NOW - DAY
+    })
+    expect(result.due).toBe(true)
+    expect(result.newScriptCount).toBe(0)
+  })
+
+  it('ignores conversation activity that predates the last export', () => {
+    const result = evaluateBackupReminder({
+      ...base,
+      snapshot: snapshotOf(['a'], NOW - STALE_EXPORT_AFTER_MS * 2),
+      currentScriptIds: ['a'],
+      latestConversationUpdateAt: NOW - STALE_EXPORT_AFTER_MS * 3
+    })
+    expect(result.due).toBe(false)
+  })
+
+  it('does not nag about recent conversation edits while the export is still fresh', () => {
+    const result = evaluateBackupReminder({
+      ...base,
+      snapshot: snapshotOf(['a']),
+      currentScriptIds: ['a'],
+      latestConversationUpdateAt: NOW - 60_000
+    })
+    expect(result.due).toBe(false)
+  })
+
   it('exporting resets the count and silences the reminder', () => {
     const result = evaluateBackupReminder({
       ...base,
@@ -189,5 +220,19 @@ describe('librarySignature', () => {
   it('changes when a title or status changes', () => {
     expect(librarySignature([script])).not.toBe(librarySignature([{ ...script, title: 'Renamed' }]))
     expect(librarySignature([script])).not.toBe(librarySignature([{ ...script, status: 'draft' }]))
+  })
+
+  it('changes when a conversation is updated even though no script field changed', () => {
+    const conversation = { id: 'conv-a', updatedAt: 1_000 }
+    expect(librarySignature([script], [conversation])).not.toBe(
+      librarySignature([script], [{ ...conversation, updatedAt: 2_000 }])
+    )
+  })
+
+  it('is stable for identical scripts and conversations', () => {
+    const conversation = { id: 'conv-a', updatedAt: 1_000 }
+    expect(librarySignature([script], [conversation])).toBe(
+      librarySignature([{ ...script }], [{ ...conversation }])
+    )
   })
 })

@@ -382,12 +382,22 @@ function AppContent() {
     setReminderDismissal(null)
   }
 
+  // Conversation-level work (regenerated, refined or hand-edited sections)
+  // never touches script fields, so the reminder and the automatic backup
+  // must watch conversation updates too
+  const latestConversationUpdateAt = conversationState.conversations.reduce(
+    (latest: number | null, conversation) =>
+      latest === null ? conversation.updatedAt : Math.max(latest, conversation.updatedAt),
+    null
+  )
+
   const backupReminder = evaluateBackupReminder({
     enabled: backupReminderEnabled,
     snapshot: exportSnapshot,
     currentScriptIds: state.scripts.map(script => script.id),
     dismissal: reminderDismissal,
-    now: Date.now()
+    now: Date.now(),
+    latestConversationUpdateAt
   })
 
   const handleDismissBackupReminder = () => {
@@ -427,9 +437,13 @@ function AppContent() {
   useEffect(() => {
     if (!autoBackupEnabled || !backupFolder || state.scripts.length === 0) return
     const scripts = state.scripts
+    const conversationSignatures = conversationState.conversations.map(conversation => ({
+      id: conversation.id,
+      updatedAt: conversation.updatedAt
+    }))
     const writeBackup = async () => {
       try {
-        const signature = librarySignature(scripts)
+        const signature = librarySignature(scripts, conversationSignatures)
         if (signature === loadAutoBackupSignature()) return
         // Without a user gesture we can only use an already granted permission
         if (!(await ensureBackupPermission(backupFolder, false))) return
@@ -448,7 +462,7 @@ function AppContent() {
       void writeBackup()
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [autoBackupEnabled, backupFolder, state.scripts])
+  }, [autoBackupEnabled, backupFolder, state.scripts, conversationState.conversations])
 
   // Imports a previously exported library, merging it into this browser:
   // anything whose id already exists here is skipped, never overwritten.

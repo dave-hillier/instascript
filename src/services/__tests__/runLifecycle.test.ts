@@ -130,6 +130,64 @@ describe('RunLifecycle', () => {
     })
   })
 
+  describe('concurrent-admissions', () => {
+    it('serializes two admits waiting on the same settling run: only the last stays admitted', async () => {
+      const lifecycle = new RunLifecycle()
+      const events: string[] = []
+
+      // Run A is streaming
+      const controllerA = await lifecycle.admit()
+      const runA = deferred()
+      const trackingA = lifecycle.track(controllerA, runA.promise)
+
+      // Two callers ask for admission while A is still settling — e.g. two
+      // quick user actions during the window where stop() has released
+      // isRunning but abort cleanup has not settled
+      const runB = deferred()
+      const controllers: Record<string, AbortController> = {}
+      const callerB = lifecycle.admit().then(controller => {
+        controllers.B = controller
+        events.push('B admitted')
+        return lifecycle.track(
+          controller,
+          runB.promise.then(() => {
+            events.push('B cleanup')
+          })
+        )
+      })
+      const callerC = lifecycle.admit().then(controller => {
+        controllers.C = controller
+        events.push('C admitted')
+      })
+      await settleMicrotasks()
+
+      // Neither successor may be admitted while A is still settling
+      expect(controllerA.signal.aborted).toBe(true)
+      expect(events).toEqual([])
+
+      runA.resolve()
+      await trackingA
+      await settleMicrotasks()
+
+      // B was admitted first, then C's admission aborted B and now waits for
+      // B's abort cleanup — C must not be admitted yet
+      expect(events).toEqual(['B admitted'])
+      expect(controllers.B.signal.aborted).toBe(true)
+
+      runB.resolve()
+      await callerB
+      await callerC
+
+      // Only C remains admitted, un-aborted, and stoppable
+      expect(events).toEqual(['B admitted', 'B cleanup', 'C admitted'])
+      expect(controllers.C.signal.aborted).toBe(false)
+      expect(lifecycle.isRunning).toBe(true)
+      lifecycle.stop()
+      expect(controllers.C.signal.aborted).toBe(true)
+      expect(lifecycle.isRunning).toBe(false)
+    })
+  })
+
   describe('abort-cleanup-after-replacement', () => {
     it('a predecessor settling late never clobbers the successor state', async () => {
       const lifecycle = new RunLifecycle()
