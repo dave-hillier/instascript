@@ -14,6 +14,9 @@ const OPENAI_MODELS = [
 ]
 
 const OPENROUTER_MODELS = [
+  { value: 'x-ai/grok-4.5', label: 'Grok 4.5' },
+  { value: 'x-ai/grok-4.3', label: 'Grok 4.3' },
+  { value: 'x-ai/grok-4.20', label: 'Grok 4.20' },
   { value: 'x-ai/grok-3', label: 'Grok 3' },
   { value: 'x-ai/grok-3-mini', label: 'Grok 3 Mini' },
 ]
@@ -183,7 +186,7 @@ export const SettingsModal = ({
     if (provider === 'openai') {
       setTempModel('gpt-5')
     } else if (provider === 'openrouter') {
-      setTempModel('x-ai/grok-3')
+      setTempModel('x-ai/grok-4.5')
     }
   }
 

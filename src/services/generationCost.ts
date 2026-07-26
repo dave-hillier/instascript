@@ -41,6 +41,9 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'gpt-5': { inputPerMillion: 1.25, outputPerMillion: 10 },
   'gpt-5-mini': { inputPerMillion: 0.25, outputPerMillion: 2 },
   'gpt-5-nano': { inputPerMillion: 0.05, outputPerMillion: 0.4 },
+  'x-ai/grok-4.5': { inputPerMillion: 2, outputPerMillion: 6 },
+  'x-ai/grok-4.3': { inputPerMillion: 1.25, outputPerMillion: 2.5 },
+  'x-ai/grok-4.20': { inputPerMillion: 1.25, outputPerMillion: 2.5 },
   'x-ai/grok-3': { inputPerMillion: 3, outputPerMillion: 15 },
   'x-ai/grok-3-mini': { inputPerMillion: 0.3, outputPerMillion: 0.5 }
 }
