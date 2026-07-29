@@ -1,5 +1,5 @@
 import type { ExampleScript, ExampleSearchService } from './exampleSearchService'
-import { getAllExamples } from './exampleCorpus'
+import { getEnabledExamples } from './exampleCorpus'
 import {
   fuseRankings,
   rankExamples,
@@ -10,8 +10,8 @@ import {
 import type { ExampleRecord } from '../types/example'
 import { CONTEXT_LIMITS } from '../utils/contextWindow'
 
-// Local hybrid example retrieval: bundled corpus merged with user-imported
-// examples, ranked lexically (BM25) and densely (stored sentence embeddings
+// Local hybrid example retrieval: bundled corpus (unless switched off in
+// settings) merged with user-imported examples, ranked lexically (BM25) and densely (stored sentence embeddings
 // vs the embedded brief), fused via reciprocal rank fusion, then selected
 // for diversity under the context token budget. Runs entirely in the
 // browser — no API key, works identically for every provider. When the
@@ -22,7 +22,7 @@ export class BundledExampleService implements ExampleSearchService {
   // touching localStorage or the bundled data
   private readonly loadExamples: () => ExampleRecord[]
 
-  constructor(loadExamples: () => ExampleRecord[] = getAllExamples) {
+  constructor(loadExamples: () => ExampleRecord[] = getEnabledExamples) {
     this.loadExamples = loadExamples
   }
 

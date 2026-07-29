@@ -1485,12 +1485,44 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   margin: 0;
 }
 
+.example-settings {
+  padding: 1rem 1.125rem;
+}
+
+.example-settings label.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.example-settings label.checkbox-field input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.example-settings p {
+  margin: 0.375rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.example-settings .example-warning {
+  color: var(--danger);
+}
+
 .example-import {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
   padding: 1rem 1.125rem;
   margin-bottom: 2rem;
+}
+
+.example-import p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
 }
 
 .example-import label {
@@ -1529,6 +1561,11 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
 
 .example-list li:hover {
   background: none;
+}
+
+/* Bundled examples while the bundled corpus is switched off */
+.example-list li[data-excluded="true"] .example-summary {
+  opacity: 0.55;
 }
 
 .example-summary {

@@ -110,8 +110,43 @@ export function getUserExamples(): ExampleRecord[] {
   }
 }
 
+// Every example the app knows about, whether or not the bundled corpus is
+// switched on. Used for display and for resolving example ids back to titles.
 export function getAllExamples(): ExampleRecord[] {
   return [...BUNDLED_EXAMPLE_SCRIPTS, ...getUserExamples()]
+}
+
+// --- Bundled corpus opt-out --------------------------------------------
+// The shipped examples can be switched off so that generation is grounded
+// only in the user's own scripts. Bundled examples stay listed (and stay
+// available for id lookups) when disabled; they are just excluded from
+// retrieval.
+
+export const BUNDLED_EXAMPLES_ENABLED_KEY = 'bundledExamplesEnabled'
+
+export function areBundledExamplesEnabled(): boolean {
+  try {
+    const item = window.localStorage.getItem(BUNDLED_EXAMPLES_ENABLED_KEY)
+    return item ? JSON.parse(item) !== false : true
+  } catch (error) {
+    console.warn('Error loading bundled examples setting from localStorage:', error)
+    return true
+  }
+}
+
+export function setBundledExamplesEnabled(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(BUNDLED_EXAMPLES_ENABLED_KEY, JSON.stringify(enabled))
+  } catch (error) {
+    console.warn('Error saving bundled examples setting to localStorage:', error)
+  }
+}
+
+// The examples retrieval is allowed to draw on
+export function getEnabledExamples(): ExampleRecord[] {
+  const user = getUserExamples()
+  if (!areBundledExamplesEnabled()) return user
+  return [...BUNDLED_EXAMPLE_SCRIPTS, ...user]
 }
 
 function saveUserExample(example: ExampleRecord): void {
@@ -155,9 +190,25 @@ function createUserExample(title: string, tags: string[], content: string): Exam
   return example
 }
 
-// Imports a markdown file as a user example
+// Extensions accepted when importing examples. Plain text is treated the
+// same as markdown: front matter and a leading heading are honoured if
+// present, otherwise the whole file is the script body.
+const IMPORTABLE_EXTENSIONS = ['.md', '.markdown', '.txt', '.text']
+
+// Pure: whether a file (possibly deep inside an imported folder) looks like
+// an example we can read. Hidden files and anything non-textual are skipped
+// so that dropping a whole folder does not import stray assets.
+export function isImportableExampleFile(path: string): boolean {
+  const name = path.split('/').pop() ?? path
+  if (name.startsWith('.')) return false
+  return IMPORTABLE_EXTENSIONS.some(extension => name.toLowerCase().endsWith(extension))
+}
+
+// Imports a markdown or plain text file as a user example. Accepts a path
+// (as folder imports supply) and titles from the file name alone.
 export function importExampleFile(filename: string, text: string): ExampleRecord {
-  const fallbackTitle = filename.replace(/\.(md|markdown)$/i, '')
+  const name = filename.split('/').pop() ?? filename
+  const fallbackTitle = name.replace(/\.(md|markdown|txt|text)$/i, '')
   const parsed = parseExampleMarkdown(text, fallbackTitle)
   return createUserExample(parsed.title, parsed.tags, parsed.content)
 }

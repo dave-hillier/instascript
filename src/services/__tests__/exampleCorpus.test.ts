@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
+  areBundledExamplesEnabled,
+  setBundledExamplesEnabled,
+  getEnabledExamples,
+  isImportableExampleFile,
+  BUNDLED_EXAMPLES_ENABLED_KEY,
   parseExampleMarkdown,
   serializeExampleToMarkdown,
   parseTags,
@@ -178,5 +183,71 @@ describe('parseTags', () => {
 
   it('returns an empty list for blank input', () => {
     expect(parseTags('  ')).toEqual([])
+  })
+})
+
+describe('isImportableExampleFile', () => {
+  it('accepts markdown and plain text, whatever the case', () => {
+    expect(isImportableExampleFile('calm.md')).toBe(true)
+    expect(isImportableExampleFile('Calm.MARKDOWN')).toBe(true)
+    expect(isImportableExampleFile('scripts/sleep/deep-rest.txt')).toBe(true)
+    expect(isImportableExampleFile('notes.text')).toBe(true)
+  })
+
+  it('skips non-text files that come along with a folder import', () => {
+    expect(isImportableExampleFile('scripts/cover.png')).toBe(false)
+    expect(isImportableExampleFile('scripts/session.pdf')).toBe(false)
+    expect(isImportableExampleFile('scripts/no-extension')).toBe(false)
+  })
+
+  it('skips hidden files such as .DS_Store', () => {
+    expect(isImportableExampleFile('scripts/.DS_Store')).toBe(false)
+    expect(isImportableExampleFile('.hidden.md')).toBe(false)
+  })
+})
+
+describe('bundled corpus opt-out', () => {
+  const withStoredValue = (value: string | null) => {
+    const store = new Map<string, string>()
+    if (value !== null) store.set(BUNDLED_EXAMPLES_ENABLED_KEY, value)
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, next: string) => store.set(key, next),
+        removeItem: (key: string) => store.delete(key)
+      }
+    })
+    return store
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('defaults to enabled when nothing is stored', () => {
+    withStoredValue(null)
+    expect(areBundledExamplesEnabled()).toBe(true)
+  })
+
+  it('reads a stored opt-out', () => {
+    withStoredValue('false')
+    expect(areBundledExamplesEnabled()).toBe(false)
+  })
+
+  it('persists the setting so it survives a reload', () => {
+    const store = withStoredValue(null)
+    setBundledExamplesEnabled(false)
+    expect(store.get(BUNDLED_EXAMPLES_ENABLED_KEY)).toBe('false')
+    expect(areBundledExamplesEnabled()).toBe(false)
+  })
+
+  it('keeps bundled examples out of the retrieval set when disabled', () => {
+    withStoredValue('false')
+    expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(false)
+  })
+
+  it('includes bundled examples in the retrieval set when enabled', () => {
+    withStoredValue('true')
+    expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(true)
   })
 })
