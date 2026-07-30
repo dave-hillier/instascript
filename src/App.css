@@ -1914,6 +1914,9 @@ dialog.performance-mode[open] {
 
 .performance-speed input[type="range"] {
   width: 10rem;
+  /* Undo the form-field bottom margin, which would sit the control high in
+     the centred control row */
+  margin: 0;
   accent-color: var(--accent);
 }
 
@@ -1927,8 +1930,14 @@ dialog.performance-mode[open] {
 }
 
 .performance-controls .read-aloud select {
-  max-width: 11rem;
-  padding: 0.35rem 0.5rem;
+  /* Each picker sizes to its own longest option — the form-wide full-width
+     select would make "1x" as wide as a model name — and is never squeezed
+     below that, since a shrunken select clips the label it exists to show */
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 14rem;
+  margin: 0;
+  padding: 0.35rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 999px;
   background-color: var(--surface);
@@ -1947,7 +1956,9 @@ dialog.performance-mode[open] {
 
 /* Free-text voice id, for models without a fixed voice catalogue */
 .performance-controls .read-aloud input[type="text"] {
+  flex: 0 0 auto;
   width: 8rem;
+  margin: 0;
   padding: 0.35rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 999px;
