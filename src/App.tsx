@@ -15,6 +15,12 @@ import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryI
 import { getExampleSelectionCounts, importExampleSelectionCounts } from './services/exampleCorpus'
 import { BackupReminder } from './components/BackupReminder'
 import {
+  getTranscripts,
+  clearTranscripts,
+  serializeTranscripts,
+  formatTranscriptsAsText
+} from './services/debugTranscript'
+import {
   evaluateBackupReminder,
   loadExportSnapshot,
   recordLibraryExported,
@@ -167,6 +173,17 @@ function AppContent() {
     }
   })
 
+  // Opt-in capture of the full provider transcripts, for debugging what the
+  // model is actually being sent
+  const [debugTranscripts, setDebugTranscripts] = useState<boolean>(() => {
+    try {
+      const item = window.localStorage.getItem('debugTranscripts')
+      return item ? JSON.parse(item) === true : false
+    } catch {
+      return false
+    }
+  })
+
   // Backup staleness tracking and the linked backup folder (story 7.4).
   // All of it is strictly local: localStorage for the small state, IndexedDB
   // for the directory handle, and writes only to a folder the user picked.
@@ -256,6 +273,15 @@ function AppContent() {
     }
   }, [reviewPass])
 
+  // Save transcript capture preference when it changes
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('debugTranscripts', JSON.stringify(debugTranscripts))
+    } catch (error) {
+      console.error('Error saving transcript capture setting to localStorage:', error)
+    }
+  }, [debugTranscripts])
+
   // Save section titles visibility when it changes
   useEffect(() => {
     try {
@@ -324,7 +350,14 @@ function AppContent() {
   }
 
 
-  const handleSaveSettings = (newApiKey: string, newOpenRouterApiKey: string, newApiProvider: APIProvider, newModel: string, newReviewPass: boolean) => {
+  const handleSaveSettings = (
+    newApiKey: string,
+    newOpenRouterApiKey: string,
+    newApiProvider: APIProvider,
+    newModel: string,
+    newReviewPass: boolean,
+    newDebugTranscripts: boolean
+  ) => {
     if (newApiKey.trim()) {
       setApiKey(newApiKey.trim())
     }
@@ -334,6 +367,24 @@ function AppContent() {
     setApiProvider(newApiProvider)
     setModel(newModel)
     setReviewPass(newReviewPass)
+    setDebugTranscripts(newDebugTranscripts)
+  }
+
+  const handleDownloadTranscripts = (format: 'json' | 'text') => {
+    const transcripts = getTranscripts()
+    const now = new Date()
+    const contents = format === 'json'
+      ? serializeTranscripts(transcripts, now.toISOString())
+      : formatTranscriptsAsText(transcripts)
+    const blob = new Blob([contents], {
+      type: format === 'json' ? 'application/json' : 'text/plain'
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = window.document.createElement('a')
+    anchor.href = url
+    anchor.download = `instascript-transcripts-${now.toISOString().slice(0, 10)}.${format === 'json' ? 'json' : 'txt'}`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   const handleClearConversations = () => {
@@ -641,7 +692,10 @@ function AppContent() {
         apiProvider={apiProvider || 'mock'}
         model={model || 'gpt-5'}
         reviewPass={reviewPass}
+        debugTranscripts={debugTranscripts}
         onSave={handleSaveSettings}
+        onDownloadTranscripts={handleDownloadTranscripts}
+        onClearTranscripts={clearTranscripts}
         onClearConversations={handleClearConversations}
         onExportLibrary={handleExportLibrary}
         onImportLibrary={handleImportLibrary}

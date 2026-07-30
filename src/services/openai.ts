@@ -4,6 +4,8 @@ import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
 import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { getModel } from './config'
+import { beginTranscript, exampleIdsOf, toTranscriptMessages, NO_TRANSCRIPT } from './debugTranscript'
+import type { TranscriptContext, TranscriptRecorder } from './debugTranscript'
 
 export class OpenAIService implements ScriptGenerationService {
   private client: OpenAI
@@ -74,7 +76,10 @@ export class OpenAIService implements ScriptGenerationService {
       finalMessages.push({ role: 'user', content: request.prompt })
     }
 
-    yield* this.streamCompletion(finalMessages, abortSignal)
+    yield* this.streamCompletion(finalMessages, abortSignal, {
+      label: 'Generation',
+      exampleIds: exampleIdsOf(examples)
+    })
   }
 
   async *regenerateSection(
@@ -86,15 +91,20 @@ export class OpenAIService implements ScriptGenerationService {
       messagesCount: messages.length,
       sectionTitle: request.sectionTitle
     })
-    
+
     const finalMessages = this.chatMessagesToOpenAI(messages)
-    yield* this.streamCompletion(finalMessages, abortSignal)
+    yield* this.streamCompletion(finalMessages, abortSignal, {
+      label: request.sectionTitle || 'Refinement'
+    })
   }
 
   private async *streamCompletion(
     messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam>,
-    abortSignal?: AbortSignal
+    abortSignal: AbortSignal | undefined,
+    context: TranscriptContext
   ): AsyncGenerator<string, void, unknown> {
+    let transcript: TranscriptRecorder = NO_TRANSCRIPT
+
     try {
       // Generate a prompt cache key based on system message (which includes examples)
       // This ensures requests with the same examples get cached together
@@ -122,6 +132,17 @@ export class OpenAIService implements ScriptGenerationService {
         hasAbortSignal: !!abortSignal
       })
       
+      // Records exactly what goes to the provider, examples and all, when the
+      // debug transcript option is on
+      transcript = beginTranscript({
+        provider: 'openai',
+        model: completionsPayload.model,
+        label: context.label,
+        exampleIds: context.exampleIds,
+        messages: toTranscriptMessages(messages),
+        params: { temperature: completionsPayload.temperature, promptCacheKey }
+      })
+
       // Use the Chat Completions API with streaming
       const response = await this.client.chat.completions.create(completionsPayload, requestOptions) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
 
@@ -130,9 +151,10 @@ export class OpenAIService implements ScriptGenerationService {
       for await (const chunk of response) {
         const delta = chunk.choices[0]?.delta?.content
         if (delta) {
+          transcript.appendChunk(delta)
           yield delta
         }
-        
+
         // Log cache performance on first chunk
         if (isFirstChunk && chunk.usage) {
           isFirstChunk = false
@@ -152,11 +174,15 @@ export class OpenAIService implements ScriptGenerationService {
           }
         }
       }
+
+      transcript.complete()
     } catch (error) {
       if (abortSignal?.aborted) {
+        transcript.abort()
         console.debug('Generation aborted by user')
         return
       }
+      transcript.fail(error)
       console.error('Generation error:', error)
       throw error
     }

@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState, useReducer } from 'react'
+import { useRef, useEffect, useState, useReducer, useSyncExternalStore } from 'react'
 import type { ChangeEvent } from 'react'
-import { Sun, Moon, Monitor, Trash2, Download, Upload, FolderSync, FolderX } from 'lucide-react'
+import { Sun, Moon, Monitor, Trash2, Download, Upload, FolderSync, FolderX, FileText } from 'lucide-react'
+import { subscribeToTranscripts, getTranscripts, MAX_TRANSCRIPTS } from '../services/debugTranscript'
 import type { APIProvider } from '../services/config'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
@@ -96,7 +97,17 @@ type SettingsModalProps = {
   apiProvider: APIProvider
   model: string
   reviewPass: boolean
-  onSave: (apiKey: string, openRouterApiKey: string, apiProvider: APIProvider, model: string, reviewPass: boolean) => void
+  debugTranscripts: boolean
+  onSave: (
+    apiKey: string,
+    openRouterApiKey: string,
+    apiProvider: APIProvider,
+    model: string,
+    reviewPass: boolean,
+    debugTranscripts: boolean
+  ) => void
+  onDownloadTranscripts: (format: 'json' | 'text') => void
+  onClearTranscripts: () => void
   onClearConversations: () => void
   onExportLibrary: () => Promise<void>
   onImportLibrary: (file: File) => Promise<LibraryImportCounts>
@@ -120,7 +131,10 @@ export const SettingsModal = ({
   apiProvider,
   model,
   reviewPass,
+  debugTranscripts,
   onSave,
+  onDownloadTranscripts,
+  onClearTranscripts,
   onClearConversations,
   onExportLibrary,
   onImportLibrary,
@@ -140,6 +154,8 @@ export const SettingsModal = ({
   const [tempModel, setTempModel] = useState(model || 'gpt-5')
   const [customModel, setCustomModel] = useState('')
   const [tempReviewPass, setTempReviewPass] = useState(reviewPass)
+  const [tempDebugTranscripts, setTempDebugTranscripts] = useState(debugTranscripts)
+  const transcripts = useSyncExternalStore(subscribeToTranscripts, getTranscripts)
   const [connectionTest, connectionTestDispatch] = useReducer(connectionTestReducer, { status: 'idle' })
   const [libraryTransfer, libraryTransferDispatch] = useReducer(libraryTransferReducer, { status: 'idle' })
   // Remounts the file input after each import so choosing the same file again
@@ -155,10 +171,11 @@ export const SettingsModal = ({
       setTempModel(model || 'gpt-5')
       setCustomModel('')
       setTempReviewPass(reviewPass)
+      setTempDebugTranscripts(debugTranscripts)
       connectionTestDispatch({ type: 'TEST_RESET' })
       libraryTransferDispatch({ type: 'TRANSFER_RESET' })
     }
-  }, [isOpen, apiKey, openRouterApiKey, apiProvider, model, reviewPass])
+  }, [isOpen, apiKey, openRouterApiKey, apiProvider, model, reviewPass, debugTranscripts])
 
   // Open/close modal based on isOpen prop
   useEffect(() => {
@@ -171,7 +188,14 @@ export const SettingsModal = ({
 
   const handleSave = () => {
     const finalModel = tempModel === 'custom' ? customModel.trim() : tempModel
-    onSave(tempApiKey.trim(), tempOpenRouterApiKey.trim(), tempApiProvider, finalModel, tempReviewPass)
+    onSave(
+      tempApiKey.trim(),
+      tempOpenRouterApiKey.trim(),
+      tempApiProvider,
+      finalModel,
+      tempReviewPass,
+      tempDebugTranscripts
+    )
     onClose()
   }
 
@@ -461,6 +485,63 @@ export const SettingsModal = ({
             outline against your brief before any section is written, and one
             reviews the finished script against the style rules, rewriting up
             to two violating sections — adds cost and latency
+          </p>
+        </fieldset>
+
+        <fieldset>
+          <legend className="sr-only">Debugging</legend>
+
+          <label className="checkbox-field" htmlFor="debug-transcripts">
+            <input
+              type="checkbox"
+              id="debug-transcripts"
+              checked={tempDebugTranscripts}
+              onChange={(e) => setTempDebugTranscripts(e.target.checked)}
+              aria-describedby="debug-transcripts-help"
+            />
+            <span>Capture provider transcripts</span>
+          </label>
+          <p id="debug-transcripts-help">
+            Records every request sent to the provider exactly as it goes out —
+            system prompt, the example scripts embedded in it, the outline and
+            conversation history, and the streamed reply — for the last
+            {' '}{MAX_TRANSCRIPTS} requests. Kept in memory only for this tab,
+            and discarded on reload
+          </p>
+
+          <div className="transcript-actions" role="group" aria-label="Captured transcripts">
+            <button
+              type="button"
+              className="download-transcripts-btn"
+              onClick={() => onDownloadTranscripts('json')}
+              disabled={transcripts.length === 0}
+            >
+              <Download size={16} />
+              <span>Download JSON</span>
+            </button>
+            <button
+              type="button"
+              className="download-transcripts-btn"
+              onClick={() => onDownloadTranscripts('text')}
+              disabled={transcripts.length === 0}
+            >
+              <FileText size={16} />
+              <span>Download text</span>
+            </button>
+            <button
+              type="button"
+              className="clear-transcripts-btn"
+              onClick={onClearTranscripts}
+              disabled={transcripts.length === 0}
+            >
+              <Trash2 size={16} />
+              <span>Clear</span>
+            </button>
+          </div>
+          <p role="status" aria-live="polite">
+            {transcripts.length === 0
+              ? 'No transcripts captured'
+              : `${pluralize(transcripts.length, 'transcript')} captured`}
           </p>
         </fieldset>
 
