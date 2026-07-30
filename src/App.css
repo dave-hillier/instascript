@@ -1089,6 +1089,39 @@ dialog label.import-library-btn {
   outline-offset: 2px;
 }
 
+/* Debug settings: download or discard the captured provider transcripts */
+.transcript-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.transcript-actions button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.transcript-actions button:hover:not(:disabled) {
+  background-color: var(--accent-soft);
+}
+
+.transcript-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Backup settings (story 7.4): link/unlink the automatic backup folder */
 .backup-folder-btn {
   display: flex;

@@ -3,6 +3,8 @@ import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
+import { beginTranscript, exampleIdsOf } from './debugTranscript'
+import type { TranscriptMessage } from './debugTranscript'
 
 export class MockAPIService implements ScriptGenerationService {
   constructor() {
@@ -161,10 +163,40 @@ This feeling is becoming familiar to you now. Comfortable. Safe. Deeply pleasura
 Continue to breathe... continue to follow... continue to let go. Everything is unfolding exactly as it should. You are doing beautifully, and with each passing moment, you sink deeper and deeper into this wonderful state of receptive calm.`
   }
 
+  // Records the request the same way the real providers do, so the debug
+  // transcript option can be exercised without an API key. The mock never
+  // embeds example scripts, so only their ids are recorded.
+  private async *streamRecorded(
+    content: string,
+    messages: TranscriptMessage[],
+    label: string,
+    abortSignal?: AbortSignal,
+    exampleIds?: string[]
+  ): AsyncGenerator<string, void, unknown> {
+    const transcript = beginTranscript({
+      provider: 'mock',
+      model: 'mock',
+      label,
+      exampleIds,
+      messages
+    })
+
+    for await (const chunk of this.streamContent(content, abortSignal)) {
+      transcript.appendChunk(chunk)
+      yield chunk
+    }
+
+    if (abortSignal?.aborted) {
+      transcript.abort()
+      return
+    }
+    transcript.complete()
+  }
+
   async *generateScript(
     request: GenerationRequest,
-    _messages?: ChatMessage[],
-    _examples?: ExampleScript[],
+    messages?: ChatMessage[],
+    examples?: ExampleScript[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     await this.delay(500, 1500)
@@ -173,7 +205,16 @@ Continue to breathe... continue to follow... continue to let go. Everything is u
     // The orchestrator now sends outline requests via generateScript
     // Detect if this is an outline request by checking prompt content
     const content = this.generateOutlineContent(request.prompt)
-    yield* this.streamContent(content, abortSignal)
+    const sent = messages && messages.length > 0
+      ? messages
+      : [{ role: 'user' as const, content: request.prompt }]
+    yield* this.streamRecorded(
+      content,
+      sent,
+      'Generation',
+      abortSignal,
+      exampleIdsOf(examples)
+    )
   }
 
   private extractSectionTitles(messages: ChatMessage[]): string[] {
@@ -314,6 +355,11 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
         : request.sectionTitle === ''
           ? this.generateRefinementContent(messages)
           : this.generateSectionContent(request.sectionTitle)
-    yield* this.streamContent(content, abortSignal)
+    yield* this.streamRecorded(
+      content,
+      messages,
+      request.sectionTitle || 'Refinement',
+      abortSignal
+    )
   }
 }

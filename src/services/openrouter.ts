@@ -4,6 +4,8 @@ import type { ExampleScript } from './exampleSearchService'
 import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { getModel } from './config'
+import { beginTranscript, exampleIdsOf, toTranscriptMessages } from './debugTranscript'
+import type { TranscriptContext } from './debugTranscript'
 
 export class OpenRouterService implements ScriptGenerationService {
   private client: OpenAI
@@ -49,27 +51,44 @@ export class OpenRouterService implements ScriptGenerationService {
       finalMessages.push({ role: 'user', content: request.prompt })
     }
 
-    yield* this.streamCompletion(finalMessages, abortSignal)
+    yield* this.streamCompletion(finalMessages, abortSignal, {
+      label: 'Generation',
+      exampleIds: exampleIdsOf(examples)
+    })
   }
 
   async *regenerateSection(
-    _request: RegenerationRequest,
+    request: RegenerationRequest,
     messages: ChatMessage[],
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
     const finalMessages = this.chatMessagesToOpenAI(messages)
-    yield* this.streamCompletion(finalMessages, abortSignal)
+    yield* this.streamCompletion(finalMessages, abortSignal, {
+      label: request.sectionTitle || 'Refinement'
+    })
   }
 
   private async *streamCompletion(
     messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam>,
-    abortSignal?: AbortSignal
+    abortSignal: AbortSignal | undefined,
+    context: TranscriptContext
   ): AsyncGenerator<string, void, unknown> {
+    const model = getModel()
+    // Records exactly what goes to the provider, examples and all, when the
+    // debug transcript option is on
+    const transcript = beginTranscript({
+      provider: 'openrouter',
+      model,
+      label: context.label,
+      exampleIds: context.exampleIds,
+      messages: toTranscriptMessages(messages)
+    })
+
     try {
       const requestOptions = abortSignal ? { signal: abortSignal } : {}
 
       const response = await this.client.chat.completions.create({
-        model: getModel(),
+        model,
         messages: messages,
         stream: true
       }, requestOptions) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
@@ -77,13 +96,18 @@ export class OpenRouterService implements ScriptGenerationService {
       for await (const chunk of response) {
         const delta = chunk.choices[0]?.delta?.content
         if (delta) {
+          transcript.appendChunk(delta)
           yield delta
         }
       }
+
+      transcript.complete()
     } catch (error) {
       if (abortSignal?.aborted) {
+        transcript.abort()
         return
       }
+      transcript.fail(error)
       console.error('OpenRouter generation error:', error)
       throw error
     }
