@@ -3,7 +3,7 @@ Now rewrite the "{sectionTitle}" section of the script.
 This section should be: {sectionDescription}
 {continuity}
 Requirements:
-- Write approximately 400 words for this section
+- Write approximately {targetWords} words for this section, unless an instruction below asks for a different length
 - Output ONLY the section content (do NOT include the ## header, it will be added automatically)
 - Maintain continuity with the surrounding sections and the overall arc of the outline
 - Follow all the style rules from the system prompt

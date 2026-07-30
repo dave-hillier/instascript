@@ -13,6 +13,8 @@ export type ConversationContextType = {
   generateScript: (request: GenerationRequest) => Promise<void>
   regenerateSection: (request: SectionRegenerationRequest) => Promise<void>
   refineScript: (request: ScriptRefinementRequest) => Promise<void>
+  // Reviews the finished script for cohesion and length against its brief
+  reviewScript: (conversationId: string, brief: string) => Promise<void>
   editSection: (request: SectionEditRequest) => void
   stopGeneration: () => void
 }

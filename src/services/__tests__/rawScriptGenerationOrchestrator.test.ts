@@ -3,6 +3,7 @@ import { findResumeState, RawScriptGenerationOrchestrator } from '../rawScriptGe
 import type { RawScriptServices, RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
 import type { RawConversationAction } from '../../reducers/rawConversationReducer'
 import type { RawConversation, Generation } from '../../types/conversation'
+import { SECTION_TARGET_WORDS } from '../sectionQuality'
 
 const makeGeneration = (response: string): Generation => ({
   messages: [],
@@ -104,9 +105,9 @@ describe('findResumeState', () => {
 })
 
 describe('generateScript resume (story 1.8)', () => {
-  // A body comfortably inside the 250-600 word band, so no quality retry runs
+  // A body at the section word target, so no quality retry runs
   const sectionBody = (label: string) =>
-    `${label} ` + Array.from({ length: 300 }, (_, i) => `word${i}`).join(' ')
+    `${label} ` + Array.from({ length: SECTION_TARGET_WORDS - 1 }, (_, i) => `word${i}`).join(' ')
 
   const setup = (conversation: RawConversation) => {
     let outlineCalls = 0

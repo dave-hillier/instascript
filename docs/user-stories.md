@@ -433,6 +433,19 @@ Acceptance criteria:
 - Prompt assembly normalises history to a single system message regardless of how many refinements have occurred
 - A test asserts the invariant over a multi-refinement conversation
 
+### 8.14 Review a finished script for cohesion and length [Implemented]
+As a user, I want to ask for the finished script to be judged as a whole — does it read as one continuous arc, and is it the length it is meant to be — so that the defects no per-section check can see get found and fixed.
+
+Notes: complements 8.5 rather than repeating it. The style pass judges each section against the numbered rules in isolation; this one judges the script as a single artifact — continuity from one section to the next, escalation, repetition across sections, setups that are never paid off, and coverage of the brief. Length is measured locally and stated to the model as fact rather than estimated by it, and drives explicit word targets for the rewrites. Section targets were raised at the same time (six sections at ~550 words) so generation lands in the 20-30 minute window natively instead of relying on this pass to get there.
+
+Acceptance criteria:
+- A "Review script" button appears on a completed script and is unavailable while anything is generating
+- The review judges the script as it currently stands, including manual edits, regenerations and refinements
+- It reviews against the original brief, and against the measured word count and its 20-30 minute spoken target
+- Sections that break the arc are rewritten with the specific problem as the instruction; when the script is off target the rewrites also carry explicit word targets, shared out so no section is asked for an implausible rewrite
+- The number of rewrites per review is capped, and the outcome (what was rewritten, why, and the resulting length) appears in the review summary banner
+- A failed review is reported next to its own button without marking the generation as failed
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]

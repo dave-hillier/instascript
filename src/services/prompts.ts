@@ -5,9 +5,11 @@ import sectionGenerationPrompt from '../prompts/section-generation.txt?raw'
 import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
 import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
 import outlineCritiquePrompt from '../prompts/outline-critique.txt?raw'
+import scriptReviewPrompt from '../prompts/script-review.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
+import { SECTION_TARGET_WORDS } from './sectionQuality'
 import type { DocumentSection } from './conversationDocument'
 
 /**
@@ -48,6 +50,7 @@ export function getSectionGenerationPrompt(
     .replace('{sectionTitle}', sectionTitle)
     .replace('{sectionDescription}', sectionDescription)
     .replace('{upcomingSections}', () => formatUpcomingSections(upcomingSections))
+    .replace('{targetWords}', String(SECTION_TARGET_WORDS))
 }
 
 function excerptStart(text: string, maxWords: number): string {
@@ -99,6 +102,7 @@ export function buildSectionRegenerationPrompt(context: SectionRegenerationConte
     .replace(/\{sectionTitle\}/g, context.sectionTitle)
     .replace('{sectionDescription}', description)
     .replace('{continuity}', continuity)
+    .replace('{targetWords}', String(SECTION_TARGET_WORDS))
 
   const instruction = context.instruction?.trim()
   if (instruction) {
@@ -149,6 +153,21 @@ export function buildOutlineCritiquePrompt(brief: string, outlineText: string): 
   return outlineCritiquePrompt
     .replace('{brief}', () => brief)
     .replace('{outline}', () => outlineText)
+}
+
+// The review request for the on-demand whole-script review (story 8.14): the
+// brief, the measured length against its spoken-duration target, and the
+// consolidated script, asking for one verdict per section on how it sits in
+// the arc
+export function buildScriptReviewPrompt(
+  brief: string,
+  lengthBrief: string,
+  script: string
+): string {
+  return scriptReviewPrompt
+    .replace('{brief}', () => brief.trim() || 'No brief was recorded for this script.')
+    .replace('{lengthBrief}', () => lengthBrief)
+    .replace('{script}', () => script)
 }
 
 export function getScriptRefinementPrompt(instruction: string): string {

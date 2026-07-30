@@ -10,6 +10,7 @@ import {
   normaliseConversationHistory,
   buildConversationHistory
 } from '../prompts'
+import { SECTION_TARGET_WORDS } from '../sectionQuality'
 import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
 import type { ExampleScript } from '../exampleSearchService'
 
@@ -51,10 +52,10 @@ describe('buildSectionRegenerationPrompt', () => {
     expect(prompt).toContain('This section should be: Descend a staircase of ten steps.')
   })
 
-  it('keeps the ~400-word target and no-header rule from the section approach', () => {
+  it('keeps the section word target and no-header rule from the section approach', () => {
     const prompt = buildSectionRegenerationPrompt({ sectionTitle: 'Deepener' })
 
-    expect(prompt).toContain('approximately 400 words')
+    expect(prompt).toContain(`approximately ${SECTION_TARGET_WORDS} words`)
     expect(prompt).toContain('do NOT include the ## header')
   })
 
@@ -359,7 +360,7 @@ describe('getSectionGenerationPrompt upcoming sections (story 8.10)', () => {
 
     expect(prompt).toContain('Now write the "Induction" section')
     expect(prompt).toContain('This section should be: Settle the listener.')
-    expect(prompt).toContain('approximately 400 words')
+    expect(prompt).toContain(`approximately ${SECTION_TARGET_WORDS} words`)
   })
 
   it('formatUpcomingSections is not corrupted by replacement patterns', () => {

@@ -1,0 +1,28 @@
+You are the editor of the hypnosis script below. Judge it as one whole session rather than as separate sections: does it read as a single continuous arc, spoken in one voice, from induction through to the end?
+
+Judge every "##" section against these questions:
+
+1. Continuity — does it follow on from the state the previous section left the listener in? A listener already deep is not re-inducted, already-established anchors are not introduced twice, and the intensity never resets.
+2. Escalation — does it move the arc forward, or does it restate what the section before it already did?
+3. Repetition — does it reuse phrasing, imagery or suggestions another section has already used?
+4. Setups and payoffs — are the triggers, anchors and suggestions planted earlier actually carried through and resolved by the end?
+5. Brief coverage — taken together, do the sections deliver what the brief asked for?
+
+The brief was:
+
+{brief}
+
+Length (measured, not estimated — treat these numbers as fact):
+
+{lengthBrief}
+
+For every "##" section of the script, output exactly one line in one of these two formats:
+
+VERDICT: <section title> | cohesive
+VERDICT: <section title> | revise | <one line naming the specific problem and what the rewrite must do>
+
+Flag only real problems: a section that genuinely earns its place in the arc is cohesive. Output only VERDICT lines, one per section, in script order — no preamble, no commentary, no code fences.
+
+Here is the script to review:
+
+{script}

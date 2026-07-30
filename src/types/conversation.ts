@@ -98,16 +98,22 @@ export type GenerationPhase =
   | 'complete'
   | 'error'
 
-// One section rewritten by the style-review pass (story 8.5)
+// One section rewritten by a review pass: the style pass (story 8.5) cites
+// the numbered style rules it violated, the whole-script review (story 8.14)
+// names why in a word ("cohesion", "length")
 export interface ReviewRevision {
   sectionTitle: string
-  ruleNumbers: number[]
+  ruleNumbers?: number[]
+  reason?: string
 }
 
-// The outcome of a style-review pass, shown on the script page until dismissed
+// The outcome of a review pass, shown on the script page until dismissed
 export interface ReviewReport {
   conversationId: string
   revised: ReviewRevision[]
+  // Prebuilt one-line outcome; the style pass leaves it unset and the page
+  // formats its rule-based revisions instead
+  summary?: string
 }
 
 export interface OutlineSection {

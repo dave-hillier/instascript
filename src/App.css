@@ -1417,6 +1417,23 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   border-color: var(--accent);
 }
 
+.script-utility-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.review-error {
+  max-width: 62ch;
+  margin: 1rem auto 0;
+  padding: 0 1.125rem;
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  color: var(--danger);
+}
+
 .example-promoted {
   margin: 0;
   max-width: none;

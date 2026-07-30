@@ -1,11 +1,17 @@
 import { countWords } from '../utils/scriptMetrics'
 
-// A generated section targets ~400 words; anything roughly outside 250-600
+// A generated section targets ~550 words; anything roughly outside 400-750
 // is retried once, and the attempt closer to the target is kept.
+//
+// The targets are set so the script as a whole lands in its 20-30 minute
+// spoken window (see scriptReview): six sections at ~550 words is ~3,300
+// words, about 25 minutes at 130 wpm. Six moderate sections beat five long
+// ones — the outline gets finer-grained control of the arc, and each section
+// is still written in one call short enough to stay internally coherent.
 
-export const SECTION_TARGET_WORDS = 400
-export const SECTION_MIN_WORDS = 250
-export const SECTION_MAX_WORDS = 600
+export const SECTION_TARGET_WORDS = 550
+export const SECTION_MIN_WORDS = 400
+export const SECTION_MAX_WORDS = 750
 
 export function shouldRetrySection(wordCount: number): boolean {
   return wordCount < SECTION_MIN_WORDS || wordCount > SECTION_MAX_WORDS

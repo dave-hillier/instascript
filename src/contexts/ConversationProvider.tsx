@@ -149,6 +149,29 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   }, [scriptService, exampleService, buildCallbacks])
 
 
+  // Runs the whole-script review on demand against the script as it currently
+  // stands (story 8.14), independent of the automatic style-pass setting
+  const reviewScript = useCallback(async (conversationId: string, brief: string): Promise<void> => {
+    // Abort any existing generation and wait for it to settle first
+    const controller = await runLifecycleRef.current.admit()
+
+    const conversation = conversationsRef.current.find(c => c.id === conversationId)
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`)
+    }
+
+    const services: RawScriptServices = {
+      scriptService,
+      exampleService
+    }
+
+    const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
+    await runLifecycleRef.current.track(
+      controller,
+      orchestrator.reviewScript(conversation, brief, controller.signal)
+    )
+  }, [scriptService, exampleService, buildCallbacks])
+
   // Persists a manual section edit as a completed generation of its own
   // (story 2.3): the response carries the "## Title" heading so
   // consolidation-by-title replaces the section, and later regenerations see
@@ -239,6 +262,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     generateScript,
     regenerateSection,
     refineScript,
+    reviewScript,
     editSection,
     stopGeneration
   }

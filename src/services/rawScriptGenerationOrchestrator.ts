@@ -2,13 +2,14 @@ import type { RawConversation, GenerationRequest, RegenerationRequest, Refinemen
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
-import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory } from './prompts'
+import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildScriptReviewPrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory } from './prompts'
 import { getRecommendedExampleCount, UPCOMING_SECTIONS_CONTEXT_TOKENS } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
-import { parseOutline, ensureSectionHeading, consolidateSections } from './conversationDocument'
+import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutline } from './conversationDocument'
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
+import { assessScriptLength, formatLengthBrief, parseScriptReviewResponse, selectScriptRevisions, buildScriptRevisionInstruction, describeRevisionReason, formatScriptReviewSummary, SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
 import { KeyedRunGuard } from './runLifecycle'
 import { recordExampleSelections } from './exampleCorpus'
 
@@ -747,6 +748,194 @@ export class RawScriptGenerationOrchestrator {
         console.warn('Style review pass failed; keeping the generated script as-is', error)
       }
       return { ran: false, revised }
+    }
+  }
+
+  // On-demand whole-script review (story 8.14): judges the finished script as
+  // one artifact — continuity and escalation across sections, setups paid off,
+  // and the measured length against its spoken-duration target — then rewrites
+  // the sections that need it through the ordinary section-regeneration path.
+  // The script's current consolidated state is what gets reviewed, so a review
+  // can follow manual edits, regenerations and refinements.
+  async reviewScript(
+    conversation: RawConversation,
+    brief: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const conversationId = conversation.id
+    const generationKey = `${conversationId}-review`
+
+    if (!this.activeGenerations.tryStart(generationKey)) return
+
+    try {
+      // A fresh run owns generation state from here, and clears any previous
+      // review report so the banner describes this pass
+      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+
+      const outline = getLatestOutline(conversation)
+      if (!outline) {
+        throw new Error('This script has no outline to review against')
+      }
+
+      const sections = consolidateSections(conversation)
+      if (sections.length === 0) {
+        throw new Error('This script has no sections to review')
+      }
+
+      const scriptContent = `# ${outline.title}` +
+        sections.map(section => `\n\n## ${section.title}\n${section.content}`).join('')
+      const assessment = assessScriptLength(sections)
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PHASE',
+        conversationId,
+        phase: 'reviewing',
+        outline,
+        currentSectionIndex: outline.sections.length,
+        totalSections: outline.sections.length
+      })
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: false
+      })
+
+      const reviewPrompt = buildScriptReviewPrompt(
+        brief,
+        formatLengthBrief(assessment),
+        scriptContent
+      )
+      const reviewMessages: ChatMessage[] = [{ role: 'user', content: reviewPrompt }]
+
+      this.callbacks.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages: reviewMessages
+      })
+
+      const reviewStream = this.services.scriptService.regenerateSection(
+        { prompt: reviewPrompt, conversationId, sectionTitle: SCRIPT_REVIEW_SECTION_TITLE },
+        reviewMessages,
+        abortSignal
+      )
+
+      const reviewText = await this.streamToString(
+        reviewStream,
+        conversationId,
+        abortSignal,
+        (accumulated) => {
+          this.callbacks.dispatch({
+            type: 'UPDATE_CURRENT_GENERATION',
+            conversationId,
+            response: accumulated
+          })
+        }
+      )
+
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: reviewText
+      })
+
+      this.persistConversation(conversationId)
+
+      const revisions = selectScriptRevisions(
+        parseScriptReviewResponse(reviewText),
+        sections,
+        assessment
+      )
+
+      const revised: ReviewRevision[] = []
+      for (const revision of revisions) {
+        if (abortSignal?.aborted) throw new Error('Generation aborted')
+
+        const current = this.callbacks.getConversation(conversationId) ?? conversation
+        const prompt = buildSectionRegenerationPromptFromConversation(
+          current,
+          revision.sectionTitle,
+          buildScriptRevisionInstruction(revision)
+        )
+
+        await this.regenerateSection(
+          { prompt, conversationId, sectionTitle: revision.sectionTitle },
+          current,
+          abortSignal
+        )
+
+        revised.push({
+          sectionTitle: revision.sectionTitle,
+          reason: describeRevisionReason(revision)
+        })
+      }
+
+      const finalSections = revised.length > 0
+        ? consolidateSections(this.callbacks.getConversation(conversationId) ?? conversation)
+        : sections
+      const finalContent = `# ${outline.title}` +
+        finalSections.map(section => `\n\n## ${section.title}\n${section.content}`).join('')
+      // Reported against the script as it now stands, so the summary states
+      // the length the user actually has
+      const finalAssessment = assessScriptLength(finalSections)
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PHASE',
+        conversationId,
+        phase: 'complete',
+        outline,
+        currentSectionIndex: outline.sections.length,
+        totalSections: outline.sections.length,
+        sectionWordCounts: finalAssessment.sections.map(section => section.wordCount)
+      })
+
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: true
+      })
+
+      this.callbacks.appDispatch({
+        type: 'UPDATE_SCRIPT',
+        scriptId: conversation.scriptId,
+        updates: {
+          status: 'complete',
+          title: outline.title,
+          content: finalContent,
+          length: formatScriptLength(finalAssessment.totalWords)
+        }
+      })
+
+      this.callbacks.dispatch({
+        type: 'REVIEW_PASS_COMPLETED',
+        report: {
+          conversationId,
+          revised,
+          summary: formatScriptReviewSummary(revised, finalAssessment)
+        }
+      })
+
+      this.persistConversation(conversationId)
+
+    } catch (error) {
+      // Whether stopped or failed, the script itself is untouched apart from
+      // any sections already revised, so settle without an error phase: a
+      // failed review is reported next to its own button, not as a failed
+      // generation
+      this.callbacks.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: true
+      })
+
+      this.persistConversation(conversationId)
+
+      if (abortSignal?.aborted) return
+
+      console.error('Style review error:', error)
+      throw error
+    } finally {
+      this.activeGenerations.finish(generationKey)
     }
   }
 
