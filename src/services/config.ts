@@ -1,9 +1,17 @@
 export type APIProvider = 'openai' | 'openrouter' | 'mock'
 
+// Not every request deserves the same model. Writing a script is the job the
+// expensive model is chosen for; the small background jobs around it —
+// suggesting tags for an imported example, tidying a plain-text import into
+// markdown — are mechanical, and a small cheap model does them faster and for
+// a fraction of the price. Each role has its own model setting.
+export type ModelRole = 'generation' | 'utility'
+
 export interface AppConfig {
   apiKey: string | null
   apiProvider: APIProvider
   model: string
+  utilityModel: string
 }
 
 /**
@@ -40,6 +48,19 @@ export function getApiProvider(): APIProvider {
   }
 }
 
+// The model each role falls back to per provider. The utility defaults are
+// the cheapest capable model on each provider, since the utility role only
+// ever handles short, well-specified jobs.
+export const DEFAULT_MODELS: Record<APIProvider, Record<ModelRole, string>> = {
+  openai: { generation: 'gpt-5', utility: 'gpt-5-nano' },
+  openrouter: { generation: 'x-ai/grok-4.5', utility: 'x-ai/grok-3-mini' },
+  mock: { generation: 'gpt-5', utility: 'gpt-5-nano' }
+}
+
+export function getDefaultModel(provider: APIProvider, role: ModelRole): string {
+  return DEFAULT_MODELS[provider][role]
+}
+
 export function getModel(): string {
   try {
     const item = window.localStorage.getItem('model')
@@ -48,6 +69,32 @@ export function getModel(): string {
     console.warn('Error loading model from localStorage:', error)
     return 'gpt-5'
   }
+}
+
+export function getUtilityModel(): string {
+  const fallback = getDefaultModel(getApiProvider(), 'utility')
+  const stored = readSetting<string>('utilityModel', fallback)
+  return typeof stored === 'string' && stored.trim() ? stored.trim() : fallback
+}
+
+export function setUtilityModel(model: string): void {
+  writeSetting('utilityModel', model)
+}
+
+export function getModelForRole(role: ModelRole): string {
+  return role === 'utility' ? getUtilityModel() : getModel()
+}
+
+// Whether imports may call the utility model to suggest tags and tidy plain
+// text into markdown. On by default: the jobs are cheap and only run on an
+// import, and they fall back to the plain import when no provider is
+// configured. Switching it off keeps imports entirely offline.
+export function isImportAssistEnabled(): boolean {
+  return readSetting<boolean>('importAssist', true) !== false
+}
+
+export function setImportAssistEnabled(enabled: boolean): void {
+  writeSetting('importAssist', enabled)
 }
 
 // Which engine reads the script aloud in performance mode (story 4.5):
@@ -116,7 +163,8 @@ export function createAppConfig(): AppConfig {
   return {
     apiKey: provider === 'openrouter' ? getOpenRouterApiKey() : getApiKey(),
     apiProvider: provider,
-    model: getModel()
+    model: getModel(),
+    utilityModel: getUtilityModel()
   }
 }
 

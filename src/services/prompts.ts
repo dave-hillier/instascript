@@ -6,6 +6,8 @@ import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
 import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
 import outlineCritiquePrompt from '../prompts/outline-critique.txt?raw'
 import scriptReviewPrompt from '../prompts/script-review.txt?raw'
+import exampleTaggingPrompt from '../prompts/example-tagging.txt?raw'
+import importFormattingPrompt from '../prompts/import-formatting.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -183,6 +185,31 @@ export function buildScriptReviewPrompt(
     .replace('{brief}', () => brief.trim() || 'No brief was recorded for this script.')
     .replace('{lengthBrief}', () => lengthBrief)
     .replace('{script}', () => script)
+}
+
+// --- Utility-model prompts (story 5.7) ----------------------------------
+// Short jobs handed to the small model configured for the utility role.
+
+// Tags describe what a script is for, which its opening establishes; sending
+// the whole script would multiply the cost of the cheapest job in the app for
+// no gain in the tags.
+export const TAGGING_EXCERPT_WORDS = 600
+
+// The tags already in use are offered to the model so a growing corpus
+// converges on one vocabulary instead of accumulating near-duplicates
+export function buildExampleTaggingPrompt(knownTags: string[]): string {
+  const known = knownTags.length > 0 ? knownTags.join(', ') : '(none yet)'
+  return exampleTaggingPrompt.replace('{knownTags}', () => known)
+}
+
+export function buildTaggingInput(title: string, content: string): string {
+  return `Title: ${title}\n\n${excerptStart(content, TAGGING_EXCERPT_WORDS)}`
+}
+
+// Typesetting only: the script's words must survive the pass untouched, which
+// the caller verifies before storing the result
+export function buildImportFormattingPrompt(title: string): string {
+  return importFormattingPrompt.replace('{title}', () => title)
 }
 
 export function getScriptRefinementPrompt(instruction: string): string {

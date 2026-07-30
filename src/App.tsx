@@ -9,7 +9,14 @@ import { buildConsolidatedMarkdown, markdownFilename } from './utils/scriptExpor
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import { ExamplesPage } from './pages/ExamplesPage'
-import type { APIProvider } from './services/config'
+import {
+  getUtilityModel,
+  setUtilityModel,
+  isImportAssistEnabled,
+  setImportAssistEnabled,
+  type APIProvider
+} from './services/config'
+import type { SettingsFormValues } from './components/SettingsModal'
 import { clearStoredConversations, loadStoredConversations, saveStoredConversation } from './services/conversationStorage'
 import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryImportCounts } from './services/libraryTransfer'
 import { getExampleSelectionCounts, importExampleSelectionCounts } from './services/exampleCorpus'
@@ -163,6 +170,11 @@ function AppContent() {
       return 'gpt-5'
     }
   })
+  // The small model used for background jobs, and whether imports may call it
+  // (story 5.7)
+  const [utilityModel, setUtilityModelState] = useState<string>(getUtilityModel)
+  const [importAssist, setImportAssist] = useState<boolean>(isImportAssistEnabled)
+
   // Opt-in style-review pass after each full generation (story 8.5)
   const [reviewPass, setReviewPass] = useState<boolean>(() => {
     try {
@@ -264,6 +276,15 @@ function AppContent() {
     }
   }, [model])
 
+  // Save the utility model and the import-assist preference when they change
+  useEffect(() => {
+    setUtilityModel(utilityModel)
+  }, [utilityModel])
+
+  useEffect(() => {
+    setImportAssistEnabled(importAssist)
+  }, [importAssist])
+
   // Save review pass preference when it changes
   useEffect(() => {
     try {
@@ -350,24 +371,19 @@ function AppContent() {
   }
 
 
-  const handleSaveSettings = (
-    newApiKey: string,
-    newOpenRouterApiKey: string,
-    newApiProvider: APIProvider,
-    newModel: string,
-    newReviewPass: boolean,
-    newDebugTranscripts: boolean
-  ) => {
-    if (newApiKey.trim()) {
-      setApiKey(newApiKey.trim())
+  const handleSaveSettings = (settings: SettingsFormValues) => {
+    if (settings.apiKey.trim()) {
+      setApiKey(settings.apiKey.trim())
     }
-    if (newOpenRouterApiKey.trim()) {
-      setOpenRouterApiKey(newOpenRouterApiKey.trim())
+    if (settings.openRouterApiKey.trim()) {
+      setOpenRouterApiKey(settings.openRouterApiKey.trim())
     }
-    setApiProvider(newApiProvider)
-    setModel(newModel)
-    setReviewPass(newReviewPass)
-    setDebugTranscripts(newDebugTranscripts)
+    setApiProvider(settings.apiProvider)
+    setModel(settings.model)
+    setUtilityModelState(settings.utilityModel)
+    setImportAssist(settings.importAssist)
+    setReviewPass(settings.reviewPass)
+    setDebugTranscripts(settings.debugTranscripts)
   }
 
   const handleDownloadTranscripts = (format: 'json' | 'text') => {
@@ -691,6 +707,8 @@ function AppContent() {
         openRouterApiKey={openRouterApiKey || ''}
         apiProvider={apiProvider || 'mock'}
         model={model || 'gpt-5'}
+        utilityModel={utilityModel}
+        importAssist={importAssist}
         reviewPass={reviewPass}
         debugTranscripts={debugTranscripts}
         onSave={handleSaveSettings}
