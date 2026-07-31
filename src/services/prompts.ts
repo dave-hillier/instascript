@@ -16,7 +16,7 @@ import { buildLengthPlan } from './scriptLength'
 import type { LengthPlan } from './scriptLength'
 import type { DocumentSection } from './conversationDocument'
 import type { ScriptFsTree } from './scriptFs'
-import { renderScriptFsTree } from './scriptFs'
+import { exampleLabel, mountExamples, renderScriptFsTree } from './scriptFs'
 
 /**
  * Pure functions for prompt generation
@@ -90,12 +90,19 @@ function excerptEnd(text: string, maxWords: number): string {
 // the last user turn: everything before that point is the cached prefix
 // (docs/prompt-caching.md), and the tree changes with every generation.
 export function buildStructureBlock(tree: ScriptFsTree): string {
+  const examplesNote = tree.examples.length > 0
+    ? ' Under /examples/ are the exemplar scripts quoted in full at the end of the ' +
+      'system prompt, one directory each, listed with their tags; each is labelled ' +
+      'there with the path it appears at here.'
+    : ''
+
   return 'Current structure of the script:\n\n' +
     renderScriptFsTree(tree) +
     '\nEach section is a directory holding prompt.md (its spec, from the outline) and ' +
     'content.md (its written text). A section is "stale" when its spec changed after ' +
     'its text was written, "empty" when nothing has been written for it yet, and ' +
-    '"fresh" otherwise. Word counts are of content.md. Use this to see where the ' +
+    '"fresh" otherwise. Word counts are of content.md.' + examplesNote +
+    ' Use this to see where the ' +
     'section you are writing sits in the whole; do not restate it in your reply.'
 }
 
@@ -258,23 +265,15 @@ export function getScriptRefinementPrompt(instruction: string, structure?: Scrip
 // most-relevant-first, but few-shot output quality is swayed most by the
 // exemplar closest to the instruction — so the prompt places the MOST
 // relevant example LAST. This is the single place that ordering rule lives.
-export function orderExamplesForPrompt(examples: ExampleScript[]): ExampleScript[] {
+// Generic so the same rule can order the examples themselves or anything
+// paired with them (their mount paths) without restating the reversal.
+export function orderExamplesForPrompt<T>(examples: T[]): T[] {
   return [...examples].reverse()
-}
-
-// Only `content` is guaranteed on an ExampleScript. Retrieval names an
-// example by title, with `filename` kept as the legacy alias debugTranscript
-// also honours and `id` as the last identifier before the heading goes
-// unlabelled — a fabricated name is worse than none.
-function exampleLabel(example: ExampleScript): string {
-  const name = example.metadata?.title ?? example.metadata?.filename ?? example.metadata?.id
-  if (name === undefined) return ''
-  return String(name).replace(/\s+/g, ' ').trim()
 }
 
 function exampleTagLine(example: ExampleScript): string {
   const tags = typeof example.metadata?.tags === 'string' ? example.metadata.tags.trim() : ''
-  return tags ? `Tags: ${tags}\n\n` : ''
+  return tags ? `Tags: ${tags}\n` : ''
 }
 
 function exampleHeading(example: ExampleScript, position: number): string {
@@ -284,12 +283,22 @@ function exampleHeading(example: ExampleScript, position: number): string {
 
 // An empty corpus is an ordinary state — the bundled examples are opt-in — so
 // it contributes nothing rather than an empty heading the model has to ignore.
+//
+// Each example carries the path it is mounted at in the virtual filesystem, so
+// the structure block's /examples/ listing and this block name the same thing.
+// The paths are assigned in retrieval order (010 is the most relevant) and the
+// block is then ordered most-relevant-last, so the numbering runs backwards
+// here on purpose.
 export function formatExamplesForPrompt(examples: ExampleScript[]): string {
   if (examples.length === 0) return ''
 
+  const mounted = mountExamples(examples)
+  const entries = examples.map((example, index) => ({ example, path: mounted[index].path }))
+
   return '\n## Examples\n\n' +
-    orderExamplesForPrompt(examples).map((example, index) =>
-      `${exampleHeading(example, index + 1)}\n\n${exampleTagLine(example)}${example.content}`
+    orderExamplesForPrompt(entries).map(({ example, path }, index) =>
+      `${exampleHeading(example, index + 1)}\n\n` +
+      `Path: ${path}\n${exampleTagLine(example)}\n${example.content}`
     ).join('\n\n') + '\n'
 }
 

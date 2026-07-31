@@ -297,7 +297,7 @@ describe('exemplar labelling', () => {
     ] as ExampleScript[]) {
       const formatted = formatExamplesForPrompt([example])
 
-      expect(formatted).toContain('### Example 1\n\nBody')
+      expect(formatted).toContain('### Example 1\n\nPath: /examples/010-example\n\nBody')
       expect(formatted).not.toContain('Unknown')
       expect(formatted).not.toContain('### Example 1:')
     }
@@ -308,7 +308,9 @@ describe('exemplar labelling', () => {
       { content: 'Body', metadata: { title: 'Deep Relaxation', tags: 'anxiety, sleep' } }
     ])
 
-    expect(formatted).toContain('### Example 1: Deep Relaxation\n\nTags: anxiety, sleep\n\nBody')
+    expect(formatted).toContain(
+      '### Example 1: Deep Relaxation\n\nPath: /examples/010-deep-relaxation\nTags: anxiety, sleep\n\nBody'
+    )
   })
 
   it('omits the tag line when the example has no tags', () => {
@@ -316,7 +318,7 @@ describe('exemplar labelling', () => {
       { content: 'Body', metadata: { title: 'Deep Relaxation', tags: '' } }
     ])
 
-    expect(formatted).toContain('### Example 1: Deep Relaxation\n\nBody')
+    expect(formatted).toContain('### Example 1: Deep Relaxation\n\nPath: /examples/010-deep-relaxation\n\nBody')
     expect(formatted).not.toContain('Tags:')
   })
 
