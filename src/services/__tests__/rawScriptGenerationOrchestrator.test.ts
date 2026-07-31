@@ -5,7 +5,8 @@ import type { RawConversationAction } from '../../reducers/rawConversationReduce
 import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
 import type { ExampleScript } from '../exampleSearchService'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
-import { getOutlineGenerationPrompt } from '../prompts'
+import { getOutlineGenerationPrompt, getSystemPrompt, buildStructureBlock } from '../prompts'
+import { buildScriptFs } from '../scriptFs'
 
 const makeGeneration = (response: string): Generation => ({
   messages: [],
@@ -558,5 +559,123 @@ describe('regenerateSection abort handling', () => {
       isComplete: true,
       error: 'Provider exploded'
     })
+  })
+})
+
+describe('the script structure reaches the rewrite and refinement requests', () => {
+  const conversation = (): RawConversation => ({
+    id: 'conv-1',
+    scriptId: 'script-1',
+    generations: [
+      { messages: [{ role: 'user', content: 'A deep rest script' }], response: outlineText, timestamp: 0 },
+      { messages: [{ role: 'user', content: 'Write the Induction' }], response: '## Induction\nOld induction text.', timestamp: 1 }
+    ],
+    createdAt: 0,
+    updatedAt: 0
+  })
+
+  const setup = (current: RawConversation) => {
+    const sent: ChatMessage[][] = []
+    const dispatched: RawConversationAction[] = []
+
+    const services: RawScriptServices = {
+      scriptService: {
+        generateScript: () => (async function* () { yield outlineText })(),
+        regenerateSection: (request, messages) => {
+          sent.push(messages)
+          return (async function* () { yield `## ${request.sectionTitle}\nNew text.` })()
+        }
+      },
+      exampleService: { searchExamples: async () => [] }
+    }
+
+    const callbacks: RawGenerationCallbacks = {
+      dispatch: action => { dispatched.push(action) },
+      appDispatch: () => {},
+      saveConversation: () => {},
+      getConversation: () => current
+    }
+
+    return { orchestrator: new RawScriptGenerationOrchestrator(services, callbacks), sent, dispatched }
+  }
+
+  it('appends the structure block to the last user turn of a section rewrite', async () => {
+    const current = conversation()
+    const { orchestrator, sent } = setup(current)
+
+    await orchestrator.regenerateSection(
+      { prompt: 'Rewrite the Induction', conversationId: current.id, sectionTitle: 'Induction' },
+      current
+    )
+
+    const messages = sent[0]
+    const last = messages[messages.length - 1]
+    expect(last.role).toBe('user')
+    expect(last.content).toBe(
+      `Rewrite the Induction\n\n${buildStructureBlock(buildScriptFs(current))}`
+    )
+  })
+
+  it('appends the structure block to the last user turn of a whole-script refinement', async () => {
+    const current = conversation()
+    const { orchestrator, sent } = setup(current)
+
+    await orchestrator.refineScript(
+      { prompt: 'Make it warmer', conversationId: current.id },
+      current
+    )
+
+    const messages = sent[0]
+    const last = messages[messages.length - 1]
+    expect(last.role).toBe('user')
+    expect(last.content).toContain('Make it warmer')
+    expect(last.content.endsWith(buildStructureBlock(buildScriptFs(current)))).toBe(true)
+  })
+
+  it('leaves the system message untouched, so the cached prefix survives', async () => {
+    const current = conversation()
+    const { orchestrator, sent } = setup(current)
+
+    await orchestrator.regenerateSection(
+      { prompt: 'Rewrite the Induction', conversationId: current.id, sectionTitle: 'Induction' },
+      current
+    )
+
+    const systemMessages = sent[0].filter(message => message.role === 'system')
+    expect(systemMessages).toHaveLength(1)
+    expect(systemMessages[0].content).toBe(getSystemPrompt())
+    // Every turn before the last is history, byte-identical to what was stored
+    for (const message of sent[0].slice(1, -1)) {
+      expect(message.content).not.toContain('Current structure of the script')
+    }
+  })
+
+  it('does not store the structure block, so it is never replayed as history', async () => {
+    const current = conversation()
+    const { orchestrator, dispatched } = setup(current)
+
+    await orchestrator.regenerateSection(
+      { prompt: 'Rewrite the Induction', conversationId: current.id, sectionTitle: 'Induction' },
+      current
+    )
+
+    const started = dispatched.find(action => action.type === 'START_GENERATION')
+    const stored = started && 'messages' in started ? started.messages ?? [] : []
+    for (const message of stored) {
+      expect(message.content).not.toContain('Current structure of the script')
+    }
+  })
+
+  it('leaves the outline path of a full generation free of the block', async () => {
+    const current = makeConversation([])
+    const { orchestrator, sent } = setup(current)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, current)
+
+    for (const messages of sent) {
+      for (const message of messages) {
+        expect(message.content).not.toContain('Current structure of the script')
+      }
+    }
   })
 })

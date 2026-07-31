@@ -12,8 +12,11 @@ import {
   getSystemPrompt,
   getOutlineGenerationPrompt,
   buildGenerationSystemPrompt,
-  withGenerationSystemPrompt
+  withGenerationSystemPrompt,
+  buildStructureBlock,
+  withStructureBlock
 } from '../prompts'
+import { buildScriptFs, renderScriptFsTree } from '../scriptFs'
 import { buildLengthPlan } from '../scriptLength'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
 import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
@@ -532,5 +535,126 @@ describe('getSectionGenerationPrompt upcoming sections (story 8.10)', () => {
     ])
 
     expect(block).toContain("Roughly $100, or $& in shorthand.")
+  })
+})
+
+describe('buildStructureBlock (script virtual filesystem)', () => {
+  const tree = buildScriptFs(makeConversation([
+    outlineText,
+    '## Induction\nClose your eyes and breathe.'
+  ]))
+
+  it('carries the rendered tree', () => {
+    const block = buildStructureBlock(tree)
+
+    expect(block).toContain(renderScriptFsTree(tree))
+    expect(block).toContain('010-induction/')
+  })
+
+  it('explains the two files a section directory holds', () => {
+    const block = buildStructureBlock(tree)
+
+    expect(block).toContain('prompt.md')
+    expect(block).toContain('content.md')
+  })
+
+  it('explains what stale means', () => {
+    expect(buildStructureBlock(tree)).toContain('spec changed after')
+  })
+
+  it('stays short enough to be context rather than instruction', () => {
+    const framing = buildStructureBlock(tree).replace(renderScriptFsTree(tree), '')
+
+    expect(framing.split('\n').filter(line => line.trim() !== '')).toHaveLength(2)
+  })
+})
+
+describe('structure block in the rewrite and refinement prompts', () => {
+  const conversation = makeConversation([
+    outlineText,
+    '## Induction\nClose your eyes and breathe.'
+  ])
+  const tree = buildScriptFs(conversation)
+
+  it('omits the block entirely when no tree is supplied', () => {
+    expect(buildSectionRegenerationPrompt({ sectionTitle: 'Induction' }))
+      .not.toContain('Current structure of the script')
+    expect(buildSectionRegenerationPromptFromConversation(conversation, 'Induction'))
+      .not.toContain('Current structure of the script')
+    expect(getScriptRefinementPrompt('make it warmer'))
+      .not.toContain('Current structure of the script')
+  })
+
+  it('appends the block to the end of the section regeneration prompt', () => {
+    const plain = buildSectionRegenerationPrompt({ sectionTitle: 'Induction' })
+    const withTree = buildSectionRegenerationPrompt({ sectionTitle: 'Induction', structure: tree })
+
+    expect(withTree).toBe(`${plain}\n\n${buildStructureBlock(tree)}`)
+  })
+
+  it('keeps the block after the user instruction, which stays the last directive', () => {
+    const prompt = buildSectionRegenerationPrompt({
+      sectionTitle: 'Induction',
+      instruction: 'slower please',
+      structure: tree
+    })
+
+    expect(prompt.indexOf('slower please')).toBeLessThan(prompt.indexOf('Current structure of the script'))
+  })
+
+  it('threads the tree through the conversation-derived rewrite prompt', () => {
+    const plain = buildSectionRegenerationPromptFromConversation(conversation, 'Induction')
+    const withTree = buildSectionRegenerationPromptFromConversation(conversation, 'Induction', undefined, tree)
+
+    expect(withTree).toBe(`${plain}\n\n${buildStructureBlock(tree)}`)
+  })
+
+  it('appends the block to the end of the refinement prompt', () => {
+    const plain = getScriptRefinementPrompt('make it warmer')
+    const withTree = getScriptRefinementPrompt('make it warmer', tree)
+
+    expect(withTree).toBe(`${plain}\n\n${buildStructureBlock(tree)}`)
+  })
+})
+
+describe('withStructureBlock', () => {
+  const tree = buildScriptFs(makeConversation([outlineText]))
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: 'System rules' },
+    { role: 'user', content: 'Write the Induction' },
+    { role: 'assistant', content: '## Induction\nBreathe.' },
+    { role: 'user', content: 'Rewrite the Induction' }
+  ]
+
+  it('returns the messages untouched when no tree is supplied', () => {
+    expect(withStructureBlock(messages)).toBe(messages)
+  })
+
+  it('appends the block to the last user turn only', () => {
+    const result = withStructureBlock(messages, tree)
+
+    expect(result).toHaveLength(messages.length)
+    expect(result.slice(0, -1)).toEqual(messages.slice(0, -1))
+    expect(result[result.length - 1]).toEqual({
+      role: 'user',
+      content: `Rewrite the Induction\n\n${buildStructureBlock(tree)}`
+    })
+  })
+
+  it('leaves the system message, and so the cached prefix, unchanged', () => {
+    const result = withStructureBlock(messages, tree)
+
+    expect(result.filter(message => message.role === 'system')).toEqual([
+      { role: 'system', content: 'System rules' }
+    ])
+    expect(result[0].content).not.toContain('Current structure of the script')
+  })
+
+  it('adds a user turn when the last message is not one', () => {
+    const result = withStructureBlock([{ role: 'system', content: 'System rules' }], tree)
+
+    expect(result).toHaveLength(2)
+    expect(result[1]).toEqual({ role: 'user', content: buildStructureBlock(tree) })
   })
 })
