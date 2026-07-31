@@ -249,7 +249,7 @@ export const ExamplesPage = () => {
     dispatch({
       type: 'IMPORT_ASSIST_FINISHED',
       outcome: { tagged, formatted },
-      model: service.isLive ? service.model : 'The mock provider'
+      model: service.model
     })
   }
 
