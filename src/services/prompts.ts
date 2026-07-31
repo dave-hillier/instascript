@@ -22,9 +22,10 @@ import type { DocumentSection } from './conversationDocument'
 
 const CONTINUITY_EXCERPT_WORDS = 75
 
-// The requested length reaches the model through the two prompts that decide
+// The requested length reaches the model through the three prompts that decide
 // how much script gets written: the system prompt states the whole-script aim,
-// the outline prompt turns it into a section count.
+// the outline prompt turns it into a section count, and the outline critique
+// judges — and may rewrite — the plan against the same numbers.
 function applyLengthPlan(template: string, plan: LengthPlan): string {
   return template
     .replace(/\{targetMinutes\}/g, String(plan.targetMinutes))
@@ -165,9 +166,16 @@ export function buildStyleCritiquePrompt(script: string): string {
 
 // The critique request for the outline-critique step (story 8.9): the user's
 // brief plus the freshly generated outline, asking for either approval or a
-// full revised outline in the same format
-export function buildOutlineCritiquePrompt(brief: string, outlineText: string): string {
-  return outlineCritiquePrompt
+// full revised outline in the same format. A revised outline is the plan every
+// section inherits, so the critique is held to the same length plan the
+// outline was generated against. Length substitution runs on the template
+// first, so placeholder-shaped text in the brief or outline is never replaced.
+export function buildOutlineCritiquePrompt(
+  brief: string,
+  outlineText: string,
+  plan: LengthPlan = buildLengthPlan()
+): string {
+  return applyLengthPlan(outlineCritiquePrompt, plan)
     .replace('{brief}', () => brief)
     .replace('{outline}', () => outlineText)
 }
@@ -213,7 +221,9 @@ export function buildImportFormattingPrompt(title: string): string {
 }
 
 export function getScriptRefinementPrompt(instruction: string): string {
-  return scriptRefinementPrompt.replace('{instruction}', instruction.trim())
+  return scriptRefinementPrompt
+    .replace('{targetWords}', String(SECTION_TARGET_WORDS))
+    .replace('{instruction}', () => instruction.trim())
 }
 
 // Deliberate exemplar ordering (story 8.8): search returns examples ranked
@@ -224,16 +234,63 @@ export function orderExamplesForPrompt(examples: ExampleScript[]): ExampleScript
   return [...examples].reverse()
 }
 
+// Only `content` is guaranteed on an ExampleScript. Retrieval names an
+// example by title, with `filename` kept as the legacy alias debugTranscript
+// also honours and `id` as the last identifier before the heading goes
+// unlabelled — a fabricated name is worse than none.
+function exampleLabel(example: ExampleScript): string {
+  const name = example.metadata?.title ?? example.metadata?.filename ?? example.metadata?.id
+  if (name === undefined) return ''
+  return String(name).replace(/\s+/g, ' ').trim()
+}
+
+function exampleTagLine(example: ExampleScript): string {
+  const tags = typeof example.metadata?.tags === 'string' ? example.metadata.tags.trim() : ''
+  return tags ? `Tags: ${tags}\n\n` : ''
+}
+
+function exampleHeading(example: ExampleScript, position: number): string {
+  const label = exampleLabel(example)
+  return label ? `### Example ${position}: ${label}` : `### Example ${position}`
+}
+
+// An empty corpus is an ordinary state — the bundled examples are opt-in — so
+// it contributes nothing rather than an empty heading the model has to ignore.
 export function formatExamplesForPrompt(examples: ExampleScript[]): string {
-  if (examples.length === 0) {
-    console.warn('No examples to format for prompt')
-    return '\n\n'
-  }
+  if (examples.length === 0) return ''
 
   return '\n## Examples\n\n' +
     orderExamplesForPrompt(examples).map((example, index) =>
-      `### Example ${index + 1}: ${example.metadata?.filename || 'Unknown'}\n\n${example.content}`
+      `${exampleHeading(example, index + 1)}\n\n${exampleTagLine(example)}${example.content}`
     ).join('\n\n') + '\n'
+}
+
+// The one system message a whole generation run is sent with. Every request
+// that writes prose — the outline, each section, each rewrite — must carry the
+// identical string: it is both the shared cached prefix and what
+// normaliseConversationHistory collapses replayed history down to.
+export function buildGenerationSystemPrompt(plan: LengthPlan, examples: ExampleScript[]): string {
+  if (examples.length === 0) return getSystemPrompt(plan)
+  return getSystemPrompt(plan) + formatExamplesForPrompt(examples)
+}
+
+// Examples are sent, never stored: one copy of the corpus per stored
+// generation would not fit the browser's storage quota, so the run's
+// example-bearing system message is swapped in only on the way out.
+// A conversation reloaded from storage has no system turn to replace: the
+// serialised form keeps only the user and assistant turns. Prepending one is
+// what carries the corpus, and the run's length, into a rewrite after a
+// reload.
+export function withGenerationSystemPrompt(
+  messages: ChatMessage[],
+  systemPrompt: string
+): ChatMessage[] {
+  if (!messages.some(message => message.role === 'system')) {
+    return [{ role: 'system', content: systemPrompt }, ...messages]
+  }
+  return messages.map(message =>
+    message.role === 'system' ? { role: 'system', content: systemPrompt } : message
+  )
 }
 
 // Conversation-history normalisation (story 8.13): generations store the

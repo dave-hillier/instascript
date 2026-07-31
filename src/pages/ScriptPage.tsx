@@ -368,7 +368,9 @@ export const ScriptPage = ({
       await regenerateSection({
         conversationId: conversation.id,
         sectionTitle: sectionTitle,
-        instruction
+        instruction,
+        targetMinutes: script.targetMinutes,
+        brief: script.initialPrompt ?? script.title
       })
     } catch (error) {
       console.error('Error regenerating section:', error)
@@ -454,13 +456,18 @@ export const ScriptPage = ({
   // on failure it stays in the input, with the failure reason alongside
   const handleRefineSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!conversation) return
+    if (!conversation || !script) return
     const instruction = refineInstruction.trim()
     if (!instruction) return
 
     setRefineError(null)
     try {
-      await refineScript({ conversationId: conversation.id, instruction })
+      await refineScript({
+        conversationId: conversation.id,
+        instruction,
+        targetMinutes: script.targetMinutes,
+        brief: script.initialPrompt ?? script.title
+      })
       setRefineInstruction('')
     } catch (error) {
       console.error('Error refining script:', error)

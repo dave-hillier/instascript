@@ -210,3 +210,22 @@ describe('mergeLibrary', () => {
     expect(result.conversationsSkipped).toBe(1)
   })
 })
+
+// The requested length decides what every later rewrite, refinement and review
+// aims at, so losing it in transfer silently replans the script at the default
+describe('the requested length survives a library round trip', () => {
+  it('carries targetMinutes through export and import', () => {
+    const script: Script = { ...makeScript('s1'), targetMinutes: 60 }
+    const serialized = serializeLibraryExport([script], [makeConversation('c1', 's1')])
+
+    const parsed = parseLibraryExport(serialized)
+
+    expect(parsed.scripts[0].targetMinutes).toBe(60)
+  })
+
+  it('leaves targetMinutes unset when the export has none', () => {
+    const serialized = serializeLibraryExport([makeScript('s1')], [])
+
+    expect(parseLibraryExport(serialized).scripts[0].targetMinutes).toBeUndefined()
+  })
+})

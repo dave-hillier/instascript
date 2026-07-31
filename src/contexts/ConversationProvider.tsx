@@ -105,7 +105,9 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     const regenerationRequest: RegenerationRequest = {
       prompt,
       conversationId: request.conversationId,
-      sectionTitle: request.sectionTitle
+      sectionTitle: request.sectionTitle,
+      targetMinutes: request.targetMinutes,
+      brief: request.brief
     }
 
     const services: RawScriptServices = {
@@ -141,7 +143,12 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     await runLifecycleRef.current.track(
       controller,
       orchestrator.refineScript(
-        { prompt, conversationId: request.conversationId },
+        {
+          prompt,
+          conversationId: request.conversationId,
+          targetMinutes: request.targetMinutes,
+          brief: request.brief
+        },
         conversation,
         controller.signal
       )

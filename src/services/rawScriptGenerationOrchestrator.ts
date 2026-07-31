@@ -2,8 +2,8 @@ import type { RawConversation, GenerationRequest, RegenerationRequest, Refinemen
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
-import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildScriptReviewPrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory } from './prompts'
-import { getRecommendedExampleCount, UPCOMING_SECTIONS_CONTEXT_TOKENS } from '../utils/contextWindow'
+import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildScriptReviewPrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory, buildGenerationSystemPrompt, withGenerationSystemPrompt } from './prompts'
+import { getRecommendedExampleCount, estimateSectionContextTokens } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutline } from './conversationDocument'
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
@@ -106,6 +106,9 @@ export class RawScriptGenerationOrchestrator {
   private completedGenerations = new Set<string>()
   private lastSaveTime = 0
   private saveThrottleMs = 1000
+  // The corpus a conversation's run was grounded in, so a rewrite triggered
+  // later in the same session sees the same exemplars without retrieving again
+  private runExamples = new Map<string, ExampleScript[]>()
 
   constructor(
     services: RawScriptServices,
@@ -117,22 +120,34 @@ export class RawScriptGenerationOrchestrator {
     this.options = options
   }
 
+  // A generation run builds each request from scratch, so its largest request
+  // is one section's worth of outline and script-so-far, reserved below. A
+  // rewrite instead replays the stored conversation, where the request
+  // messages dwarf the responses and the outline and script are already
+  // counted — so the two paths size the corpus differently.
   private async retrieveExamples(
     request: GenerationRequest,
     conversation: RawConversation | undefined,
-    plan: LengthPlan
+    plan: LengthPlan,
+    replaysHistory = false
   ): Promise<ExampleScript[]> {
     try {
       const systemPrompt = getSystemPrompt(plan)
       const conversationTokens = conversation
-        ? conversation.generations.reduce((total: number, generation) => total + generation.response.length, 0)
+        ? conversation.generations.reduce(
+            (total: number, generation) =>
+              total +
+              generation.response.length +
+              (replaysHistory
+                ? generation.messages.reduce((sum, message) => sum + message.content.length, 0)
+                : 0),
+            0
+          )
         : 0
-      // Section requests also carry the outline and its upcoming-sections
-      // block (story 8.10), so reserve room for that when sizing examples
       const optimalExampleCount = getRecommendedExampleCount(
         systemPrompt,
         Math.ceil(conversationTokens / 4),
-        UPCOMING_SECTIONS_CONTEXT_TOKENS
+        replaysHistory ? 0 : estimateSectionContextTokens(plan.totalWords, plan.sectionCount)
       )
 
       return await this.services.exampleService.searchExamples(
@@ -143,6 +158,24 @@ export class RawScriptGenerationOrchestrator {
       console.warn('Failed to retrieve examples', error)
       return []
     }
+  }
+
+  // The run's exemplars for a rewrite that did not start from generateScript
+  // (a manual regeneration or refinement after a reload), retrieved once per
+  // conversation. retrieveExamples swallows failures, so this degrades to an
+  // ungrounded rewrite rather than failing the request.
+  private async examplesFor(
+    conversationId: string,
+    query: string,
+    plan: LengthPlan,
+    conversation?: RawConversation
+  ): Promise<ExampleScript[]> {
+    const cached = this.runExamples.get(conversationId)
+    if (cached) return cached
+
+    const examples = await this.retrieveExamples({ prompt: query }, conversation, plan, true)
+    this.runExamples.set(conversationId, examples)
+    return examples
   }
 
   private persistConversation(conversationId: string): void {
@@ -210,6 +243,8 @@ export class RawScriptGenerationOrchestrator {
 
       // Retrieve examples upfront; record which ones inform this generation
       const examples = await this.retrieveExamples(request, conversation, plan)
+      this.runExamples.set(conversationId, examples)
+      const systemPrompt = buildGenerationSystemPrompt(plan, examples)
       const exampleIds = examples
         .map(example => String(example.metadata?.id ?? example.metadata?.filename ?? ''))
         .filter(Boolean)
@@ -257,21 +292,22 @@ export class RawScriptGenerationOrchestrator {
         })
 
         const outlineUserPrompt = request.prompt + '\n\n' + getOutlineGenerationPrompt(plan)
+        const outlineMessages: ChatMessage[] = [
+          { role: 'system', content: getSystemPrompt(plan) },
+          { role: 'user', content: outlineUserPrompt }
+        ]
 
         // Start a generation entry for the outline
         this.callbacks.dispatch({
           type: 'START_GENERATION',
           conversationId,
-          messages: [
-            { role: 'system', content: getSystemPrompt(plan) },
-            { role: 'user', content: outlineUserPrompt }
-          ],
+          messages: outlineMessages,
           exampleIds: exampleIds.length > 0 ? exampleIds : undefined
         })
 
         const outlineStream = this.services.scriptService.generateScript(
           { ...request, prompt: outlineUserPrompt },
-          [],
+          withGenerationSystemPrompt(outlineMessages, systemPrompt),
           examples,
           abortSignal
         )
@@ -312,6 +348,7 @@ export class RawScriptGenerationOrchestrator {
           const critiqued = await this.runOutlineCritique(
             conversationId,
             request,
+            plan,
             outline,
             outlineText,
             abortSignal
@@ -401,7 +438,7 @@ export class RawScriptGenerationOrchestrator {
 
           const sectionStream = this.services.scriptService.regenerateSection(
             { prompt: userMessage, conversationId, sectionTitle: section.title },
-            sectionMessages,
+            withGenerationSystemPrompt(sectionMessages, systemPrompt),
             abortSignal
           )
 
@@ -473,7 +510,13 @@ export class RawScriptGenerationOrchestrator {
       // --- Phase 2.5: optional style-review pass (story 8.5) ---
       let reviewResult: ReviewPassResult | null = null
       if (this.options.reviewPassEnabled) {
-        reviewResult = await this.runReviewPass(conversation, outline, scriptContent, abortSignal)
+        reviewResult = await this.runReviewPass(
+          conversation,
+          outline,
+          scriptContent,
+          request.targetMinutes,
+          abortSignal
+        )
         if (reviewResult.updatedContent) {
           scriptContent = reviewResult.updatedContent
         }
@@ -586,12 +629,13 @@ export class RawScriptGenerationOrchestrator {
   private async runOutlineCritique(
     conversationId: string,
     request: GenerationRequest,
+    plan: LengthPlan,
     outline: ScriptOutline,
     outlineText: string,
     abortSignal?: AbortSignal
   ): Promise<{ outline: ScriptOutline; outlineText: string }> {
     try {
-      const critiquePrompt = buildOutlineCritiquePrompt(request.prompt, outlineText)
+      const critiquePrompt = buildOutlineCritiquePrompt(request.prompt, outlineText, plan)
       const critiqueMessages: ChatMessage[] = [{ role: 'user', content: critiquePrompt }]
 
       this.callbacks.dispatch({
@@ -653,6 +697,7 @@ export class RawScriptGenerationOrchestrator {
     conversation: RawConversation,
     outline: ScriptOutline,
     scriptContent: string,
+    targetMinutes?: number,
     abortSignal?: AbortSignal
   ): Promise<ReviewPassResult> {
     const conversationId = conversation.id
@@ -729,7 +774,7 @@ export class RawScriptGenerationOrchestrator {
         )
 
         await this.regenerateSection(
-          { prompt, conversationId, sectionTitle: violation.sectionTitle },
+          { prompt, conversationId, sectionTitle: violation.sectionTitle, targetMinutes },
           current,
           abortSignal
         )
@@ -867,7 +912,7 @@ export class RawScriptGenerationOrchestrator {
         )
 
         await this.regenerateSection(
-          { prompt, conversationId, sectionTitle: revision.sectionTitle },
+          { prompt, conversationId, sectionTitle: revision.sectionTitle, targetMinutes },
           current,
           abortSignal
         )
@@ -981,9 +1026,17 @@ export class RawScriptGenerationOrchestrator {
 
       this.persistConversation(conversationId)
 
+      const plan = buildLengthPlan(request.targetMinutes)
+      const examples = await this.examplesFor(
+        conversationId,
+        request.brief?.trim() || request.prompt,
+        plan,
+        conversation
+      )
+
       const stream = this.services.scriptService.regenerateSection(
         request,
-        messages,
+        withGenerationSystemPrompt(messages, buildGenerationSystemPrompt(plan, examples)),
         abortSignal
       )
 
@@ -1083,9 +1136,17 @@ export class RawScriptGenerationOrchestrator {
 
       this.persistConversation(conversationId)
 
+      const plan = buildLengthPlan(request.targetMinutes)
+      const examples = await this.examplesFor(
+        conversationId,
+        request.brief?.trim() || request.prompt,
+        plan,
+        conversation
+      )
+
       const stream = this.services.scriptService.regenerateSection(
         { prompt: request.prompt, conversationId, sectionTitle: '' },
-        messages,
+        withGenerationSystemPrompt(messages, buildGenerationSystemPrompt(plan, examples)),
         abortSignal
       )
 

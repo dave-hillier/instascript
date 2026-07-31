@@ -2,11 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestrator'
 import type { RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
 import { MockAPIService } from '../mockApi'
-import { MAX_SCRIPT_REVIEW_REVISIONS } from '../scriptReview'
+import { MAX_SCRIPT_REVIEW_REVISIONS, SCRIPT_REVIEW_SECTION_TITLE } from '../scriptReview'
+import { STYLE_REVIEW_SECTION_TITLE } from '../critiquePass'
+import { OUTLINE_CRITIQUE_SECTION_TITLE } from '../outlineCritique'
 import { buildLengthPlan } from '../scriptLength'
 import { rawConversationReducer } from '../../reducers/rawConversationReducer'
 import type { RawConversationState, RawConversationAction } from '../../reducers/rawConversationReducer'
-import type { RawConversation, ReviewReport } from '../../types/conversation'
+import type { RawConversation, ReviewReport, ChatMessage } from '../../types/conversation'
+import type { ExampleScript } from '../exampleSearchService'
 import type { Script } from '../../types/script'
 
 // Sociable integration test for the style-review pass (story 8.5): the real
@@ -18,15 +21,24 @@ const createInstantMockService = (): MockAPIService => {
   return service
 }
 
+interface SentRequest {
+  label: string
+  messages: ChatMessage[]
+}
+
 interface Harness {
   orchestrator: RawScriptGenerationOrchestrator
   conversation: RawConversation
   getState: () => RawConversationState
   actions: RawConversationAction[]
   scriptUpdates: Partial<Script>[]
+  sent: SentRequest[]
 }
 
-const createHarness = (reviewPassEnabled: boolean): Harness => {
+const createHarness = (
+  reviewPassEnabled: boolean,
+  examples: ExampleScript[] = []
+): Harness => {
   const conversation: RawConversation = {
     id: 'conv-1',
     scriptId: 'script-1',
@@ -44,6 +56,7 @@ const createHarness = (reviewPassEnabled: boolean): Harness => {
 
   const actions: RawConversationAction[] = []
   const scriptUpdates: Partial<Script>[] = []
+  const sent: SentRequest[] = []
 
   const callbacks: RawGenerationCallbacks = {
     dispatch: (action) => {
@@ -58,16 +71,39 @@ const createHarness = (reviewPassEnabled: boolean): Harness => {
       state.conversations.find(c => c.id === conversationId)
   }
 
+  // The real mock provider, with every request it is handed recorded so a
+  // test can assert on exactly what the provider would receive
+  const provider = createInstantMockService()
+  const scriptService = {
+    generateScript: (
+      request: Parameters<MockAPIService['generateScript']>[0],
+      messages?: ChatMessage[],
+      exampleScripts?: ExampleScript[],
+      abortSignal?: AbortSignal
+    ) => {
+      sent.push({ label: 'outline', messages: messages ?? [] })
+      return provider.generateScript(request, messages, exampleScripts, abortSignal)
+    },
+    regenerateSection: (
+      request: Parameters<MockAPIService['regenerateSection']>[0],
+      messages: ChatMessage[],
+      abortSignal?: AbortSignal
+    ) => {
+      sent.push({ label: request.sectionTitle, messages })
+      return provider.regenerateSection(request, messages, abortSignal)
+    }
+  }
+
   const orchestrator = new RawScriptGenerationOrchestrator(
     {
-      scriptService: createInstantMockService(),
-      exampleService: { searchExamples: async () => [] }
+      scriptService,
+      exampleService: { searchExamples: async () => examples }
     },
     callbacks,
     { reviewPassEnabled }
   )
 
-  return { orchestrator, conversation, getState: () => state, actions, scriptUpdates }
+  return { orchestrator, conversation, getState: () => state, actions, scriptUpdates, sent }
 }
 
 describe('style-review pass integration', () => {
@@ -241,6 +277,31 @@ describe('on-demand whole-script review (story 8.14)', () => {
   })
 })
 
+// The review judges length and instructs rewrites against a target, so a
+// review that replans at the default would cut a correctly sized long script
+describe('the whole-script review honours the run length', () => {
+  it('judges and rewrites against the requested length, not the default', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(false)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id, targetMinutes: 60 },
+      conversation
+    )
+
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script', 60)
+
+    const generations = getState().conversations[0].generations
+    const reviewPrompt = generations.find(generation =>
+      generation.messages[0]?.content.includes('minutes')
+      && generation.messages[0].content.includes('VERDICT')
+    )?.messages[0].content ?? generations[generations.length - 2].messages[0].content
+
+    expect(reviewPrompt).toContain('60 minutes')
+    expect(reviewPrompt).not.toContain(`${buildLengthPlan().targetMinutes} minutes`)
+  })
+})
+
 describe('outline-critique step integration (story 8.9)', () => {
   const revisedDescription =
     "Deepen the listener's trance while gradually escalating intensity toward the transformation ahead."
@@ -272,6 +333,24 @@ describe('outline-critique step integration (story 8.9)', () => {
     vi.restoreAllMocks()
   }, 30000)
 
+  it('holds the critique to the run length plan rather than a fixed section count', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(true)
+    const plan = buildLengthPlan(45)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id, targetMinutes: 45 },
+      conversation
+    )
+
+    const critiquePrompt = getState().conversations[0].generations[1].messages[0].content
+    expect(critiquePrompt).toContain(`about ${plan.sectionCount} \`## Section Title\` headers`)
+    expect(critiquePrompt).toContain(`roughly ${plan.sectionWords} words`)
+    expect(critiquePrompt).not.toContain('exactly 5 `## Section Title`')
+
+    vi.restoreAllMocks()
+  }, 30000)
+
   it('gives each section the outline entries of upcoming sections (story 8.10)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { orchestrator, conversation, getState } = createHarness(false)
@@ -297,6 +376,51 @@ describe('outline-critique step integration (story 8.9)', () => {
       } else {
         expect(userMessage).not.toContain('Still to come after this section')
       }
+    }
+
+    vi.restoreAllMocks()
+  }, 30000)
+})
+
+describe('which requests the exemplars ride on', () => {
+  const exampleContent = 'A candle gutters in still air, and the flame steadies again.'
+  const example: ExampleScript = {
+    content: exampleContent,
+    metadata: { id: 'ex-candle', title: 'Candle Flame', source: 'bundled', tags: 'calm' },
+    score: 0.9
+  }
+
+  const judgingTitles = [
+    OUTLINE_CRITIQUE_SECTION_TITLE,
+    STYLE_REVIEW_SECTION_TITLE,
+    SCRIPT_REVIEW_SECTION_TITLE
+  ]
+
+  const carriesExample = (messages: ChatMessage[]) =>
+    messages.some(message => message.content.includes(exampleContent))
+
+  it('grounds prose requests in the exemplars and leaves the judging passes without them', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState, sent } = createHarness(true, [example])
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
+
+    const judging = sent.filter(request => judgingTitles.includes(request.label))
+    expect(judging.map(request => request.label)).toEqual(judgingTitles)
+    for (const request of judging) {
+      expect(carriesExample(request.messages)).toBe(false)
+    }
+
+    // Every prose request — the outline, each section and each review-driven
+    // rewrite — carries the corpus
+    const prose = sent.filter(request => !judgingTitles.includes(request.label))
+    expect(prose.length).toBeGreaterThan(5)
+    for (const request of prose) {
+      expect(carriesExample(request.messages)).toBe(true)
     }
 
     vi.restoreAllMocks()

@@ -13,9 +13,11 @@ export interface TokenTotals {
   generationCount: number
 }
 
-// Sums estimated tokens across every generation of the conversation. Each
-// generation's messages array is the complete prompt that was sent (including
-// replayed history), so summing them reflects what the provider billed for.
+// Sums estimated tokens across every generation of the conversation. This
+// under-reports: the example corpus is sent with every prose request but never
+// stored on the generation, so the exemplar tokens the provider billed for are
+// not counted here. The stored exampleIds are what a faithful estimate would
+// have to re-measure against.
 export function estimateConversationTokens(conversation: RawConversation): TokenTotals {
   let inputTokens = 0
   let outputTokens = 0

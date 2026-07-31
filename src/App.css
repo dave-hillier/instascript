@@ -1584,7 +1584,13 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--ink-muted);
 }
 
-.example-settings .example-warning {
+/* Outranks the centred muted `.examples-page > p` empty-state rule, which is
+   otherwise more specific and would render this as ordinary body copy */
+.examples-page > p.example-warning {
+  margin: 0 0 1rem;
+  padding: 0 1.125rem;
+  font-size: 0.8125rem;
+  text-align: left;
   color: var(--danger);
 }
 

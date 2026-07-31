@@ -15,18 +15,28 @@ export interface RegenerationRequest {
   prompt: string
   conversationId: string
   sectionTitle: string
+  // The run's requested length. A rewrite must be judged against the length
+  // the script was generated for, not the default.
+  targetMinutes?: number
+  // The original brief. A rewrite's own prompt is a filled-in instruction
+  // template, so it is useless for ranking the example corpus.
+  brief?: string
 }
 
 export interface SectionRegenerationRequest {
   conversationId: string
   sectionTitle: string
   instruction?: string
+  targetMinutes?: number
+  brief?: string
 }
 
 // A whole-script refinement instruction from the user (story 1.6)
 export interface ScriptRefinementRequest {
   conversationId: string
   instruction: string
+  targetMinutes?: number
+  brief?: string
 }
 
 // A manual, in-place edit of one section's text (story 2.3)
@@ -40,6 +50,8 @@ export interface SectionEditRequest {
 export interface RefinementRequest {
   prompt: string
   conversationId: string
+  targetMinutes?: number
+  brief?: string
 }
 
 export interface GenerationProgress {

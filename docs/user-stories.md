@@ -346,10 +346,10 @@ Acceptance criteria:
 ### 8.1 Local example search [Implemented]
 As a user, I want example retrieval to run entirely in my browser against a local corpus, so that examples work with any provider, cost nothing per query, and my briefs are not sent to a second service.
 
-Notes: hand-rolled BM25 lexical ranking over tokenized title/tags/content of the merged bundled + user corpus, unit-tested; whole scripts, no chunks, no network, no key.
+Notes: hand-rolled BM25 lexical ranking over tokenized title/tags/content of the user corpus, plus the bundled sample scripts when they are switched on, unit-tested; whole scripts, no chunks, no network, no key.
 
 Acceptance criteria:
-- Example scripts live locally (bundled corpus and/or user-imported files) with metadata (title, tags, themes)
+- Example scripts live locally (user-imported files, plus an optional bundled corpus that is off by default) with metadata (title, tags, themes)
 - Retrieval returns whole scripts, not chunks
 - Search runs offline with no API key and works identically for OpenAI and OpenRouter providers
 - The hosted vector store path is removed (or kept behind a flag during transition)

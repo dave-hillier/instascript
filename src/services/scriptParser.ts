@@ -27,6 +27,7 @@ export function parseScriptFromYamlMarkdown(content: string): Script | null {
           length: parsed.length,
           conversationId: parsed.conversationId,
           initialPrompt: parsed.initialPrompt,
+          targetMinutes: typeof parsed.targetMinutes === 'number' ? parsed.targetMinutes : undefined,
           provider: parsed.provider,
           model: parsed.model
         }
@@ -54,6 +55,7 @@ export function serializeScriptToYamlMarkdown(script: Script): string {
     length: script.length,
     conversationId: script.conversationId,
     initialPrompt: script.initialPrompt,
+    targetMinutes: script.targetMinutes,
     provider: script.provider,
     model: script.model
   }).trim())

@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { findResumeState, RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestrator'
 import type { RawScriptServices, RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
 import type { RawConversationAction } from '../../reducers/rawConversationReducer'
-import type { RawConversation, Generation } from '../../types/conversation'
+import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
+import type { ExampleScript } from '../exampleSearchService'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
+import { getOutlineGenerationPrompt } from '../prompts'
 
 const makeGeneration = (response: string): Generation => ({
   messages: [],
@@ -213,6 +215,263 @@ describe('generateScript resume (story 1.8)', () => {
     expect(
       state.dispatched.some(action => action.type === 'GENERATIONS_DISCARDED')
     ).toBe(false)
+  })
+})
+
+describe('examples reach every request that writes prose', () => {
+  const exampleContent = 'A candle gutters in still air, and the flame steadies again.'
+
+  const example: ExampleScript = {
+    content: exampleContent,
+    metadata: { id: 'ex-candle', title: 'Candle Flame', source: 'bundled', tags: 'calm' },
+    score: 0.9
+  }
+
+  const sectionBody = (label: string, wordCount = SECTION_TARGET_WORDS) =>
+    `${label} ` + Array.from({ length: wordCount - 1 }, (_, i) => `word${i}`).join(' ')
+
+  interface SentRequest {
+    label: string
+    messages: ChatMessage[]
+  }
+
+  const setup = (
+    conversation: RawConversation,
+    sectionText: (title: string, attempt: number) => string = title => sectionBody(title)
+  ) => {
+    const sent: SentRequest[] = []
+    const dispatched: RawConversationAction[] = []
+    const attempts = new Map<string, number>()
+
+    const services: RawScriptServices = {
+      scriptService: {
+        generateScript: (_request, messages) => {
+          sent.push({ label: 'outline', messages: messages ?? [] })
+          return (async function* () { yield outlineText })()
+        },
+        regenerateSection: (request, messages) => {
+          sent.push({ label: request.sectionTitle, messages })
+          const attempt = (attempts.get(request.sectionTitle) ?? 0) + 1
+          attempts.set(request.sectionTitle, attempt)
+          return (async function* () {
+            yield `## ${request.sectionTitle}\n${sectionText(request.sectionTitle, attempt)}`
+          })()
+        }
+      },
+      exampleService: {
+        searchExamples: async () => [example]
+      }
+    }
+
+    const callbacks: RawGenerationCallbacks = {
+      dispatch: action => { dispatched.push(action) },
+      appDispatch: () => {},
+      saveConversation: () => {},
+      getConversation: () => conversation
+    }
+
+    return {
+      orchestrator: new RawScriptGenerationOrchestrator(services, callbacks),
+      sent,
+      dispatched
+    }
+  }
+
+  const systemOf = (request: SentRequest): string =>
+    request.messages.find(message => message.role === 'system')?.content ?? ''
+
+  it('sends the retrieved examples with every section request, not just the outline', async () => {
+    const conversation = makeConversation([])
+    const { orchestrator, sent } = setup(conversation)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    const sectionRequests = sent.filter(request => request.label !== 'outline')
+    expect(sectionRequests.map(request => request.label)).toEqual([
+      'Induction',
+      'Deepener',
+      'Awakening'
+    ])
+
+    for (const request of sectionRequests) {
+      expect(systemOf(request)).toContain('## Examples')
+      expect(systemOf(request)).toContain(exampleContent)
+    }
+  })
+
+  it('sends a byte-identical system message on the outline and every section', async () => {
+    const conversation = makeConversation([])
+    const { orchestrator, sent } = setup(conversation)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    const systems = new Set(sent.map(systemOf))
+    expect(systems.size).toBe(1)
+    expect([...systems][0]).toContain(exampleContent)
+  })
+
+  it('carries the examples into a corrective retry of an under-length section', async () => {
+    const conversation = makeConversation([])
+    // Induction comes back far too short on its first attempt, so it is retried
+    const { orchestrator, sent } = setup(conversation, (title, attempt) =>
+      title === 'Induction' && attempt === 1 ? sectionBody(title, 50) : sectionBody(title)
+    )
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    const inductionRequests = sent.filter(request => request.label === 'Induction')
+    expect(inductionRequests).toHaveLength(2)
+    const retry = inductionRequests[1]
+    expect(retry.messages[retry.messages.length - 1].content).toContain('which is too short')
+    expect(systemOf(retry)).toContain(exampleContent)
+  })
+
+  it('sends the examples without storing them on the conversation', async () => {
+    const conversation = makeConversation([])
+    const { orchestrator, dispatched } = setup(conversation)
+
+    await orchestrator.generateScript({ prompt: 'A deep rest script' }, conversation)
+
+    const started = dispatched.filter(action => action.type === 'START_GENERATION')
+    expect(started.length).toBeGreaterThan(0)
+    for (const action of started) {
+      const stored = action.type === 'START_GENERATION' ? action.messages : []
+      expect(stored.some(message => message.content.includes(exampleContent))).toBe(false)
+    }
+  })
+
+  it('grounds a manual section regeneration in the examples too', async () => {
+    // A stored conversation whose generations carry a lean system message,
+    // as replayed history does after a reload
+    const conversation: RawConversation = {
+      id: 'conv-1',
+      scriptId: 'script-1',
+      generations: [
+        {
+          messages: [
+            { role: 'system', content: 'You are a hypnosis script writer.' },
+            { role: 'user', content: 'A deep rest script' }
+          ],
+          response: outlineText,
+          timestamp: 0
+        },
+        {
+          messages: [{ role: 'user', content: 'Write the Induction' }],
+          response: '## Induction\nOld induction text.',
+          timestamp: 1
+        }
+      ],
+      createdAt: 0,
+      updatedAt: 0
+    }
+    const { orchestrator, sent } = setup(conversation)
+
+    await orchestrator.regenerateSection(
+      { prompt: 'Rewrite the Induction', conversationId: conversation.id, sectionTitle: 'Induction' },
+      conversation
+    )
+
+    expect(sent).toHaveLength(1)
+    const systemMessages = sent[0].messages.filter(message => message.role === 'system')
+    expect(systemMessages).toHaveLength(1)
+    expect(systemMessages[0].content).toContain(exampleContent)
+  })
+
+  // A conversation restored from storage keeps only its user and assistant
+  // turns, so there is no system message to swap the corpus into
+  const reloadedConversation = (): RawConversation => ({
+    id: 'conv-1',
+    scriptId: 'script-1',
+    generations: [
+      {
+        // The stored outline turn is the brief with the outline-generation
+        // template appended, which is what the serializer round-trips
+        messages: [{
+          role: 'user',
+          content: `A deep rest script\n\n${getOutlineGenerationPrompt()}`
+        }],
+        response: outlineText,
+        timestamp: 0
+      },
+      {
+        messages: [{ role: 'user', content: 'Write the Induction' }],
+        response: '## Induction\nOld induction text.',
+        timestamp: 1
+      }
+    ],
+    createdAt: 0,
+    updatedAt: 0
+  })
+
+  it('grounds a rewrite of a conversation reloaded from storage', async () => {
+    const conversation = reloadedConversation()
+    const { orchestrator, sent } = setup(conversation)
+
+    await orchestrator.regenerateSection(
+      { prompt: 'Rewrite the Induction', conversationId: conversation.id, sectionTitle: 'Induction' },
+      conversation
+    )
+
+    const systemMessages = sent[0].messages.filter(message => message.role === 'system')
+    expect(systemMessages).toHaveLength(1)
+    expect(systemMessages[0].content).toContain(exampleContent)
+  })
+
+  it('rewrites a section against the length the script was generated for', async () => {
+    const conversation = reloadedConversation()
+    const { orchestrator, sent } = setup(conversation)
+
+    await orchestrator.regenerateSection(
+      {
+        prompt: 'Rewrite the Induction',
+        conversationId: conversation.id,
+        sectionTitle: 'Induction',
+        targetMinutes: 60
+      },
+      conversation
+    )
+
+    expect(systemOf(sent[0])).toContain('60 minutes')
+    expect(systemOf(sent[0])).not.toContain('25 minutes')
+  })
+
+  it('refines a whole script against the length it was generated for', async () => {
+    const conversation = reloadedConversation()
+    const { orchestrator, sent } = setup(conversation)
+
+    await orchestrator.refineScript(
+      { prompt: 'Make it warmer', conversationId: conversation.id, targetMinutes: 60 },
+      conversation
+    )
+
+    expect(systemOf(sent[0])).toContain('60 minutes')
+    expect(systemOf(sent[0])).not.toContain('25 minutes')
+  })
+
+  it('ranks the corpus against the brief rather than the rewrite boilerplate', async () => {
+    const conversation = reloadedConversation()
+    const queries: string[] = []
+    const { orchestrator } = setup(conversation)
+    // Re-wire retrieval so the query itself can be observed
+    const services = (orchestrator as unknown as {
+      services: { exampleService: { searchExamples: (query: string) => Promise<ExampleScript[]> } }
+    }).services
+    services.exampleService.searchExamples = async (query: string) => {
+      queries.push(query)
+      return [example]
+    }
+
+    await orchestrator.regenerateSection(
+      {
+        prompt: 'Rewrite the "Induction" section of the script below.',
+        conversationId: conversation.id,
+        sectionTitle: 'Induction',
+        brief: 'A deep rest script'
+      },
+      conversation
+    )
+
+    expect(queries).toEqual(['A deep rest script'])
   })
 })
 

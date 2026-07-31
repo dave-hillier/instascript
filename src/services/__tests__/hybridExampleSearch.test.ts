@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { BundledExampleService } from '../bundledExamples'
 import { setEmbedderLoaderForTesting } from '../embeddingService'
+import { formatExamplesForPrompt } from '../prompts'
 import type { ExampleRecord } from '../../types/example'
 
 // End-to-end retrieval through BundledExampleService with a fake corpus and
@@ -72,6 +73,20 @@ describe('BundledExampleService hybrid retrieval', () => {
 
     expect(results[0].metadata?.id).toBe('sleep')
     expect(loader).not.toHaveBeenCalled()
+  })
+
+  it('names every retrieved example in the formatted prompt block', async () => {
+    const corpus = [
+      record('sleep', 'Deep Sleep', 'Restful deep sleep comes easily tonight.'),
+      record('focus', 'Sharp Focus', 'Concentration sharpens with every breath.')
+    ]
+
+    const service = new BundledExampleService(() => corpus)
+    const formatted = formatExamplesForPrompt(await service.searchExamples('deep sleep', 2))
+
+    expect(formatted).toContain('Deep Sleep')
+    expect(formatted).toContain('Sharp Focus')
+    expect(formatted).not.toContain('Unknown')
   })
 
   it('still ranks examples missing embeddings via the lexical list', async () => {

@@ -1,13 +1,13 @@
 Review the hypnosis script outline below against the user's brief. Judge it strictly on:
 - Coverage: every element of the brief is addressed by some section
 - Escalation arc: the sections build coherently, deepening and intensifying before the return to awareness
-- Section balance: no section carries too much or too little of the plan, and no two sections duplicate each other's role
+- Section balance: each section can carry roughly {sectionWords} words on its own (the finished script aims at about {targetMinutes} minutes spoken, {totalWords} words), no section carries too much or too little of the plan, and no two sections duplicate each other's role
 
 If the outline needs no changes, respond with exactly this line and nothing else:
 
 OUTLINE OK
 
-If the outline needs changes, respond with ONLY the full revised outline — the same format, a `# Title` line followed by exactly 5 `## Section Title` headers each with a one-sentence description — and nothing else. Keep everything that already works; change only what the brief, arc, or balance requires.
+If the outline needs changes, respond with ONLY the full revised outline — the same format, a `# Title` line followed by about {sectionCount} `## Section Title` headers each with a one-sentence description — and nothing else. Use more or fewer sections only where the brief clearly needs it. Keep everything that already works; change only what the brief, arc, or balance requires.
 
 The user's brief:
 
