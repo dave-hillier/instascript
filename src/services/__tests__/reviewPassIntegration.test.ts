@@ -3,6 +3,7 @@ import { RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestra
 import type { RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
 import { MockAPIService } from '../mockApi'
 import { MAX_SCRIPT_REVIEW_REVISIONS } from '../scriptReview'
+import { buildLengthPlan } from '../scriptLength'
 import { rawConversationReducer } from '../../reducers/rawConversationReducer'
 import type { RawConversationState, RawConversationAction } from '../../reducers/rawConversationReducer'
 import type { RawConversation, ReviewReport } from '../../types/conversation'
@@ -150,7 +151,7 @@ describe('on-demand whole-script review (story 8.14)', () => {
     // The review request states the brief and the measured length as fact
     const reviewPrompt = reviewGeneration.messages[0].content
     expect(reviewPrompt).toContain('a relaxing script')
-    expect(reviewPrompt).toContain('20-30 minutes')
+    expect(reviewPrompt).toContain(`about ${buildLengthPlan().targetMinutes} minutes`)
     expect(reviewPrompt).toContain('The length is on target.')
     expect(reviewGeneration.response).toContain('VERDICT:')
 
@@ -161,7 +162,7 @@ describe('on-demand whole-script review (story 8.14)', () => {
     expect(report.revised).toHaveLength(1)
     expect(report.revised[0].reason).toBe('cohesion')
     expect(report.summary).toContain('rewrote 1 section')
-    expect(report.summary).toContain('within the 20-30 minute target')
+    expect(report.summary).toContain(`close to the ${buildLengthPlan().targetMinutes} minute target`)
 
     // The rewrite carries the cohesion problem as its instruction
     const revisionPrompt = generations[7].messages[generations[7].messages.length - 1].content
@@ -211,7 +212,7 @@ describe('on-demand whole-script review (story 8.14)', () => {
     const report = getState().reviewReport as ReviewReport
     expect(report.revised).toHaveLength(MAX_SCRIPT_REVIEW_REVISIONS)
     expect(report.revised.map(entry => entry.reason)).toContain('cohesion and length')
-    expect(report.summary).toContain('under the 20-30 minute target')
+    expect(report.summary).toContain(`under the ${buildLengthPlan().targetMinutes} minute target`)
 
     const revisionPrompts = generations.slice(5).map(
       generation => generation.messages[generation.messages.length - 1].content

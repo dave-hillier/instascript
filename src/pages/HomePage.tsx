@@ -8,13 +8,26 @@ import type { Script } from '../types/script'
 import { getApiProvider, getModel } from '../services/config'
 import { filterScriptsByQuery, parseSortOrder, sortScriptsByCreation } from '../utils/scriptLibrary'
 import type { SortOrder } from '../utils/scriptLibrary'
+import {
+  buildLengthPlan,
+  formatTargetLength,
+  DEFAULT_TARGET_MINUTES,
+  MIN_TARGET_MINUTES,
+  MAX_TARGET_MINUTES,
+  TARGET_MINUTES_STEP
+} from '../services/scriptLength'
 
 type Tab = 'scripts' | 'archive'
 
 export const HomePage = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
+  const [targetMinutes, setTargetMinutes] = useState(DEFAULT_TARGET_MINUTES)
   const navigate = useNavigate()
+
+  // The requested length, shown as both the duration the user is choosing and
+  // the word count it works out to
+  const lengthPlan = buildLengthPlan(targetMinutes)
 
   const { activeScripts, archivedScripts, dispatch: appDispatch } = useAppContext()
   const { createConversation, generateScript } = useConversationContext()
@@ -72,6 +85,7 @@ export const HomePage = () => {
         isArchived: false,
         status: 'in-progress',
         initialPrompt: prompt,
+        targetMinutes,
         provider: getApiProvider(),
         model: getModel()
       }
@@ -92,7 +106,8 @@ export const HomePage = () => {
       // Start generation directly (no job queue)
       await generateScript({
         prompt: prompt,
-        conversationId: conversation.id
+        conversationId: conversation.id,
+        targetMinutes
       })
 
     } catch (error) {
@@ -116,6 +131,20 @@ export const HomePage = () => {
           />
           <div>
             <div>
+              <label htmlFor="target-length">Length</label>
+              <input
+                id="target-length"
+                type="range"
+                min={MIN_TARGET_MINUTES}
+                max={MAX_TARGET_MINUTES}
+                step={TARGET_MINUTES_STEP}
+                value={targetMinutes}
+                onChange={(e) => setTargetMinutes(Number(e.target.value))}
+                aria-describedby="target-length-value"
+              />
+              <output id="target-length-value" htmlFor="target-length">
+                {formatTargetLength(lengthPlan)}
+              </output>
             </div>
             <div>
               <button

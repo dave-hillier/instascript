@@ -14,7 +14,8 @@ export type ConversationContextType = {
   regenerateSection: (request: SectionRegenerationRequest) => Promise<void>
   refineScript: (request: ScriptRefinementRequest) => Promise<void>
   // Reviews the finished script for cohesion and length against its brief
-  reviewScript: (conversationId: string, brief: string) => Promise<void>
+  // and the spoken length it was asked for
+  reviewScript: (conversationId: string, brief: string, targetMinutes?: number) => Promise<void>
   editSection: (request: SectionEditRequest) => void
   stopGeneration: () => void
 }

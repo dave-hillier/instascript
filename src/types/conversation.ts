@@ -3,6 +3,9 @@
 export interface GenerationRequest {
   prompt: string
   conversationId?: string
+  // Requested spoken length in minutes; the generation's length plan is
+  // derived from it. Absent falls back to the default target.
+  targetMinutes?: number
   // When true, discard any existing outline and sections and start the
   // generation from scratch instead of resuming (story 1.8)
   fresh?: boolean

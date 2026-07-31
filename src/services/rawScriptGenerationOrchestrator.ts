@@ -9,6 +9,8 @@ import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutli
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
+import { buildLengthPlan } from './scriptLength'
+import type { LengthPlan } from './scriptLength'
 import { assessScriptLength, formatLengthBrief, parseScriptReviewResponse, selectScriptRevisions, buildScriptRevisionInstruction, describeRevisionReason, formatScriptReviewSummary, SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
 import { KeyedRunGuard } from './runLifecycle'
 import { recordExampleSelections } from './exampleCorpus'
@@ -117,10 +119,11 @@ export class RawScriptGenerationOrchestrator {
 
   private async retrieveExamples(
     request: GenerationRequest,
-    conversation: RawConversation | undefined
+    conversation: RawConversation | undefined,
+    plan: LengthPlan
   ): Promise<ExampleScript[]> {
     try {
-      const systemPrompt = getSystemPrompt()
+      const systemPrompt = getSystemPrompt(plan)
       const conversationTokens = conversation
         ? conversation.generations.reduce((total: number, generation) => total + generation.response.length, 0)
         : 0
@@ -190,6 +193,9 @@ export class RawScriptGenerationOrchestrator {
 
     const conversationId = conversation.id
     const generationKey = `${conversationId}-initial`
+    // The requested length shapes the system prompt, the outline's section
+    // count and the length the finished script is judged against
+    const plan = buildLengthPlan(request.targetMinutes)
 
     if (!this.activeGenerations.tryStart(generationKey)) return
 
@@ -203,7 +209,7 @@ export class RawScriptGenerationOrchestrator {
       })
 
       // Retrieve examples upfront; record which ones inform this generation
-      const examples = await this.retrieveExamples(request, conversation)
+      const examples = await this.retrieveExamples(request, conversation, plan)
       const exampleIds = examples
         .map(example => String(example.metadata?.id ?? example.metadata?.filename ?? ''))
         .filter(Boolean)
@@ -250,14 +256,14 @@ export class RawScriptGenerationOrchestrator {
           isComplete: false
         })
 
-        const outlineUserPrompt = request.prompt + '\n\n' + getOutlineGenerationPrompt()
+        const outlineUserPrompt = request.prompt + '\n\n' + getOutlineGenerationPrompt(plan)
 
         // Start a generation entry for the outline
         this.callbacks.dispatch({
           type: 'START_GENERATION',
           conversationId,
           messages: [
-            { role: 'system', content: getSystemPrompt() },
+            { role: 'system', content: getSystemPrompt(plan) },
             { role: 'user', content: outlineUserPrompt }
           ],
           exampleIds: exampleIds.length > 0 ? exampleIds : undefined
@@ -374,7 +380,7 @@ export class RawScriptGenerationOrchestrator {
 
         const runSectionAttempt = async (userMessage: string): Promise<string> => {
           const sectionMessages: ChatMessage[] = [
-            { role: 'system', content: getSystemPrompt() },
+            { role: 'system', content: getSystemPrompt(plan) },
             { role: 'user', content: request.prompt },
             { role: 'assistant', content: outlineText },
             { role: 'user', content: userMessage }
@@ -760,10 +766,12 @@ export class RawScriptGenerationOrchestrator {
   async reviewScript(
     conversation: RawConversation,
     brief: string,
+    targetMinutes?: number,
     abortSignal?: AbortSignal
   ): Promise<void> {
     const conversationId = conversation.id
     const generationKey = `${conversationId}-review`
+    const plan = buildLengthPlan(targetMinutes)
 
     if (!this.activeGenerations.tryStart(generationKey)) return
 
@@ -784,7 +792,7 @@ export class RawScriptGenerationOrchestrator {
 
       const scriptContent = `# ${outline.title}` +
         sections.map(section => `\n\n## ${section.title}\n${section.content}`).join('')
-      const assessment = assessScriptLength(sections)
+      const assessment = assessScriptLength(sections, plan)
 
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PHASE',
@@ -855,7 +863,7 @@ export class RawScriptGenerationOrchestrator {
         const prompt = buildSectionRegenerationPromptFromConversation(
           current,
           revision.sectionTitle,
-          buildScriptRevisionInstruction(revision)
+          buildScriptRevisionInstruction(revision, plan)
         )
 
         await this.regenerateSection(
@@ -877,7 +885,7 @@ export class RawScriptGenerationOrchestrator {
         finalSections.map(section => `\n\n## ${section.title}\n${section.content}`).join('')
       // Reported against the script as it now stands, so the summary states
       // the length the user actually has
-      const finalAssessment = assessScriptLength(finalSections)
+      const finalAssessment = assessScriptLength(finalSections, plan)
 
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PHASE',

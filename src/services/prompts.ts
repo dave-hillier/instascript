@@ -10,6 +10,8 @@ import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
 import { SECTION_TARGET_WORDS } from './sectionQuality'
+import { buildLengthPlan } from './scriptLength'
+import type { LengthPlan } from './scriptLength'
 import type { DocumentSection } from './conversationDocument'
 
 /**
@@ -18,12 +20,25 @@ import type { DocumentSection } from './conversationDocument'
 
 const CONTINUITY_EXCERPT_WORDS = 75
 
-export function getSystemPrompt(): string {
-  return hypnosisSystemPrompt
+// The requested length reaches the model through the two prompts that decide
+// how much script gets written: the system prompt states the whole-script aim,
+// the outline prompt turns it into a section count.
+function applyLengthPlan(template: string, plan: LengthPlan): string {
+  return template
+    .replace(/\{targetMinutes\}/g, String(plan.targetMinutes))
+    .replace(/\{totalWords\}/g, plan.totalWords.toLocaleString('en-US'))
+    .replace(/\{minWords\}/g, plan.minWords.toLocaleString('en-US'))
+    .replace(/\{maxWords\}/g, plan.maxWords.toLocaleString('en-US'))
+    .replace(/\{sectionCount\}/g, String(plan.sectionCount))
+    .replace(/\{sectionWords\}/g, String(plan.sectionWords))
 }
 
-export function getOutlineGenerationPrompt(): string {
-  return outlineGenerationPrompt
+export function getSystemPrompt(plan: LengthPlan = buildLengthPlan()): string {
+  return applyLengthPlan(hypnosisSystemPrompt, plan)
+}
+
+export function getOutlineGenerationPrompt(plan: LengthPlan = buildLengthPlan()): string {
+  return applyLengthPlan(outlineGenerationPrompt, plan)
 }
 
 // The outline entries for the sections still to be written, phrased so the

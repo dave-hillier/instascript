@@ -9,6 +9,9 @@ export interface Script {
   length?: string
   conversationId?: string
   initialPrompt?: string
+  // Spoken length in minutes requested when the script was created, so a
+  // retry or a review judges against the same target
+  targetMinutes?: number
   provider?: string
   model?: string
 }

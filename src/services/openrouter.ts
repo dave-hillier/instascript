@@ -4,6 +4,7 @@ import type { ExampleScript } from './exampleSearchService'
 import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { getModel } from './config'
+import { buildLengthPlan } from './scriptLength'
 
 export class OpenRouterService implements ScriptGenerationService {
   private client: OpenAI
@@ -16,8 +17,8 @@ export class OpenRouterService implements ScriptGenerationService {
     })
   }
 
-  private buildInstructions(examples?: ExampleScript[]): string {
-    let instructions = getSystemPrompt()
+  private buildInstructions(examples?: ExampleScript[], targetMinutes?: number): string {
+    let instructions = getSystemPrompt(buildLengthPlan(targetMinutes))
 
     if (examples && examples.length > 0) {
       instructions += formatExamplesForPrompt(examples)
@@ -44,7 +45,7 @@ export class OpenRouterService implements ScriptGenerationService {
     if (messages && messages.length > 0) {
       finalMessages = this.chatMessagesToOpenAI(messages)
     } else {
-      const systemMessage = this.buildInstructions(examples)
+      const systemMessage = this.buildInstructions(examples, request.targetMinutes)
       finalMessages.push({ role: 'system', content: systemMessage })
       finalMessages.push({ role: 'user', content: request.prompt })
     }

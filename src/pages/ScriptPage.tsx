@@ -355,7 +355,7 @@ export const ScriptPage = ({
     const conversationId = conversation?.id ?? createConversation(script.id).id
 
     try {
-      await generateScript({ prompt, conversationId, fresh })
+      await generateScript({ prompt, conversationId, fresh, targetMinutes: script.targetMinutes })
     } catch (error) {
       console.error('Error retrying generation:', error)
     }
@@ -443,7 +443,7 @@ export const ScriptPage = ({
 
     setReviewError(null)
     try {
-      await reviewScript(conversation.id, script.initialPrompt ?? script.title)
+      await reviewScript(conversation.id, script.initialPrompt ?? script.title, script.targetMinutes)
     } catch (error) {
       console.error('Error reviewing script:', error)
       setReviewError(error instanceof Error ? error.message : 'Unknown error')

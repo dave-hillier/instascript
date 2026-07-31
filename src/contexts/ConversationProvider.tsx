@@ -151,7 +151,11 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   // Runs the whole-script review on demand against the script as it currently
   // stands (story 8.14), independent of the automatic style-pass setting
-  const reviewScript = useCallback(async (conversationId: string, brief: string): Promise<void> => {
+  const reviewScript = useCallback(async (
+    conversationId: string,
+    brief: string,
+    targetMinutes?: number
+  ): Promise<void> => {
     // Abort any existing generation and wait for it to settle first
     const controller = await runLifecycleRef.current.admit()
 
@@ -168,7 +172,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     const orchestrator = new RawScriptGenerationOrchestrator(services, buildCallbacks())
     await runLifecycleRef.current.track(
       controller,
-      orchestrator.reviewScript(conversation, brief, controller.signal)
+      orchestrator.reviewScript(conversation, brief, targetMinutes, controller.signal)
     )
   }, [scriptService, exampleService, buildCallbacks])
 

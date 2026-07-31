@@ -7,11 +7,13 @@ import {
   buildScriptRevisionInstruction,
   describeRevisionReason,
   formatScriptReviewSummary,
-  SCRIPT_MIN_WORDS,
-  SCRIPT_MAX_WORDS,
   MAX_SCRIPT_REVIEW_REVISIONS
 } from '../scriptReview'
+import { buildLengthPlan } from '../scriptLength'
 import type { DocumentSection } from '../conversationDocument'
+
+// The default target every assessment below is judged against
+const defaultPlan = buildLengthPlan()
 
 const words = (count: number): string =>
   Array.from({ length: count }, (_, i) => `w${i}`).join(' ')
@@ -37,11 +39,11 @@ describe('assessScriptLength', () => {
     expect(assessment.minutes).toBe(Math.round(3300 / 130))
   })
 
-  it('reports a short script and the words needed to reach the middle of the window', () => {
+  it('reports a short script and the words needed to reach the target', () => {
     const assessment = assessScriptLength(scriptOf(2000))
 
     expect(assessment.status).toBe('short')
-    expect(assessment.wordsToTarget).toBe(Math.round((SCRIPT_MIN_WORDS + SCRIPT_MAX_WORDS) / 2) - 2000)
+    expect(assessment.wordsToTarget).toBe(defaultPlan.totalWords - 2000)
     expect(assessment.wordsToTarget).toBeGreaterThan(0)
   })
 
@@ -53,8 +55,17 @@ describe('assessScriptLength', () => {
   })
 
   it('treats the window boundaries as on target', () => {
-    expect(assessScriptLength(scriptOf(SCRIPT_MIN_WORDS)).status).toBe('on-target')
-    expect(assessScriptLength(scriptOf(SCRIPT_MAX_WORDS)).status).toBe('on-target')
+    expect(assessScriptLength(scriptOf(defaultPlan.minWords)).status).toBe('on-target')
+    expect(assessScriptLength(scriptOf(defaultPlan.maxWords)).status).toBe('on-target')
+  })
+})
+
+describe('assessScriptLength against a requested length', () => {
+  it('judges the same script against whatever length was asked for', () => {
+    const script = scriptOf(1500)
+
+    expect(assessScriptLength(script, buildLengthPlan(12)).status).toBe('on-target')
+    expect(assessScriptLength(script, buildLengthPlan(40)).status).toBe('short')
   })
 })
 
@@ -66,7 +77,7 @@ describe('formatLengthBrief', () => {
     ]))
 
     expect(brief).toContain('1,100 words')
-    expect(brief).toContain('20-30 minutes')
+    expect(brief).toContain(`about ${defaultPlan.targetMinutes} minutes`)
     expect(brief).toContain('- "Induction": 500 words')
     expect(brief).toContain('- "Deepening": 600 words')
     expect(brief).toContain('short')
@@ -227,7 +238,7 @@ describe('formatScriptReviewSummary', () => {
 
     expect(summary).toContain('no cohesion problems')
     expect(summary).toContain('3,300 words')
-    expect(summary).toContain('within the 20-30 minute target')
+    expect(summary).toContain(`close to the ${defaultPlan.targetMinutes} minute target`)
   })
 
   it('lists what was rewritten and why', () => {
@@ -242,6 +253,6 @@ describe('formatScriptReviewSummary', () => {
     expect(summary).toContain('rewrote 2 sections')
     expect(summary).toContain('Deepening (cohesion)')
     expect(summary).toContain('Awakening (length)')
-    expect(summary).toContain('still under the 20-30 minute target')
+    expect(summary).toContain(`still under the ${defaultPlan.targetMinutes} minute target`)
   })
 })

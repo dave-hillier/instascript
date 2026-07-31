@@ -1,6 +1,8 @@
 import type { ReviewRevision } from '../types/conversation'
 import type { DocumentSection } from './conversationDocument'
-import { countWords, estimateSpokenMinutes, WORDS_PER_MINUTE } from '../utils/scriptMetrics'
+import { countWords, estimateSpokenMinutes } from '../utils/scriptMetrics'
+import { buildLengthPlan } from './scriptLength'
+import type { LengthPlan } from './scriptLength'
 
 // Story 8.14: the on-demand whole-script review. Where the style pass (8.5)
 // judges each section against the numbered style rules in isolation, this pass
@@ -13,13 +15,6 @@ import { countWords, estimateSpokenMinutes, WORDS_PER_MINUTE } from '../utils/sc
 // review-shaped response.
 export const SCRIPT_REVIEW_SECTION_TITLE = '__script_review__'
 
-// The spoken-duration target from the system prompt, in words at the assumed
-// delivery pace
-export const TARGET_MIN_MINUTES = 20
-export const TARGET_MAX_MINUTES = 30
-export const SCRIPT_MIN_WORDS = TARGET_MIN_MINUTES * WORDS_PER_MINUTE
-export const SCRIPT_MAX_WORDS = TARGET_MAX_MINUTES * WORDS_PER_MINUTE
-
 // Rewrites per review are capped to bound the cost of the pass
 export const MAX_SCRIPT_REVIEW_REVISIONS = 3
 
@@ -31,11 +26,14 @@ const REVISION_MAX_WORDS = 900
 export type LengthStatus = 'short' | 'on-target' | 'long'
 
 export interface LengthAssessment {
+  // The length this script was asked for, so every judgement and every line of
+  // reporting is against the target the user picked rather than a fixed one
+  plan: LengthPlan
   totalWords: number
   minutes: number
   status: LengthStatus
-  // Words to add (positive) or cut (negative) to reach the middle of the
-  // target window. Aiming at the middle rather than the nearest edge means a
+  // Words to add (positive) or cut (negative) to reach the target itself.
+  // Aiming at the target rather than the nearest edge of its window means a
   // rewrite that undershoots its instruction still lands inside the window.
   wordsToTarget: number
   sections: { title: string; wordCount: number }[]
@@ -57,26 +55,28 @@ export interface ScriptRevision {
   wordTarget?: number
 }
 
-export function assessScriptLength(sections: DocumentSection[]): LengthAssessment {
+export function assessScriptLength(
+  sections: DocumentSection[],
+  plan: LengthPlan = buildLengthPlan()
+): LengthAssessment {
   const measured = sections.map(section => ({
     title: section.title,
     wordCount: countWords(section.content)
   }))
   const totalWords = measured.reduce((sum, section) => sum + section.wordCount, 0)
 
-  const status: LengthStatus = totalWords < SCRIPT_MIN_WORDS
+  const status: LengthStatus = totalWords < plan.minWords
     ? 'short'
-    : totalWords > SCRIPT_MAX_WORDS
+    : totalWords > plan.maxWords
       ? 'long'
       : 'on-target'
 
-  const midpoint = Math.round((SCRIPT_MIN_WORDS + SCRIPT_MAX_WORDS) / 2)
-
   return {
+    plan,
     totalWords,
     minutes: estimateSpokenMinutes(totalWords),
     status,
-    wordsToTarget: status === 'on-target' ? 0 : midpoint - totalWords,
+    wordsToTarget: status === 'on-target' ? 0 : plan.totalWords - totalWords,
     sections: measured
   }
 }
@@ -85,8 +85,8 @@ export function assessScriptLength(sections: DocumentSection[]): LengthAssessmen
 // judges pacing against the real number instead of guessing at it
 export function formatLengthBrief(assessment: LengthAssessment): string {
   const words = assessment.totalWords.toLocaleString('en-US')
-  const target = `The target is ${TARGET_MIN_MINUTES}-${TARGET_MAX_MINUTES} minutes spoken ` +
-    `(${SCRIPT_MIN_WORDS.toLocaleString('en-US')}-${SCRIPT_MAX_WORDS.toLocaleString('en-US')} words).`
+  const target = `The requested length is about ${assessment.plan.targetMinutes} minutes spoken ` +
+    `(${assessment.plan.totalWords.toLocaleString('en-US')} words), which is a target rather than a limit.`
   const perSection = assessment.sections
     .map(section => `- "${section.title}": ${section.wordCount} words`)
     .join('\n')
@@ -99,7 +99,7 @@ export function formatLengthBrief(assessment: LengthAssessment): string {
         'material that deserves more development rather than which could simply be padded.'
       : `The script is ${words} words, about ${assessment.minutes} minutes spoken. ${target} ` +
         `It runs roughly ${Math.abs(assessment.wordsToTarget)} words long, so say which sections repeat ` +
-        'or dwell on ground already covered.'
+        'or dwell on ground already covered. Leave the length alone where the brief needs the material.'
 
   return `${headline}\n\nWord count per section:\n${perSection}`
 }
@@ -195,7 +195,10 @@ export function selectScriptRevisions(
 // The revision phrased as an instruction for the existing
 // section-regeneration path, which already supplies the outline entry and the
 // surrounding sections for continuity
-export function buildScriptRevisionInstruction(revision: ScriptRevision): string {
+export function buildScriptRevisionInstruction(
+  revision: ScriptRevision,
+  plan: LengthPlan = buildLengthPlan()
+): string {
   const parts: string[] = []
 
   if (revision.issue) {
@@ -209,7 +212,7 @@ export function buildScriptRevisionInstruction(revision: ScriptRevision): string
     const direction = revision.wordTarget > revision.currentWords ? 'expand' : 'tighten'
     parts.push(
       `The finished script is ${direction === 'expand' ? 'shorter' : 'longer'} than its ` +
-      `${TARGET_MIN_MINUTES}-${TARGET_MAX_MINUTES} minute spoken target, so ${direction} this section ` +
+      `${plan.targetMinutes} minute spoken target, so ${direction} this section ` +
       `from ${revision.currentWords} to approximately ${revision.wordTarget} words. ` +
       (direction === 'expand'
         ? 'Develop what is already here — deepen the suggestions, let the pacing breathe — rather than padding or repeating.'
@@ -238,9 +241,9 @@ export function formatScriptReviewSummary(
 ): string {
   const length = `${assessment.totalWords.toLocaleString('en-US')} words · ~${assessment.minutes} min`
   const lengthNote = assessment.status === 'on-target'
-    ? `${length}, within the ${TARGET_MIN_MINUTES}-${TARGET_MAX_MINUTES} minute target`
+    ? `${length}, close to the ${assessment.plan.targetMinutes} minute target`
     : `${length}, still ${assessment.status === 'short' ? 'under' : 'over'} the ` +
-      `${TARGET_MIN_MINUTES}-${TARGET_MAX_MINUTES} minute target`
+      `${assessment.plan.targetMinutes} minute target`
 
   if (revised.length === 0) {
     return `Review found no cohesion problems — ${lengthNote}.`

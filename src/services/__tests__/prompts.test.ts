@@ -8,8 +8,11 @@ import {
   orderExamplesForPrompt,
   formatExamplesForPrompt,
   normaliseConversationHistory,
-  buildConversationHistory
+  buildConversationHistory,
+  getSystemPrompt,
+  getOutlineGenerationPrompt
 } from '../prompts'
+import { buildLengthPlan } from '../scriptLength'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
 import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
 import type { ExampleScript } from '../exampleSearchService'
@@ -40,6 +43,39 @@ const outlineText = [
 
 const words = (count: number, word = 'word'): string =>
   Array.from({ length: count }, (_, i) => `${word}${i}`).join(' ')
+
+describe('the requested length in the prompts', () => {
+  it('states the target length in the system prompt', () => {
+    const plan = buildLengthPlan(40)
+    const prompt = getSystemPrompt(plan)
+
+    expect(prompt).toContain('about 40 minutes')
+    expect(prompt).toContain(plan.totalWords.toLocaleString('en-US'))
+    expect(prompt).toContain(`approximately ${plan.sectionCount} sections`)
+  })
+
+  it('states the target as an aim rather than a limit', () => {
+    expect(getSystemPrompt()).toContain('advisory')
+  })
+
+  it('turns the target into a section count for the outline', () => {
+    const plan = buildLengthPlan(15)
+    const prompt = getOutlineGenerationPrompt(plan)
+
+    expect(prompt).toContain(`About ${plan.sectionCount} section headers`)
+    expect(prompt).toContain('about 15 minutes')
+  })
+
+  it('leaves no length placeholders unfilled', () => {
+    for (const prompt of [getSystemPrompt(), getOutlineGenerationPrompt()]) {
+      expect(prompt).not.toMatch(/\{(targetMinutes|totalWords|minWords|maxWords|sectionCount|sectionWords)\}/)
+    }
+  })
+
+  it('falls back to the default target when no length is given', () => {
+    expect(getSystemPrompt()).toContain(`about ${buildLengthPlan().targetMinutes} minutes`)
+  })
+})
 
 describe('buildSectionRegenerationPrompt', () => {
   it('names the section and includes its outline description', () => {
