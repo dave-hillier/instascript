@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, BookmarkPlus, Check, Pencil, Play, RotateCcw, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, BookmarkPlus, Check, Pencil, Play, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
@@ -10,6 +10,7 @@ import { PerformanceMode } from '../components/PerformanceMode'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
 import { formatReviewSummary } from '../services/critiquePass'
+import { SECTION_TARGET_WORDS } from '../services/sectionQuality'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
 
@@ -179,7 +180,7 @@ const getScriptDocument = (
   }
 }
 
-const TARGET_WORDS_PER_SECTION = 400
+const TARGET_WORDS_PER_SECTION = SECTION_TARGET_WORDS
 
 interface WordCountMeterProps {
   sections: ScriptDocumentSection[]
@@ -277,6 +278,7 @@ export const ScriptPage = ({
     generateScript,
     regenerateSection,
     refineScript,
+    reviewScript,
     editSection,
     stopGeneration
   } = useConversationContext()
@@ -290,6 +292,8 @@ export const ScriptPage = ({
   const [refineInstruction, setRefineInstruction] = useState('')
   // Why the last refinement failed, shown alongside the preserved instruction
   const [refineError, setRefineError] = useState<string | null>(null)
+  // Why the last on-demand style review failed, shown beside its button
+  const [reviewError, setReviewError] = useState<string | null>(null)
   const [promotedToExamples, setPromotedToExamples] = useState(false)
 
   const script = state.scripts.find((s: Script) => s.id === id)
@@ -316,7 +320,7 @@ export const ScriptPage = ({
     : isThisConversation && generationMachine.phase === 'generating_section'
       ? `Writing section ${generationMachine.currentSectionIndex + 1} of ${generationMachine.totalSections}...`
       : isThisConversation && generationMachine.phase === 'reviewing'
-        ? 'Reviewing style...'
+        ? 'Reviewing the script...'
         : currentGeneration && !currentGeneration.isComplete
           ? currentGeneration.sectionTitle
             ? `Rewriting "${currentGeneration.sectionTitle}"...`
@@ -351,7 +355,7 @@ export const ScriptPage = ({
     const conversationId = conversation?.id ?? createConversation(script.id).id
 
     try {
-      await generateScript({ prompt, conversationId, fresh })
+      await generateScript({ prompt, conversationId, fresh, targetMinutes: script.targetMinutes })
     } catch (error) {
       console.error('Error retrying generation:', error)
     }
@@ -430,6 +434,20 @@ export const ScriptPage = ({
       script.tags ?? []
     )
     setPromotedToExamples(true)
+  }
+
+  // An on-demand cohesion and length review of the finished script (story
+  // 8.14); its outcome arrives as the review report banner
+  const handleReviewScript = async () => {
+    if (!conversation || !script) return
+
+    setReviewError(null)
+    try {
+      await reviewScript(conversation.id, script.initialPrompt ?? script.title, script.targetMinutes)
+    } catch (error) {
+      console.error('Error reviewing script:', error)
+      setReviewError(error instanceof Error ? error.message : 'Unknown error')
+    }
   }
 
   // The instruction clears only once the refinement succeeds (story 1.7):
@@ -557,7 +575,7 @@ export const ScriptPage = ({
           className="generation-notice"
           data-kind="review"
         >
-          <p>{formatReviewSummary(reviewReport.revised)}</p>
+          <p>{reviewReport.summary ?? formatReviewSummary(reviewReport.revised)}</p>
           <button
             onClick={() => conversationDispatch({ type: 'REVIEW_REPORT_DISMISSED' })}
             aria-label="Dismiss review summary"
@@ -722,20 +740,36 @@ export const ScriptPage = ({
             <span />
           )}
           {script.status === 'complete' && document.fullContent && (
-            promotedToExamples ? (
-              <p className="example-promoted" role="status">Saved to your example corpus</p>
-            ) : (
+            <div className="script-utility-actions">
               <button
-                onClick={handlePromoteToExample}
-                aria-label="Save this script as an example"
+                onClick={handleReviewScript}
+                aria-label="Review this script for cohesion and length"
                 type="button"
               >
-                <BookmarkPlus size={16} />
-                Save as example
+                <ScanSearch size={16} />
+                Review script
               </button>
-            )
+              {promotedToExamples ? (
+                <p className="example-promoted" role="status">Saved to your example corpus</p>
+              ) : (
+                <button
+                  onClick={handlePromoteToExample}
+                  aria-label="Save this script as an example"
+                  type="button"
+                >
+                  <BookmarkPlus size={16} />
+                  Save as example
+                </button>
+              )}
+            </div>
           )}
         </footer>
+      )}
+
+      {reviewError && !generationState.isGenerating && (
+        <p role="alert" className="review-error">
+          Review failed: {reviewError}
+        </p>
       )}
 
       {conversation && document.sections.length > 0 && !generationState.isGenerating && (

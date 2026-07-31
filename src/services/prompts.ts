@@ -5,9 +5,13 @@ import sectionGenerationPrompt from '../prompts/section-generation.txt?raw'
 import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
 import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
 import outlineCritiquePrompt from '../prompts/outline-critique.txt?raw'
+import scriptReviewPrompt from '../prompts/script-review.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
+import { SECTION_TARGET_WORDS } from './sectionQuality'
+import { buildLengthPlan } from './scriptLength'
+import type { LengthPlan } from './scriptLength'
 import type { DocumentSection } from './conversationDocument'
 
 /**
@@ -16,12 +20,25 @@ import type { DocumentSection } from './conversationDocument'
 
 const CONTINUITY_EXCERPT_WORDS = 75
 
-export function getSystemPrompt(): string {
-  return hypnosisSystemPrompt
+// The requested length reaches the model through the two prompts that decide
+// how much script gets written: the system prompt states the whole-script aim,
+// the outline prompt turns it into a section count.
+function applyLengthPlan(template: string, plan: LengthPlan): string {
+  return template
+    .replace(/\{targetMinutes\}/g, String(plan.targetMinutes))
+    .replace(/\{totalWords\}/g, plan.totalWords.toLocaleString('en-US'))
+    .replace(/\{minWords\}/g, plan.minWords.toLocaleString('en-US'))
+    .replace(/\{maxWords\}/g, plan.maxWords.toLocaleString('en-US'))
+    .replace(/\{sectionCount\}/g, String(plan.sectionCount))
+    .replace(/\{sectionWords\}/g, String(plan.sectionWords))
 }
 
-export function getOutlineGenerationPrompt(): string {
-  return outlineGenerationPrompt
+export function getSystemPrompt(plan: LengthPlan = buildLengthPlan()): string {
+  return applyLengthPlan(hypnosisSystemPrompt, plan)
+}
+
+export function getOutlineGenerationPrompt(plan: LengthPlan = buildLengthPlan()): string {
+  return applyLengthPlan(outlineGenerationPrompt, plan)
 }
 
 // The outline entries for the sections still to be written, phrased so the
@@ -48,6 +65,7 @@ export function getSectionGenerationPrompt(
     .replace('{sectionTitle}', sectionTitle)
     .replace('{sectionDescription}', sectionDescription)
     .replace('{upcomingSections}', () => formatUpcomingSections(upcomingSections))
+    .replace('{targetWords}', String(SECTION_TARGET_WORDS))
 }
 
 function excerptStart(text: string, maxWords: number): string {
@@ -99,6 +117,7 @@ export function buildSectionRegenerationPrompt(context: SectionRegenerationConte
     .replace(/\{sectionTitle\}/g, context.sectionTitle)
     .replace('{sectionDescription}', description)
     .replace('{continuity}', continuity)
+    .replace('{targetWords}', String(SECTION_TARGET_WORDS))
 
   const instruction = context.instruction?.trim()
   if (instruction) {
@@ -149,6 +168,21 @@ export function buildOutlineCritiquePrompt(brief: string, outlineText: string): 
   return outlineCritiquePrompt
     .replace('{brief}', () => brief)
     .replace('{outline}', () => outlineText)
+}
+
+// The review request for the on-demand whole-script review (story 8.14): the
+// brief, the measured length against its spoken-duration target, and the
+// consolidated script, asking for one verdict per section on how it sits in
+// the arc
+export function buildScriptReviewPrompt(
+  brief: string,
+  lengthBrief: string,
+  script: string
+): string {
+  return scriptReviewPrompt
+    .replace('{brief}', () => brief.trim() || 'No brief was recorded for this script.')
+    .replace('{lengthBrief}', () => lengthBrief)
+    .replace('{script}', () => script)
 }
 
 export function getScriptRefinementPrompt(instruction: string): string {

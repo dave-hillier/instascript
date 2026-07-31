@@ -3,6 +3,9 @@ import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
+import { SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
+import { SECTION_TARGET_WORDS } from './sectionQuality'
+import { countWords } from '../utils/scriptMetrics'
 import { beginTranscript, exampleIdsOf } from './debugTranscript'
 import type { TranscriptMessage } from './debugTranscript'
 
@@ -110,8 +113,28 @@ Weave the new feelings of peace and clarity into the listener's sense of self.
 Gently return the listener to full awareness carrying a sense of deep refreshment.`
   }
 
+  // Mock sections are padded up to the same word target real generation aims
+  // for, so a mock run does not trip the section-quality retry on every
+  // section
+  private padToSectionTarget(content: string): string {
+    const filler = [
+      `And still your breathing carries you… slower now… deeper now… each cycle loosening something you have been holding without noticing. There is no effort in this. The rhythm does the work, and you simply travel with it, further from the surface with every quiet exhale.`,
+      `Notice how readily you follow… how natural it has become to let the next suggestion arrive and settle. Each time you respond, responding grows easier, until following feels less like a choice and more like the shape of this moment.`,
+      `My voice stays close, steady, unhurried… a thread you can follow without thinking about following it. Everything outside it thins out, grows distant, and matters less than it did a moment ago. Here there is only the voice, the breath, and the drift.`
+    ]
+
+    let padded = content
+    let index = 0
+    while (countWords(padded) < SECTION_TARGET_WORDS) {
+      padded += `\n\n${filler[index % filler.length]}`
+      index++
+    }
+    return padded
+  }
+
   private generateSectionContent(sectionTitle: string): string {
-    // Each mock section generates ~400 words of content (no ## header, orchestrator adds it)
+    // Each mock section generates ~400 words of content, padded to the section
+    // target below (no ## header, the orchestrator adds it)
     const sectionContents: Record<string, string> = {
       'Induction': `Close your eyes now... and take a slow, deep breath in through your nose... hold it for just a moment... and let it go, slowly, through your mouth. Good. And again... breathe in, feeling your chest expand, your shoulders lift just slightly... and exhale, letting everything soften. Already you can feel something shifting, something settling inside you.
 
@@ -140,11 +163,11 @@ You are doing so well. Already you are more relaxed than you were just moments a
 
     // Check if we have specific content for this section title
     if (sectionContents[sectionTitle]) {
-      return sectionContents[sectionTitle]
+      return this.padToSectionTarget(sectionContents[sectionTitle])
     }
 
-    // Generate generic ~400 word section content for any title
-    return `Take a deep breath now and allow yourself to settle even more completely into this experience. With each word you hear, your attention narrows, your focus sharpens on my voice alone, and everything else becomes distant and unimportant. You are exactly where you need to be.
+    // Generate generic section content for any title
+    return this.padToSectionTarget(`Take a deep breath now and allow yourself to settle even more completely into this experience. With each word you hear, your attention narrows, your focus sharpens on my voice alone, and everything else becomes distant and unimportant. You are exactly where you need to be.
 
 Feel the gentle rhythm of your breathing... in... and out... each cycle carrying you further along this path. Your body responds automatically now, releasing tension you did not even know you were holding. The muscles in your face soften. Your jaw unclenches. Your shoulders melt downward. Even your fingers and toes seem to grow heavier, warmer, more relaxed.
 
@@ -160,7 +183,7 @@ Your breathing has found its own perfect rhythm now. Slow and steady. Effortless
 
 This feeling is becoming familiar to you now. Comfortable. Safe. Deeply pleasurable. Your subconscious mind recognises this state and welcomes it, opening itself to positive change and growth. The work happening beneath the surface is profound and lasting, even if you are not consciously aware of all of it.
 
-Continue to breathe... continue to follow... continue to let go. Everything is unfolding exactly as it should. You are doing beautifully, and with each passing moment, you sink deeper and deeper into this wonderful state of receptive calm.`
+Continue to breathe... continue to follow... continue to let go. Everything is unfolding exactly as it should. You are doing beautifully, and with each passing moment, you sink deeper and deeper into this wonderful state of receptive calm.`)
   }
 
   // Records the request the same way the real providers do, so the debug
@@ -309,6 +332,43 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
     return ['Here is my review of the script:', ...verdictLines].join('\n')
   }
 
+  // A plausible whole-script review response (story 8.14): one verdict line
+  // per section, flagging the middle section for a continuity break so the
+  // rewrite flow is exercised
+  private generateScriptReviewContent(prompt: string): string {
+    const titles = this.extractReviewedSectionTitles(prompt)
+    if (titles.length === 0) return 'VERDICT: Script | cohesive'
+
+    const flagged = titles[Math.floor(titles.length / 2)]
+
+    return [
+      'Here is my review of the script as a whole:',
+      ...titles.map(title =>
+        title === flagged
+          ? `VERDICT: ${title} | revise | Re-inducts a listener who is already deep and repeats the ` +
+            'breathing imagery of the section before it; carry the depth forward and escalate instead.'
+          : `VERDICT: ${title} | cohesive`
+      )
+    ].join('\n')
+  }
+
+  // Only "##" headings after the review marker are script sections; headings
+  // in the prompt's own instructions are not
+  private extractReviewedSectionTitles(prompt: string): string[] {
+    const marker = 'Here is the script to review:'
+    const markerIndex = prompt.indexOf(marker)
+    const scriptText = markerIndex >= 0 ? prompt.slice(markerIndex + marker.length) : prompt
+
+    const titles: string[] = []
+    for (const line of scriptText.split('\n')) {
+      const match = line.match(/^##\s+(.+?)\s*$/)
+      if (match && !titles.includes(match[1])) {
+        titles.push(match[1])
+      }
+    }
+    return titles
+  }
+
   // A plausible outline-critique response (story 8.9): the mock always finds
   // the escalation arc lacking and returns the outline with the second
   // section's description revised, exercising the replacement flow. A
@@ -350,11 +410,13 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
     // Otherwise generate ~400 word section content (no header - orchestrator adds ## Title)
     const content = request.sectionTitle === STYLE_REVIEW_SECTION_TITLE
       ? this.generateCritiqueContent(request.prompt)
-      : request.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE
-        ? this.generateOutlineCritiqueContent(request.prompt)
-        : request.sectionTitle === ''
-          ? this.generateRefinementContent(messages)
-          : this.generateSectionContent(request.sectionTitle)
+      : request.sectionTitle === SCRIPT_REVIEW_SECTION_TITLE
+        ? this.generateScriptReviewContent(request.prompt)
+        : request.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE
+          ? this.generateOutlineCritiqueContent(request.prompt)
+          : request.sectionTitle === ''
+            ? this.generateRefinementContent(messages)
+            : this.generateSectionContent(request.sectionTitle)
     yield* this.streamRecorded(
       content,
       messages,

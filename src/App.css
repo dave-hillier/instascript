@@ -188,6 +188,33 @@ main form > div {
   padding: 0.625rem 0.75rem;
 }
 
+/* Composer footer, left side: the requested spoken length */
+main form > div > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+main form label[for="target-length"] {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+main form input[type="range"] {
+  width: 140px;
+  accent-color: var(--accent);
+  background: none;
+}
+
+main form output {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
 main form button[aria-label="Generate script"] {
   display: flex;
   align-items: center;
@@ -1448,6 +1475,23 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
 .script-utility button:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.script-utility-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.review-error {
+  max-width: 62ch;
+  margin: 1rem auto 0;
+  padding: 0 1.125rem;
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  color: var(--danger);
 }
 
 .example-promoted {

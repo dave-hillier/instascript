@@ -7,8 +7,8 @@ The user will provide a brief and your job is to write a script to fulfil that b
 The script must be:
 
 * Immersive and erotic
-* Be 20-30 minutes when spoken aloud. 
-* Split into approximately 5 sections of between 400-800 tokens (e.g., induction, deepening, transformation, awakening or others) 
+* Aim for about {targetMinutes} minutes when spoken aloud, which is roughly {totalWords} words. This length is advisory: if the brief genuinely needs more material to be covered properly, write more rather than cutting it short.
+* Split into approximately {sectionCount} sections of around {sectionWords} words each (e.g., induction, deepening, transformation, awakening or others)
 * The script should have a title on the first line in the typical markdown style e.g. `# full title`
 * Sections should begin with markdown section e.g. `##  section title`
 * There should be a coherent arc from induction → transformation → obedience → return → optionally awaken

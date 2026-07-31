@@ -3,6 +3,7 @@ import {
   shouldRetrySection,
   pickBetterSectionText,
   buildRetryNote,
+  SECTION_TARGET_WORDS,
   SECTION_MIN_WORDS,
   SECTION_MAX_WORDS
 } from '../sectionQuality'
@@ -22,29 +23,29 @@ describe('shouldRetrySection', () => {
 
   it('accepts sections at and within the boundaries', () => {
     expect(shouldRetrySection(SECTION_MIN_WORDS)).toBe(false)
-    expect(shouldRetrySection(400)).toBe(false)
+    expect(shouldRetrySection(SECTION_TARGET_WORDS)).toBe(false)
     expect(shouldRetrySection(SECTION_MAX_WORDS)).toBe(false)
   })
 })
 
 describe('pickBetterSectionText', () => {
-  it('keeps the retry when it is closer to the 400-word target', () => {
+  it('keeps the retry when it is closer to the target', () => {
     const firstAttempt = words(100)
-    const retryAttempt = words(380)
+    const retryAttempt = words(SECTION_TARGET_WORDS - 20)
 
     expect(pickBetterSectionText(firstAttempt, retryAttempt)).toBe(retryAttempt)
   })
 
   it('keeps the first attempt when the retry lands further from the target', () => {
-    const firstAttempt = words(390)
-    const retryAttempt = words(700)
+    const firstAttempt = words(SECTION_TARGET_WORDS - 10)
+    const retryAttempt = words(SECTION_TARGET_WORDS + 200)
 
     expect(pickBetterSectionText(firstAttempt, retryAttempt)).toBe(firstAttempt)
   })
 
   it('keeps the first attempt on an exact tie', () => {
-    const firstAttempt = words(380)
-    const retryAttempt = words(420)
+    const firstAttempt = words(SECTION_TARGET_WORDS - 20)
+    const retryAttempt = words(SECTION_TARGET_WORDS + 20)
 
     expect(pickBetterSectionText(firstAttempt, retryAttempt)).toBe(firstAttempt)
   })
@@ -56,11 +57,11 @@ describe('buildRetryNote', () => {
 
     expect(note).toContain('120 words')
     expect(note).toContain('too short')
-    expect(note).toContain('approximately 400 words')
+    expect(note).toContain(`approximately ${SECTION_TARGET_WORDS} words`)
     expect(note).toContain(`between ${SECTION_MIN_WORDS} and ${SECTION_MAX_WORDS}`)
   })
 
   it('describes a long attempt', () => {
-    expect(buildRetryNote(750)).toContain('too long')
+    expect(buildRetryNote(SECTION_MAX_WORDS + 50)).toContain('too long')
   })
 })

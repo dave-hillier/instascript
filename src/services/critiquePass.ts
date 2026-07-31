@@ -97,7 +97,7 @@ export function formatReviewSummary(revised: ReviewRevision[]): string {
     return 'Style review passed: every section follows the style rules.'
   }
   const details = revised
-    .map(entry => `${entry.sectionTitle} (${formatRuleNumbers(entry.ruleNumbers)})`)
+    .map(entry => `${entry.sectionTitle} (${formatRuleNumbers(entry.ruleNumbers ?? [])})`)
     .join(', ')
   return `Review revised ${revised.length} ${revised.length === 1 ? 'section' : 'sections'}: ${details}.`
 }

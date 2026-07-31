@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestrator'
 import type { RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
 import { MockAPIService } from '../mockApi'
+import { MAX_SCRIPT_REVIEW_REVISIONS } from '../scriptReview'
+import { buildLengthPlan } from '../scriptLength'
 import { rawConversationReducer } from '../../reducers/rawConversationReducer'
 import type { RawConversationState, RawConversationAction } from '../../reducers/rawConversationReducer'
 import type { RawConversation, ReviewReport } from '../../types/conversation'
@@ -125,6 +127,118 @@ describe('style-review pass integration', () => {
 
     vi.restoreAllMocks()
   }, 30000)
+})
+
+describe('on-demand whole-script review (story 8.14)', () => {
+  it('reviews the finished script for cohesion and length, then rewrites what it flags', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState, actions, scriptUpdates } = createHarness(false)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    // Outline + 5 mock sections, no review yet
+    expect(getState().conversations[0].generations).toHaveLength(6)
+    expect(getState().reviewReport).toBeNull()
+
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
+
+    const generations = getState().conversations[0].generations
+    const reviewGeneration = generations[6]
+
+    // The review request states the brief and the measured length as fact
+    const reviewPrompt = reviewGeneration.messages[0].content
+    expect(reviewPrompt).toContain('a relaxing script')
+    expect(reviewPrompt).toContain(`about ${buildLengthPlan().targetMinutes} minutes`)
+    expect(reviewPrompt).toContain('The length is on target.')
+    expect(reviewGeneration.response).toContain('VERDICT:')
+
+    // A mock run lands inside the duration window, so only the section the
+    // review flags for cohesion is rewritten
+    const report = getState().reviewReport as ReviewReport
+    expect(report.conversationId).toBe(conversation.id)
+    expect(report.revised).toHaveLength(1)
+    expect(report.revised[0].reason).toBe('cohesion')
+    expect(report.summary).toContain('rewrote 1 section')
+    expect(report.summary).toContain(`close to the ${buildLengthPlan().targetMinutes} minute target`)
+
+    // The rewrite carries the cohesion problem as its instruction
+    const revisionPrompt = generations[7].messages[generations[7].messages.length - 1].content
+    expect(revisionPrompt).toContain('does not sit right in the arc')
+    expect(revisionPrompt).toContain('Re-inducts a listener who is already deep')
+
+    // The rewritten script is saved, and the run settles as complete
+    const lastUpdate = scriptUpdates[scriptUpdates.length - 1]
+    expect(lastUpdate.status).toBe('complete')
+    expect(lastUpdate.content).toContain('## Awakening')
+    expect(getState().generationMachine?.phase).toBe('complete')
+    expect(getState().currentGeneration?.isComplete).toBe(true)
+    expect(actions.some(action => action.type === 'REVIEW_PASS_COMPLETED')).toBe(true)
+
+    vi.restoreAllMocks()
+  }, 30000)
+
+  it('grows the sections with the most room when the script is under its duration target', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState, scriptUpdates } = createHarness(false)
+
+    // A finished but far too short script: an outline plus three thin sections
+    const short = (label: string, wordCount: number) =>
+      `## ${label}\n` + Array.from({ length: wordCount }, (_, i) => `word${i}`).join(' ')
+    const stored = {
+      ...conversation,
+      generations: [
+        {
+          messages: [],
+          response: '# Deep Rest\n## Induction\nSettle.\n## Deepening\nDescend.\n## Awakening\nReturn.',
+          timestamp: 0
+        },
+        { messages: [], response: short('Induction', 200), timestamp: 0 },
+        { messages: [], response: short('Deepening', 150), timestamp: 0 },
+        { messages: [], response: short('Awakening', 100), timestamp: 0 }
+      ]
+    }
+    getState().conversations[0] = stored
+
+    await orchestrator.reviewScript(stored, 'a relaxing script')
+
+    const generations = getState().conversations[0].generations
+    expect(generations[4].messages[0].content).toContain('words short')
+
+    // Every rewrite slot is used, each with an explicit word target, and the
+    // section the review flagged also carries its cohesion problem
+    const report = getState().reviewReport as ReviewReport
+    expect(report.revised).toHaveLength(MAX_SCRIPT_REVIEW_REVISIONS)
+    expect(report.revised.map(entry => entry.reason)).toContain('cohesion and length')
+    expect(report.summary).toContain(`under the ${buildLengthPlan().targetMinutes} minute target`)
+
+    const revisionPrompts = generations.slice(5).map(
+      generation => generation.messages[generation.messages.length - 1].content
+    )
+    expect(revisionPrompts).toHaveLength(MAX_SCRIPT_REVIEW_REVISIONS)
+    for (const prompt of revisionPrompts) {
+      expect(prompt).toMatch(/expand this section from \d+ to approximately \d+ words/)
+    }
+
+    // The grown script is what gets saved
+    expect(scriptUpdates[scriptUpdates.length - 1].status).toBe('complete')
+
+    vi.restoreAllMocks()
+  }, 30000)
+
+  it('reports a failed review instead of swallowing it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(false)
+
+    await expect(orchestrator.reviewScript(conversation, 'a relaxing script')).rejects.toThrow(
+      /no outline/i
+    )
+    expect(getState().reviewReport).toBeNull()
+
+    vi.restoreAllMocks()
+  })
 })
 
 describe('outline-critique step integration (story 8.9)', () => {

@@ -2,11 +2,13 @@ Given the user's brief, produce ONLY an outline for a hypnosis script.
 
 The outline must contain:
 1. A title line: `# Title Here`
-2. Exactly 5 section headers, each as `## Section Title` followed by a one-sentence description of what that section covers.
+2. About {sectionCount} section headers, each as `## Section Title` followed by a one-sentence description of what that section covers. Use more or fewer only where the brief clearly needs it.
 
-The sections should follow a coherent arc (e.g. induction, deepening, transformation, suggestion, awakening) but adapt to the user's request.
+The sections should follow a coherent arc (e.g. induction, deepening, escalation, transformation, conditioning, return) but adapt to the user's request.
 
-Output ONLY the outline in this exact format, nothing else:
+Each section will be written at roughly {sectionWords} words, so the finished script runs about {targetMinutes} minutes spoken ({totalWords} words). Give each section enough distinct material to fill that on its own, and make sure no two sections cover the same ground: each one must move the arc somewhere the previous section did not.
+
+Output ONLY the outline in this exact format, nothing else, with one `## Section Title` block per section:
 
 # Title
 ## Section 1 Title
@@ -15,7 +17,4 @@ Brief description of this section.
 Brief description of this section.
 ## Section 3 Title
 Brief description of this section.
-## Section 4 Title
-Brief description of this section.
-## Section 5 Title
-Brief description of this section.
+(and so on, to section {sectionCount})
