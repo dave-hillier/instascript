@@ -2,7 +2,8 @@ import type { RawConversation, GenerationRequest, RegenerationRequest, Refinemen
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
-import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildScriptReviewPrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory, buildGenerationSystemPrompt, withGenerationSystemPrompt } from './prompts'
+import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt, buildStyleCritiquePrompt, buildOutlineCritiquePrompt, buildScriptReviewPrompt, buildSectionRegenerationPromptFromConversation, buildConversationHistory, buildGenerationSystemPrompt, withGenerationSystemPrompt, withStructureBlock } from './prompts'
+import { buildScriptFs } from './scriptFs'
 import { getRecommendedExampleCount, estimateSectionContextTokens } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutline } from './conversationDocument'
@@ -1034,9 +1035,15 @@ export class RawScriptGenerationOrchestrator {
         conversation
       )
 
+      // The rewrite sees where this section sits in the whole script. Added at
+      // send time only, after START_GENERATION has stored the history, so the
+      // tree is never replayed from a later request's history.
       const stream = this.services.scriptService.regenerateSection(
         request,
-        withGenerationSystemPrompt(messages, buildGenerationSystemPrompt(plan, examples)),
+        withGenerationSystemPrompt(
+          withStructureBlock(messages, buildScriptFs(conversation)),
+          buildGenerationSystemPrompt(plan, examples)
+        ),
         abortSignal
       )
 
@@ -1144,9 +1151,14 @@ export class RawScriptGenerationOrchestrator {
         conversation
       )
 
+      // A whole-script refinement decides which sections to rewrite, so it is
+      // told what the sections currently are. Send-time only, as above.
       const stream = this.services.scriptService.regenerateSection(
         { prompt: request.prompt, conversationId, sectionTitle: '' },
-        withGenerationSystemPrompt(messages, buildGenerationSystemPrompt(plan, examples)),
+        withGenerationSystemPrompt(
+          withStructureBlock(messages, buildScriptFs(conversation)),
+          buildGenerationSystemPrompt(plan, examples)
+        ),
         abortSignal
       )
 

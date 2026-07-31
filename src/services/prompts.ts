@@ -15,6 +15,8 @@ import { SECTION_TARGET_WORDS } from './sectionQuality'
 import { buildLengthPlan } from './scriptLength'
 import type { LengthPlan } from './scriptLength'
 import type { DocumentSection } from './conversationDocument'
+import type { ScriptFsTree } from './scriptFs'
+import { renderScriptFsTree } from './scriptFs'
 
 /**
  * Pure functions for prompt generation
@@ -83,12 +85,34 @@ function excerptEnd(text: string, maxWords: number): string {
   return '… ' + words.slice(-maxWords).join(' ')
 }
 
+// The script's current structure, rendered from the virtual filesystem
+// projection. It is context, not instruction, and it goes at the very end of
+// the last user turn: everything before that point is the cached prefix
+// (docs/prompt-caching.md), and the tree changes with every generation.
+export function buildStructureBlock(tree: ScriptFsTree): string {
+  return 'Current structure of the script:\n\n' +
+    renderScriptFsTree(tree) +
+    '\nEach section is a directory holding prompt.md (its spec, from the outline) and ' +
+    'content.md (its written text). A section is "stale" when its spec changed after ' +
+    'its text was written, "empty" when nothing has been written for it yet, and ' +
+    '"fresh" otherwise. Word counts are of content.md. Use this to see where the ' +
+    'section you are writing sits in the whole; do not restate it in your reply.'
+}
+
+// Appended last so the block never displaces a rendered prompt's own ending.
+function appendStructureBlock(prompt: string, structure?: ScriptFsTree): string {
+  if (!structure) return prompt
+  return `${prompt}\n\n${buildStructureBlock(structure)}`
+}
+
 export interface SectionRegenerationContext {
   sectionTitle: string
   outlineDescription?: string
   previousSection?: DocumentSection
   nextSection?: DocumentSection
   instruction?: string
+  // Optional; omitted entirely when absent, so existing call sites are byte-identical
+  structure?: ScriptFsTree
 }
 
 // Outline-aware section regeneration: the section's outline entry supplies
@@ -127,13 +151,14 @@ export function buildSectionRegenerationPrompt(context: SectionRegenerationConte
     prompt += `\n\nAdditional instruction from the user for this rewrite:\n${instruction}`
   }
 
-  return prompt
+  return appendStructureBlock(prompt, context.structure)
 }
 
 export function buildSectionRegenerationPromptFromConversation(
   conversation: RawConversation,
   sectionTitle: string,
-  instruction?: string
+  instruction?: string,
+  structure?: ScriptFsTree
 ): string {
   const outline = getLatestOutline(conversation)
   const sections = consolidateSections(conversation)
@@ -144,7 +169,8 @@ export function buildSectionRegenerationPromptFromConversation(
     outlineDescription: outline?.sections.find(section => section.title === sectionTitle)?.description,
     previousSection: index > 0 ? sections[index - 1] : undefined,
     nextSection: index >= 0 && index < sections.length - 1 ? sections[index + 1] : undefined,
-    instruction
+    instruction,
+    structure
   })
 }
 
@@ -220,10 +246,12 @@ export function buildImportFormattingPrompt(title: string): string {
   return importFormattingPrompt.replace('{title}', () => title)
 }
 
-export function getScriptRefinementPrompt(instruction: string): string {
-  return scriptRefinementPrompt
+export function getScriptRefinementPrompt(instruction: string, structure?: ScriptFsTree): string {
+  const prompt = scriptRefinementPrompt
     .replace('{targetWords}', String(SECTION_TARGET_WORDS))
     .replace('{instruction}', () => instruction.trim())
+
+  return appendStructureBlock(prompt, structure)
 }
 
 // Deliberate exemplar ordering (story 8.8): search returns examples ranked
@@ -291,6 +319,31 @@ export function withGenerationSystemPrompt(
   return messages.map(message =>
     message.role === 'system' ? { role: 'system', content: systemPrompt } : message
   )
+}
+
+// The structure block, like the examples, is sent but never stored: it is a
+// snapshot of a document that keeps changing, so replaying it from stored
+// history would pin a stale tree in every later request. Appending it to the
+// LAST message — the per-request instruction turn built by
+// buildConversationHistory — leaves the whole cached prefix untouched. A
+// system-first array is never the last message unless it is the only one, in
+// which case a fresh user turn carries the block instead.
+export function withStructureBlock(
+  messages: ChatMessage[],
+  structure?: ScriptFsTree
+): ChatMessage[] {
+  if (!structure) return messages
+
+  const block = buildStructureBlock(structure)
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'user') {
+    return [...messages, { role: 'user', content: block }]
+  }
+
+  return [
+    ...messages.slice(0, -1),
+    { role: 'user', content: `${last.content}\n\n${block}` }
+  ]
 }
 
 // Conversation-history normalisation (story 8.13): generations store the
