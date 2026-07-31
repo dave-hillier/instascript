@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, BookmarkPlus, Check, Pencil, Play, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { TokenUsageBar } from '../components/TokenUsageBar'
 import { ScriptCostSummary } from '../components/ScriptCostSummary'
 import { getModel } from '../services/config'
 import { PerformanceMode } from '../components/PerformanceMode'
+import { ConversationPanel } from '../components/ConversationPanel'
+import { ScriptDocument } from '../components/ScriptDocument'
+import { buildThread } from '../services/conversationThread'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
 import { formatReviewSummary } from '../services/critiquePass'
@@ -290,6 +293,9 @@ export const ScriptPage = ({
   const [editTarget, setEditTarget] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const [refineInstruction, setRefineInstruction] = useState('')
+  // The instruction that is being applied right now, shown as a thread turn
+  // while it runs; it returns to the composer if the refinement fails
+  const [pendingInstruction, setPendingInstruction] = useState<string | null>(null)
   // Why the last refinement failed, shown alongside the preserved instruction
   const [refineError, setRefineError] = useState<string | null>(null)
   // Why the last on-demand style review failed, shown beside its button
@@ -427,6 +433,10 @@ export const ScriptPage = ({
   const exampleTitleById = new Map(
     getAllExamples().map(example => [example.id, example.title])
   )
+  const informingExamples = informingExampleIds.map(exampleId => ({
+    id: exampleId,
+    title: exampleTitleById.get(exampleId) ?? exampleId
+  }))
 
   const handlePromoteToExample = () => {
     if (!script || !document.fullContent) return
@@ -461,6 +471,8 @@ export const ScriptPage = ({
     if (!instruction) return
 
     setRefineError(null)
+    setRefineInstruction('')
+    setPendingInstruction(instruction)
     try {
       await refineScript({
         conversationId: conversation.id,
@@ -468,13 +480,15 @@ export const ScriptPage = ({
         targetMinutes: script.targetMinutes,
         brief: script.initialPrompt ?? script.title
       })
-      setRefineInstruction('')
     } catch (error) {
       console.error('Error refining script:', error)
       setRefineInstruction(instruction)
       setRefineError(error instanceof Error ? error.message : 'Unknown error')
+    } finally {
+      setPendingInstruction(null)
     }
   }
+
 
   if (!script) {
     return (
@@ -503,314 +517,84 @@ export const ScriptPage = ({
     )
   }
 
+  // The opening turn carries the brief plus the facts that shaped the request
+  const briefChips = [
+    script.targetMinutes ? `${script.targetMinutes} min` : script.length,
+    ...(script.tags ?? [])
+  ].filter((chip): chip is string => Boolean(chip))
+
+  const threadEntries = buildThread({
+    brief: script.initialPrompt ?? script.title,
+    chips: briefChips,
+    conversation,
+    isStreaming: generationState.isGenerating
+  })
+
+  const reviewSummary = reviewReport && conversation && reviewReport.conversationId === conversation.id
+    ? reviewReport.summary ?? formatReviewSummary(reviewReport.revised)
+    : undefined
+
+  const canEditSections = !generationState.shouldDisableRegenerate && !!conversation
+
   return (
-    <section>
-      {generationState.isGenerating && (
-        <div role="status" aria-live="polite">
-          <div>
-            <p>{phaseLabel}</p>
-            <button
-              onClick={stopGeneration}
-              aria-label="Stop script generation"
-              type="button"
-              className="stop-button-with-text"
-            >
-              Stop
-            </button>
-          </div>
-          {generationState.error && (
-            <p role="alert">Error: {generationState.error}</p>
-          )}
-        </div>
-      )}
+    <div className="workspace">
+      <ConversationPanel
+        entries={threadEntries}
+        pendingInstruction={pendingInstruction}
+        isGenerating={generationState.isGenerating}
+        phaseLabel={phaseLabel}
+        onStop={stopGeneration}
+        errorMessage={persistentErrorMessage}
+        wasInterrupted={wasInterrupted}
+        onRetry={() => handleRetry()}
+        onStartOver={() => handleRetry(true)}
+        reviewSummary={reviewSummary}
+        onDismissReview={() => conversationDispatch({ type: 'REVIEW_REPORT_DISMISSED' })}
+        instruction={refineInstruction}
+        onInstructionChange={setRefineInstruction}
+        onSubmit={handleRefineSubmit}
+        refineError={refineError}
+        canRefine={!!conversation && document.sections.length > 0}
+      >
+        <details className="run-details">
+          <summary>Progress and usage</summary>
+          <WordCountMeter
+            sections={document.sections}
+            generationMachine={isThisConversation ? generationMachine : null}
+          />
+          <TokenUsageBar conversation={conversation} />
+          <ScriptCostSummary
+            conversation={conversation}
+            model={script.model ?? getModel()}
+          />
+        </details>
+      </ConversationPanel>
 
-      {persistentErrorMessage && (
-        <div role="alert" className="generation-notice" data-kind="error">
-          <p>
-            <strong>Generation failed.</strong> {persistentErrorMessage}
-          </p>
-          <button
-            onClick={() => handleRetry()}
-            aria-label="Retry script generation from where it stopped"
-            type="button"
-          >
-            <Play size={16} />
-            Retry
-          </button>
-          <button
-            onClick={() => handleRetry(true)}
-            aria-label="Start the script generation over from scratch"
-            type="button"
-          >
-            <RotateCcw size={16} />
-            Start over
-          </button>
-        </div>
-      )}
-
-      {wasInterrupted && (
-        <div role="status" className="generation-notice" data-kind="interrupted">
-          <p>
-            This generation was interrupted before it finished. Everything
-            written so far is saved.
-          </p>
-          <button
-            onClick={() => handleRetry()}
-            aria-label="Resume script generation"
-            type="button"
-          >
-            <Play size={16} />
-            Resume
-          </button>
-          <button
-            onClick={() => handleRetry(true)}
-            aria-label="Start the script generation over from scratch"
-            type="button"
-          >
-            <RotateCcw size={16} />
-            Start over
-          </button>
-        </div>
-      )}
-
-      {reviewReport && conversation &&
-        reviewReport.conversationId === conversation.id &&
-        !generationState.isGenerating && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="generation-notice"
-          data-kind="review"
-        >
-          <p>{reviewReport.summary ?? formatReviewSummary(reviewReport.revised)}</p>
-          <button
-            onClick={() => conversationDispatch({ type: 'REVIEW_REPORT_DISMISSED' })}
-            aria-label="Dismiss review summary"
-            type="button"
-          >
-            <X size={14} />
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <WordCountMeter
+      <ScriptDocument
         sections={document.sections}
-        generationMachine={isThisConversation ? generationMachine : null}
+        fullContent={document.fullContent}
+        showSectionTitles={showSectionTitles}
+        canEditSections={canEditSections}
+        isGenerating={generationState.isGenerating}
+        instructionTarget={instructionTarget}
+        instructionText={instructionText}
+        onInstructionTextChange={setInstructionText}
+        onToggleInstructionForm={handleToggleInstructionForm}
+        onInstructionSubmit={handleInstructionSubmit}
+        onRegenerateSection={handleRegenerateSection}
+        editTarget={editTarget}
+        editDraft={editDraft}
+        onEditDraftChange={setEditDraft}
+        onStartEdit={handleStartEdit}
+        onCancelEdit={handleCancelEdit}
+        onEditSubmit={handleEditSubmit}
+        informingExamples={informingExamples}
+        showScriptActions={script.status === 'complete' && !!document.fullContent}
+        onReviewScript={handleReviewScript}
+        onPromoteToExample={handlePromoteToExample}
+        promotedToExamples={promotedToExamples}
+        reviewError={reviewError}
       />
-
-      <TokenUsageBar conversation={conversation} />
-
-      <ScriptCostSummary
-        conversation={conversation}
-        model={script.model ?? getModel()}
-      />
-
-      {/* With titles hidden (story 2.5) the header stays in the DOM: the
-          heading is visually hidden via CSS and the section actions reveal
-          on hover or keyboard focus of the section, so functionality is
-          reachable in both modes */}
-      <article data-section-titles={showSectionTitles ? 'visible' : 'hidden'}>
-        {document.sections.length > 0 ? (
-          document.sections.map((section, index) => (
-            <section key={`section-${index}`}>
-              <header>
-                <h2>{section.title}</h2>
-                {!generationState.shouldDisableRegenerate && conversation && (
-                  <div className="section-actions">
-                    <button
-                      onClick={() => handleStartEdit(section.title, section.content)}
-                      aria-label={`Edit ${section.title} section`}
-                      type="button"
-                    >
-                      <Pencil size={16} />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleRegenerateSection(section.title)}
-                      disabled={generationState.shouldDisableRegenerate}
-                      aria-label={`Regenerate ${section.title} section`}
-                      type="button"
-                    >
-                      <RotateCcw size={16} />
-                      Regenerate
-                    </button>
-                    <button
-                      onClick={() => handleToggleInstructionForm(section.title)}
-                      aria-expanded={instructionTarget === section.title}
-                      aria-controls={`${section.id}_instruction`}
-                      aria-label={`Regenerate ${section.title} section with instructions`}
-                      type="button"
-                    >
-                      <SlidersHorizontal size={16} />
-                    </button>
-                  </div>
-                )}
-              </header>
-              {instructionTarget === section.title &&
-                !generationState.shouldDisableRegenerate &&
-                conversation && (
-                <form
-                  className="regenerate-form"
-                  id={`${section.id}_instruction`}
-                  aria-label={`Regenerate ${section.title} with instructions`}
-                  onSubmit={(event) => handleInstructionSubmit(event, section.title)}
-                >
-                  <label className="sr-only" htmlFor={`${section.id}_instruction_input`}>
-                    How should the {section.title} section change? Leave empty for a standard rewrite.
-                  </label>
-                  <input
-                    id={`${section.id}_instruction_input`}
-                    type="text"
-                    value={instructionText}
-                    onChange={(event) => setInstructionText(event.target.value)}
-                    placeholder="e.g. less repetition, more breathing focus"
-                    autoFocus
-                  />
-                  <button type="submit">
-                    <RotateCcw size={14} />
-                    Regenerate
-                  </button>
-                </form>
-              )}
-              {editTarget === section.title &&
-                !generationState.shouldDisableRegenerate &&
-                conversation ? (
-                <form
-                  className="section-edit-form"
-                  aria-label={`Edit ${section.title} section`}
-                  onSubmit={(event) => handleEditSubmit(event, section.title)}
-                >
-                  <label className="sr-only" htmlFor={`${section.id}_edit_input`}>
-                    Text of the {section.title} section
-                  </label>
-                  <textarea
-                    id={`${section.id}_edit_input`}
-                    value={editDraft}
-                    onChange={(event) => setEditDraft(event.target.value)}
-                    rows={Math.max(6, editDraft.split('\n').length + 1)}
-                    autoFocus
-                  />
-                  <div className="section-edit-actions">
-                    <button type="submit" disabled={!editDraft.trim()}>
-                      <Check size={16} />
-                      Save
-                    </button>
-                    <button type="button" onClick={handleCancelEdit}>
-                      <X size={16} />
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div>
-                  {section.content
-                    .split('\n')
-                    .map((line, lineIndex) => ({ text: line, key: `line-${lineIndex}` }))
-                    .filter(({ text }) => !text.startsWith('## ') && text.trim())
-                    .map(({ text, key }) => (
-                      <p key={key}>{text}</p>
-                    ))}
-                </div>
-              )}
-            </section>
-          ))
-        ) : document.fullContent ? (
-          document.fullContent
-            .split('\n')
-            .map((paragraph, paragraphIndex) => ({ text: paragraph, key: `paragraph-${paragraphIndex}` }))
-            .filter(({ text }) => text.trim())
-            .map(({ text, key }) => (
-              <p key={key}>{text}</p>
-            ))
-        ) : (
-          <p>No content yet. Script is being generated...</p>
-        )}
-      </article>
-
-      {!generationState.isGenerating &&
-        (informingExampleIds.length > 0 || (script.status === 'complete' && document.fullContent)) && (
-        <footer className="script-utility">
-          {informingExampleIds.length > 0 ? (
-            <details className="example-provenance">
-              <summary>
-                Grounded in {informingExampleIds.length}{' '}
-                {informingExampleIds.length === 1 ? 'example' : 'examples'}
-              </summary>
-              <ul>
-                {informingExampleIds.map(exampleId => (
-                  <li key={exampleId}>{exampleTitleById.get(exampleId) ?? exampleId}</li>
-                ))}
-              </ul>
-            </details>
-          ) : (
-            <span />
-          )}
-          {script.status === 'complete' && document.fullContent && (
-            <div className="script-utility-actions">
-              <button
-                onClick={handleReviewScript}
-                aria-label="Review this script for cohesion and length"
-                type="button"
-              >
-                <ScanSearch size={16} />
-                Review script
-              </button>
-              {promotedToExamples ? (
-                <p className="example-promoted" role="status">Saved to your example corpus</p>
-              ) : (
-                <button
-                  onClick={handlePromoteToExample}
-                  aria-label="Save this script as an example"
-                  type="button"
-                >
-                  <BookmarkPlus size={16} />
-                  Save as example
-                </button>
-              )}
-            </div>
-          )}
-        </footer>
-      )}
-
-      {reviewError && !generationState.isGenerating && (
-        <p role="alert" className="review-error">
-          Review failed: {reviewError}
-        </p>
-      )}
-
-      {conversation && document.sections.length > 0 && !generationState.isGenerating && (
-        <>
-          {refineError && (
-            <p role="alert" className="refine-error">
-              Refinement failed: {refineError}. Your instruction is preserved below.
-            </p>
-          )}
-          <form
-            className="refine-form"
-            aria-label="Refine this script"
-            onSubmit={handleRefineSubmit}
-          >
-            <label className="sr-only" htmlFor="refine-instruction">
-              Refine this script with a follow-up instruction
-            </label>
-            <input
-              id="refine-instruction"
-              type="text"
-              value={refineInstruction}
-              onChange={(event) => setRefineInstruction(event.target.value)}
-              placeholder="Refine this script — e.g. make the induction slower"
-            />
-            <button
-              type="submit"
-              disabled={!refineInstruction.trim()}
-              aria-label="Refine script"
-            >
-              <ArrowUp size={18} />
-            </button>
-          </form>
-        </>
-      )}
 
       {performanceMode && onExitPerformanceMode && document.sections.length > 0 && (
         <PerformanceMode
@@ -820,6 +604,6 @@ export const ScriptPage = ({
           onExit={onExitPerformanceMode}
         />
       )}
-    </section>
+    </div>
   )
 }
