@@ -340,3 +340,41 @@ export function updateUserExampleTags(id: string, tags: string[]): void {
   if (!example) return
   saveUserExample({ ...example, tags })
 }
+
+// Applies what the utility model made of an import (story 5.7). Rewritten
+// content invalidates the embedding computed from the original text, so it is
+// recomputed in the background the same way an import does.
+export function applyExampleEnhancement(
+  id: string,
+  enhancement: { tags?: string[]; content?: string }
+): ExampleRecord | null {
+  const example = getUserExamples().find(candidate => candidate.id === id)
+  if (!example) return null
+
+  const updated: ExampleRecord = {
+    ...example,
+    tags: enhancement.tags ?? example.tags,
+    content: enhancement.content ?? example.content
+  }
+  saveUserExample(updated)
+
+  if (enhancement.content && enhancement.content !== example.content) {
+    void attachEmbedding(updated)
+  }
+
+  return updated
+}
+
+// Every tag in use across the corpus, most-used first — the vocabulary the
+// utility model is offered so suggestions converge instead of sprawling
+export function getKnownTags(): string[] {
+  const counts = new Map<string, number>()
+  for (const example of getAllExamples()) {
+    for (const tag of example.tags) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1)
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag)
+}

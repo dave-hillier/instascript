@@ -2,10 +2,12 @@ import { useEffect, useReducer, useState } from 'react'
 import { Trash2, Check } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import {
+  applyExampleEnhancement,
   areBundledExamplesEnabled,
   backfillMissingEmbeddings,
   getAllExamples,
   getExampleSelectionCounts,
+  getKnownTags,
   importExampleFile,
   isImportableExampleFile,
   deleteUserExample,
@@ -13,6 +15,14 @@ import {
   updateUserExampleTags,
   parseTags
 } from '../services/exampleCorpus'
+import {
+  describeImportAssist,
+  enhanceImportedExample,
+  needsMarkdownFormatting,
+  type ImportAssistOutcome
+} from '../services/importAssist'
+import { createUtilityService } from '../services/serviceFactory'
+import { isImportAssistEnabled } from '../services/config'
 import { countWords } from '../utils/scriptMetrics'
 
 // What one import attempt did, for the status line
@@ -22,11 +32,18 @@ type ImportOutcome = {
   failed: number
 }
 
+// What the utility model is doing to the examples just imported (story 5.7)
+type AssistState =
+  | { status: 'idle' }
+  | { status: 'running'; total: number; done: number }
+  | { status: 'finished'; outcome: ImportAssistOutcome; model: string }
+
 type ExamplesState = {
   examples: ExampleRecord[]
   importCount: number
   bundledEnabled: boolean
   lastImport: ImportOutcome | null
+  assist: AssistState
 }
 
 type ExamplesAction =
@@ -34,14 +51,37 @@ type ExamplesAction =
   | { type: 'EXAMPLE_DELETED'; id: string }
   | { type: 'EXAMPLE_TAGS_CHANGED'; id: string; tags: string[] }
   | { type: 'BUNDLED_EXAMPLES_TOGGLED'; enabled: boolean }
+  | { type: 'IMPORT_ASSIST_STARTED'; total: number }
+  | { type: 'EXAMPLE_ASSISTED'; example: ExampleRecord | null }
+  | { type: 'IMPORT_ASSIST_FINISHED'; outcome: ImportAssistOutcome; model: string }
 
 const examplesReducer = (state: ExamplesState, action: ExamplesAction): ExamplesState => {
   switch (action.type) {
+    case 'IMPORT_ASSIST_STARTED':
+      return { ...state, assist: { status: 'running', total: action.total, done: 0 } }
+    case 'EXAMPLE_ASSISTED': {
+      const assisted = action.example
+      return {
+        ...state,
+        examples: assisted
+          ? state.examples.map(example => (example.id === assisted.id ? assisted : example))
+          : state.examples,
+        assist: state.assist.status === 'running'
+          ? { ...state.assist, done: state.assist.done + 1 }
+          : state.assist
+      }
+    }
+    case 'IMPORT_ASSIST_FINISHED':
+      return {
+        ...state,
+        assist: { status: 'finished', outcome: action.outcome, model: action.model }
+      }
     case 'EXAMPLES_IMPORTED':
       return {
         ...state,
         examples: [...state.examples, ...action.examples],
         importCount: state.importCount + 1,
+        assist: { status: 'idle' },
         lastImport: {
           added: action.examples.length,
           skipped: action.skipped,
@@ -126,7 +166,8 @@ export const ExamplesPage = () => {
       examples: getAllExamples(),
       importCount: 0,
       bundledEnabled: areBundledExamplesEnabled(),
-      lastImport: null
+      lastImport: null,
+      assist: { status: 'idle' }
     })
   )
   const selectionCounts = getExampleSelectionCounts()
@@ -168,6 +209,48 @@ export const ExamplesPage = () => {
     }
     // Bumping importCount remounts the file inputs, clearing their selection
     dispatch({ type: 'EXAMPLES_IMPORTED', examples: imported, skipped, failed })
+    void runImportAssist(imported)
+  }
+
+  // Story 5.7: the small utility model tidies what was just imported —
+  // markdown structure for a plain-text script, tags for an untagged one.
+  // The examples are already saved and usable; this only improves them, so
+  // it runs after the import reports success and never blocks it.
+  const runImportAssist = async (imported: ExampleRecord[]) => {
+    if (imported.length === 0 || !isImportAssistEnabled()) return
+
+    const pending = imported.filter(
+      example => example.tags.length === 0 || needsMarkdownFormatting(example.content)
+    )
+    if (pending.length === 0) return
+
+    const service = createUtilityService()
+    const knownTags = getKnownTags()
+    dispatch({ type: 'IMPORT_ASSIST_STARTED', total: pending.length })
+
+    let tagged = 0
+    let formatted = 0
+    // Sequential: a folder import can be dozens of files, and a queue of
+    // parallel requests to a rate-limited key fails more of them than it
+    // finishes sooner
+    for (const example of pending) {
+      const enhancement = await enhanceImportedExample(example, service, knownTags)
+      const updated =
+        enhancement.tags || enhancement.content
+          ? applyExampleEnhancement(example.id, enhancement)
+          : null
+      if (updated) {
+        if (enhancement.tags) tagged += 1
+        if (enhancement.content) formatted += 1
+      }
+      dispatch({ type: 'EXAMPLE_ASSISTED', example: updated })
+    }
+
+    dispatch({
+      type: 'IMPORT_ASSIST_FINISHED',
+      outcome: { tagged, formatted },
+      model: service.isLive ? service.model : 'The mock provider'
+    })
   }
 
   const handleBundledToggle = (enabled: boolean) => {
@@ -254,6 +337,15 @@ export const ExamplesPage = () => {
         {state.lastImport && (
           <p className="example-import-result" role="status" aria-live="polite">
             {describeImport(state.lastImport)}
+          </p>
+        )}
+
+        {state.assist.status !== 'idle' && (
+          <p className="example-assist-result" role="status" aria-live="polite">
+            {state.assist.status === 'running'
+              ? `Tidying imports with the utility model — ${state.assist.done} of ${state.assist.total} done...`
+              : describeImportAssist(state.assist.outcome, state.assist.model) ||
+                'The utility model found nothing to add to these imports.'}
           </p>
         )}
       </form>

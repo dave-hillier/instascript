@@ -2,25 +2,95 @@ import { useRef, useEffect, useState, useReducer, useSyncExternalStore } from 'r
 import type { ChangeEvent } from 'react'
 import { Sun, Moon, Monitor, Trash2, Download, Upload, FolderSync, FolderX, FileText } from 'lucide-react'
 import { subscribeToTranscripts, getTranscripts, MAX_TRANSCRIPTS } from '../services/debugTranscript'
-import type { APIProvider } from '../services/config'
+import { getDefaultModel, type APIProvider } from '../services/config'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
 
 type Theme = 'light' | 'dark' | 'system'
 
-const OPENAI_MODELS = [
+type ModelOption = { value: string; label: string }
+
+const OPENAI_MODELS: ModelOption[] = [
   { value: 'gpt-5', label: 'GPT-5' },
   { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
   { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
 ]
 
-const OPENROUTER_MODELS = [
+const OPENROUTER_MODELS: ModelOption[] = [
   { value: 'x-ai/grok-4.5', label: 'Grok 4.5' },
   { value: 'x-ai/grok-4.3', label: 'Grok 4.3' },
   { value: 'x-ai/grok-4.20', label: 'Grok 4.20' },
   { value: 'x-ai/grok-3', label: 'Grok 3' },
   { value: 'x-ai/grok-3-mini', label: 'Grok 3 Mini' },
 ]
+
+// The utility role runs short background jobs, so its presets lead with the
+// small fast models rather than the ones chosen for writing quality
+const OPENAI_UTILITY_MODELS: ModelOption[] = [
+  { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
+  { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
+  { value: 'gpt-5', label: 'GPT-5' },
+]
+
+const OPENROUTER_UTILITY_MODELS: ModelOption[] = [
+  { value: 'x-ai/grok-3-mini', label: 'Grok 3 Mini' },
+  { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano' },
+  { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini' },
+  { value: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+]
+
+const CUSTOM_MODEL = 'custom'
+
+type ModelFieldProps = {
+  id: string
+  label: string
+  help: string
+  options: ModelOption[]
+  allowCustom: boolean
+  value: string
+  onChange: (model: string) => void
+}
+
+// One model picker: a preset list plus, where the provider allows any model
+// id, a free-text field. A value outside the presets is a custom model, so
+// the two controls need no extra state to stay in step.
+const ModelField = ({ id, label, help, options, allowCustom, value, onChange }: ModelFieldProps) => {
+  const isPreset = options.some(option => option.value === value)
+
+  return (
+    <>
+      <label htmlFor={id}>{label}</label>
+      <select
+        id={id}
+        value={isPreset ? value : CUSTOM_MODEL}
+        onChange={event => onChange(event.target.value === CUSTOM_MODEL ? '' : event.target.value)}
+        aria-describedby={`${id}-help`}
+      >
+        {options.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+        {allowCustom && <option value={CUSTOM_MODEL}>Custom model...</option>}
+      </select>
+
+      {allowCustom && !isPreset && (
+        <>
+          <label htmlFor={`${id}-custom`}>Custom model ID</label>
+          <input
+            type="text"
+            id={`${id}-custom`}
+            placeholder="e.g. x-ai/grok-4, anthropic/claude-sonnet-4"
+            value={value}
+            onChange={event => onChange(event.target.value)}
+            aria-describedby={`${id}-custom-help`}
+          />
+          <p id={`${id}-custom-help`}>Enter any OpenRouter model ID</p>
+        </>
+      )}
+
+      <p id={`${id}-help`}>{help}</p>
+    </>
+  )
+}
 
 // Inline outcome of the "Test connection" action (story 5.4)
 type ConnectionTestState =
@@ -87,6 +157,19 @@ const describeImport = (counts: LibraryImportCounts): string => {
     : imported
 }
 
+// What Save hands back. An object rather than a positional list: the app has
+// enough settings now that argument order would be a trap.
+export type SettingsFormValues = {
+  apiKey: string
+  openRouterApiKey: string
+  apiProvider: APIProvider
+  model: string
+  utilityModel: string
+  importAssist: boolean
+  reviewPass: boolean
+  debugTranscripts: boolean
+}
+
 type SettingsModalProps = {
   isOpen: boolean
   onClose: () => void
@@ -96,16 +179,11 @@ type SettingsModalProps = {
   openRouterApiKey: string
   apiProvider: APIProvider
   model: string
+  utilityModel: string
+  importAssist: boolean
   reviewPass: boolean
   debugTranscripts: boolean
-  onSave: (
-    apiKey: string,
-    openRouterApiKey: string,
-    apiProvider: APIProvider,
-    model: string,
-    reviewPass: boolean,
-    debugTranscripts: boolean
-  ) => void
+  onSave: (settings: SettingsFormValues) => void
   onDownloadTranscripts: (format: 'json' | 'text') => void
   onClearTranscripts: () => void
   onClearConversations: () => void
@@ -130,6 +208,8 @@ export const SettingsModal = ({
   openRouterApiKey,
   apiProvider,
   model,
+  utilityModel,
+  importAssist,
   reviewPass,
   debugTranscripts,
   onSave,
@@ -152,7 +232,8 @@ export const SettingsModal = ({
   const [tempOpenRouterApiKey, setTempOpenRouterApiKey] = useState('')
   const [tempApiProvider, setTempApiProvider] = useState<APIProvider>(apiProvider || 'mock')
   const [tempModel, setTempModel] = useState(model || 'gpt-5')
-  const [customModel, setCustomModel] = useState('')
+  const [tempUtilityModel, setTempUtilityModel] = useState(utilityModel)
+  const [tempImportAssist, setTempImportAssist] = useState(importAssist)
   const [tempReviewPass, setTempReviewPass] = useState(reviewPass)
   const [tempDebugTranscripts, setTempDebugTranscripts] = useState(debugTranscripts)
   const transcripts = useSyncExternalStore(subscribeToTranscripts, getTranscripts)
@@ -169,13 +250,24 @@ export const SettingsModal = ({
       setTempOpenRouterApiKey(openRouterApiKey || '')
       setTempApiProvider(apiProvider || 'mock')
       setTempModel(model || 'gpt-5')
-      setCustomModel('')
+      setTempUtilityModel(utilityModel)
+      setTempImportAssist(importAssist)
       setTempReviewPass(reviewPass)
       setTempDebugTranscripts(debugTranscripts)
       connectionTestDispatch({ type: 'TEST_RESET' })
       libraryTransferDispatch({ type: 'TRANSFER_RESET' })
     }
-  }, [isOpen, apiKey, openRouterApiKey, apiProvider, model, reviewPass, debugTranscripts])
+  }, [
+    isOpen,
+    apiKey,
+    openRouterApiKey,
+    apiProvider,
+    model,
+    utilityModel,
+    importAssist,
+    reviewPass,
+    debugTranscripts
+  ])
 
   // Open/close modal based on isOpen prop
   useEffect(() => {
@@ -187,15 +279,18 @@ export const SettingsModal = ({
   }, [isOpen])
 
   const handleSave = () => {
-    const finalModel = tempModel === 'custom' ? customModel.trim() : tempModel
-    onSave(
-      tempApiKey.trim(),
-      tempOpenRouterApiKey.trim(),
-      tempApiProvider,
-      finalModel,
-      tempReviewPass,
-      tempDebugTranscripts
-    )
+    // An empty custom model field falls back to the provider's default rather
+    // than saving a model id that cannot be called
+    onSave({
+      apiKey: tempApiKey.trim(),
+      openRouterApiKey: tempOpenRouterApiKey.trim(),
+      apiProvider: tempApiProvider,
+      model: tempModel.trim() || getDefaultModel(tempApiProvider, 'generation'),
+      utilityModel: tempUtilityModel.trim() || getDefaultModel(tempApiProvider, 'utility'),
+      importAssist: tempImportAssist,
+      reviewPass: tempReviewPass,
+      debugTranscripts: tempDebugTranscripts
+    })
     onClose()
   }
 
@@ -204,13 +299,14 @@ export const SettingsModal = ({
     onClose()
   }
 
+  // Model ids do not carry across providers, so both roles go back to the new
+  // provider's defaults
   const handleProviderChange = (provider: APIProvider) => {
     setTempApiProvider(provider)
     connectionTestDispatch({ type: 'TEST_RESET' })
-    if (provider === 'openai') {
-      setTempModel('gpt-5')
-    } else if (provider === 'openrouter') {
-      setTempModel('x-ai/grok-4.5')
+    if (provider !== 'mock') {
+      setTempModel(getDefaultModel(provider, 'generation'))
+      setTempUtilityModel(getDefaultModel(provider, 'utility'))
     }
   }
 
@@ -266,7 +362,9 @@ export const SettingsModal = ({
   }
 
   const modelOptions = tempApiProvider === 'openai' ? OPENAI_MODELS : OPENROUTER_MODELS
-  const isPresetModel = modelOptions.some(m => m.value === tempModel)
+  const utilityModelOptions = tempApiProvider === 'openai'
+    ? OPENAI_UTILITY_MODELS
+    : OPENROUTER_UTILITY_MODELS
   const testableKey = tempApiProvider === 'openai' ? tempApiKey : tempOpenRouterApiKey
   const connectionMessage = connectionTest.status === 'testing'
     ? 'Testing connection...'
@@ -375,46 +473,45 @@ export const SettingsModal = ({
 
           {tempApiProvider !== 'mock' && (
             <>
-              <label htmlFor="model-selector">Model</label>
-              <select
+              <ModelField
                 id="model-selector"
-                value={isPresetModel ? tempModel : 'custom'}
-                onChange={(e) => setTempModel(e.target.value)}
-                aria-describedby="model-help"
-              >
-                {modelOptions.map(m => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-                {tempApiProvider === 'openrouter' && (
-                  <option value="custom">Custom model...</option>
-                )}
-              </select>
+                label="Generation model"
+                help="Writes the scripts: outlines, sections, refinements and the review pass"
+                options={modelOptions}
+                allowCustom={tempApiProvider === 'openrouter'}
+                value={tempModel}
+                onChange={setTempModel}
+              />
 
-              {tempApiProvider === 'openrouter' && (tempModel === 'custom' || !isPresetModel) && (
-                <>
-                  <label htmlFor="custom-model">Custom Model ID</label>
-                  <input
-                    type="text"
-                    id="custom-model"
-                    placeholder="e.g. x-ai/grok-4, anthropic/claude-sonnet-4"
-                    value={customModel || (!isPresetModel && tempModel !== 'custom' ? tempModel : '')}
-                    onChange={(e) => {
-                      setCustomModel(e.target.value)
-                      setTempModel('custom')
-                    }}
-                    aria-describedby="custom-model-help"
-                  />
-                  <p id="custom-model-help">
-                    Enter any OpenRouter model ID
-                  </p>
-                </>
-              )}
-
-              <p id="model-help">
-                Choose the model for script generation
-              </p>
+              <ModelField
+                id="utility-model-selector"
+                label="Utility model"
+                help="Handles the short background jobs — suggesting tags for imported examples and formatting plain-text imports as markdown. A small cheap model is faster and costs a fraction of the generation model"
+                options={utilityModelOptions}
+                allowCustom={tempApiProvider === 'openrouter'}
+                value={tempUtilityModel}
+                onChange={setTempUtilityModel}
+              />
             </>
           )}
+
+          <label className="checkbox-field" htmlFor="import-assist">
+            <input
+              type="checkbox"
+              id="import-assist"
+              checked={tempImportAssist}
+              onChange={(e) => setTempImportAssist(e.target.checked)}
+              aria-describedby="import-assist-help"
+            />
+            <span>Tidy imported examples with the utility model</span>
+          </label>
+          <p id="import-assist-help">
+            After importing an example, asks the utility model to suggest tags
+            for it and, when the file is unstructured plain text, to lay it out
+            as markdown with headings. The wording is never changed — a
+            rewritten script is discarded and the import kept as it was. Off
+            means imports stay entirely local
+          </p>
 
           {tempApiProvider === 'openai' && (
             <>

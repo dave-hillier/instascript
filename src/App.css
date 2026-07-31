@@ -1631,6 +1631,11 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   background-color: var(--accent-soft);
 }
 
+/* What the utility model made of a fresh import (story 5.7) */
+.example-import .example-assist-result {
+  color: var(--accent);
+}
+
 .example-list li {
   align-items: flex-start;
   padding: 1rem 0.25rem;

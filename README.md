@@ -10,6 +10,8 @@ A brief is expanded in two stages: the model first produces an outline (section 
 
 Providers: OpenAI, OpenRouter (any model id), or a mock provider for development — selected in settings along with the model and API key. API keys are held in sessionStorage; scripts and conversations are stored in localStorage as YAML front-matter + markdown.
 
+Two models are configured, not one: the **generation** model writes the scripts, and a small, cheap **utility** model handles the short jobs around them — suggesting tags for an imported example and laying an unstructured plain-text import out as markdown. Both run after the import is saved and verify the model's reply before storing it, so a formatting pass that reworded the script is discarded and the import kept as it was. The pass can be switched off in settings to keep imports entirely local.
+
 ## Development
 
 - `yarn dev` — start the development server
