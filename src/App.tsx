@@ -16,6 +16,7 @@ import {
   setImportAssistEnabled,
   type APIProvider
 } from './services/config'
+import { configChanged } from './services/configStore'
 import type { SettingsFormValues } from './components/SettingsModal'
 import { clearStoredConversations, loadStoredConversations, saveStoredConversation } from './services/conversationStorage'
 import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryImportCounts } from './services/libraryTransfer'
@@ -303,6 +304,15 @@ function AppContent() {
     }
   }, [debugTranscripts])
 
+  // Announce the settings that decide which provider answers, after the writes
+  // above have landed in storage. The services are constructed above this
+  // component, and pages read the settings straight from storage during
+  // render, so without this a key saved here would not reach either until the
+  // next reload. Declared after those effects so it runs once they have.
+  useEffect(() => {
+    configChanged()
+  }, [apiKey, openRouterApiKey, apiProvider, model, utilityModel, debugTranscripts])
+
   // Save section titles visibility when it changes
   useEffect(() => {
     try {
@@ -372,12 +382,10 @@ function AppContent() {
 
 
   const handleSaveSettings = (settings: SettingsFormValues) => {
-    if (settings.apiKey.trim()) {
-      setApiKey(settings.apiKey.trim())
-    }
-    if (settings.openRouterApiKey.trim()) {
-      setOpenRouterApiKey(settings.openRouterApiKey.trim())
-    }
+    // The form opens holding the saved keys, so an untouched field saves them
+    // back unchanged and a cleared field is a deliberate removal
+    setApiKey(settings.apiKey.trim())
+    setOpenRouterApiKey(settings.openRouterApiKey.trim())
     setApiProvider(settings.apiProvider)
     setModel(settings.model)
     setUtilityModelState(settings.utilityModel)
