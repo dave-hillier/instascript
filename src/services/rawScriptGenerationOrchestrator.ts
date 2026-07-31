@@ -6,7 +6,7 @@ import { getSystemPrompt, getOutlineGenerationPrompt, getSectionGenerationPrompt
 import { buildScriptFs } from './scriptFs'
 import { getRecommendedExampleCount, estimateSectionContextTokens } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
-import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutline } from './conversationDocument'
+import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutline, parseMarkdownSections } from './conversationDocument'
 import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
@@ -559,7 +559,13 @@ export class RawScriptGenerationOrchestrator {
       if (reviewResult?.ran) {
         this.callbacks.dispatch({
           type: 'REVIEW_PASS_COMPLETED',
-          report: { conversationId, revised: reviewResult.revised }
+          report: {
+            conversationId,
+            revised: reviewResult.revised,
+            // The sections as reviewed, so the summary retires itself once the
+            // script is restructured under it
+            structure: parseMarkdownSections(scriptContent).map(section => section.title)
+          }
         })
       }
 
@@ -965,7 +971,8 @@ export class RawScriptGenerationOrchestrator {
         report: {
           conversationId,
           revised,
-          summary: formatScriptReviewSummary(revised, finalAssessment)
+          summary: formatScriptReviewSummary(revised, finalAssessment),
+          structure: finalSections.map(section => section.title)
         }
       })
 
