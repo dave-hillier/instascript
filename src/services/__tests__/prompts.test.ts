@@ -10,7 +10,9 @@ import {
   normaliseConversationHistory,
   buildConversationHistory,
   getSystemPrompt,
-  getOutlineGenerationPrompt
+  getOutlineGenerationPrompt,
+  buildGenerationSystemPrompt,
+  withGenerationSystemPrompt
 } from '../prompts'
 import { buildLengthPlan } from '../scriptLength'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
@@ -217,26 +219,26 @@ describe('buildSectionRegenerationPromptFromConversation', () => {
 })
 
 describe('exemplar ordering (story 8.8)', () => {
-  const makeExample = (filename: string, score: number): ExampleScript => ({
-    content: `Body of ${filename}`,
-    metadata: { filename },
+  const makeExample = (title: string, score: number): ExampleScript => ({
+    content: `Body of ${title}`,
+    metadata: { id: `${title}-id`, title, source: 'bundled', tags: '' },
     score
   })
 
   // Search results arrive ranked most-relevant-first
   const rankedExamples = [
-    makeExample('best.md', 0.9),
-    makeExample('middle.md', 0.5),
-    makeExample('worst.md', 0.1)
+    makeExample('Best Script', 0.9),
+    makeExample('Middle Script', 0.5),
+    makeExample('Worst Script', 0.1)
   ]
 
   it('orders examples so the most relevant is last', () => {
     const ordered = orderExamplesForPrompt(rankedExamples)
 
-    expect(ordered.map(example => example.metadata?.filename)).toEqual([
-      'worst.md',
-      'middle.md',
-      'best.md'
+    expect(ordered.map(example => example.metadata?.title)).toEqual([
+      'Worst Script',
+      'Middle Script',
+      'Best Script'
     ])
   })
 
@@ -250,14 +252,131 @@ describe('exemplar ordering (story 8.8)', () => {
   it('places the most relevant example closest to the end of the formatted block', () => {
     const formatted = formatExamplesForPrompt(rankedExamples)
 
-    const bestIndex = formatted.indexOf('best.md')
-    const middleIndex = formatted.indexOf('middle.md')
-    const worstIndex = formatted.indexOf('worst.md')
+    const bestIndex = formatted.indexOf('Best Script')
+    const middleIndex = formatted.indexOf('Middle Script')
+    const worstIndex = formatted.indexOf('Worst Script')
 
     expect(worstIndex).toBeGreaterThan(-1)
     expect(worstIndex).toBeLessThan(middleIndex)
     expect(middleIndex).toBeLessThan(bestIndex)
-    expect(formatted).toContain('### Example 3: best.md')
+    expect(formatted).toContain('### Example 3: Best Script')
+  })
+})
+
+describe('exemplar labelling', () => {
+  it('labels each example with its metadata title', () => {
+    const formatted = formatExamplesForPrompt([
+      { content: 'Body', metadata: { id: 'ex-1', title: 'Deep Relaxation' } }
+    ])
+
+    expect(formatted).toContain('### Example 1: Deep Relaxation')
+    expect(formatted).not.toContain('Unknown')
+  })
+
+  it('falls back to the legacy filename when there is no title', () => {
+    const formatted = formatExamplesForPrompt([
+      { content: 'Body', metadata: { filename: 'legacy.md' } }
+    ])
+
+    expect(formatted).toContain('### Example 1: legacy.md')
+  })
+
+  it('falls back to the id when there is neither title nor filename', () => {
+    const formatted = formatExamplesForPrompt([{ content: 'Body', metadata: { id: 'ex-7' } }])
+
+    expect(formatted).toContain('### Example 1: ex-7')
+  })
+
+  it('leaves the heading unlabelled when the metadata names nothing', () => {
+    for (const example of [
+      { content: 'Body' },
+      { content: 'Body', metadata: { source: 'user' } }
+    ] as ExampleScript[]) {
+      const formatted = formatExamplesForPrompt([example])
+
+      expect(formatted).toContain('### Example 1\n\nBody')
+      expect(formatted).not.toContain('Unknown')
+      expect(formatted).not.toContain('### Example 1:')
+    }
+  })
+
+  it('lists the example tags beneath the heading', () => {
+    const formatted = formatExamplesForPrompt([
+      { content: 'Body', metadata: { title: 'Deep Relaxation', tags: 'anxiety, sleep' } }
+    ])
+
+    expect(formatted).toContain('### Example 1: Deep Relaxation\n\nTags: anxiety, sleep\n\nBody')
+  })
+
+  it('omits the tag line when the example has no tags', () => {
+    const formatted = formatExamplesForPrompt([
+      { content: 'Body', metadata: { title: 'Deep Relaxation', tags: '' } }
+    ])
+
+    expect(formatted).toContain('### Example 1: Deep Relaxation\n\nBody')
+    expect(formatted).not.toContain('Tags:')
+  })
+
+  it('keeps a title with a newline from breaking the heading', () => {
+    const formatted = formatExamplesForPrompt([
+      { content: 'Body', metadata: { title: 'Deep\n## Injected' } }
+    ])
+
+    expect(formatted).toContain('### Example 1: Deep ## Injected')
+  })
+
+  it('contributes nothing at all when the corpus is empty', () => {
+    expect(formatExamplesForPrompt([])).toBe('')
+  })
+})
+
+describe('the generation system prompt', () => {
+  const example: ExampleScript = {
+    content: 'A candle gutters in still air.',
+    metadata: { id: 'ex-candle', title: 'Candle Flame' }
+  }
+
+  it('is the plain system prompt when there are no examples', () => {
+    const plan = buildLengthPlan(30)
+
+    expect(buildGenerationSystemPrompt(plan, [])).toBe(getSystemPrompt(plan))
+  })
+
+  it('appends the ordered example block when there are examples', () => {
+    const plan = buildLengthPlan(30)
+    const prompt = buildGenerationSystemPrompt(plan, [example])
+
+    expect(prompt.startsWith(getSystemPrompt(plan))).toBe(true)
+    expect(prompt).toContain('## Examples')
+    expect(prompt).toContain('A candle gutters in still air.')
+  })
+
+  it('swaps only the system turn of a message array', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: 'lean system' },
+      { role: 'user', content: 'the brief' },
+      { role: 'assistant', content: 'the outline' }
+    ]
+
+    const swapped = withGenerationSystemPrompt(messages, 'system with examples')
+
+    expect(swapped).toEqual([
+      { role: 'system', content: 'system with examples' },
+      { role: 'user', content: 'the brief' },
+      { role: 'assistant', content: 'the outline' }
+    ])
+    expect(messages[0].content).toBe('lean system')
+  })
+
+  // History replayed from storage has no system turn, so there is nothing to
+  // replace and the corpus would otherwise never reach a rewrite
+  it('prepends a system turn to a history that has none', () => {
+    const messages: ChatMessage[] = [{ role: 'user', content: 'the brief' }]
+
+    expect(withGenerationSystemPrompt(messages, 'system with examples')).toEqual([
+      { role: 'system', content: 'system with examples' },
+      { role: 'user', content: 'the brief' }
+    ])
   })
 })
 
@@ -359,6 +478,14 @@ describe('getScriptRefinementPrompt', () => {
     expect(prompt).toContain('rewriting ONLY the sections that need to change')
     expect(prompt).toContain('"## Section Title" header line')
     expect(prompt).toContain('Do not output sections that do not need to change')
+  })
+
+  it('holds a rewritten section to the same word target as a generated one', () => {
+    const prompt = getScriptRefinementPrompt('remove the counting')
+
+    expect(prompt).toContain(`approximately ${SECTION_TARGET_WORDS} words`)
+    expect(prompt).not.toContain('{targetWords}')
+    expect(prompt).not.toContain('approximately 400 words')
   })
 })
 

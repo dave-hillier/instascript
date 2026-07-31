@@ -9,6 +9,6 @@ Requirements:
 - Use the exact existing section titles; do not rename sections or invent new ones
 - Do not output sections that do not need to change
 - Do not include the document title ("# ...") or any preamble or meta-commentary
-- Keep each rewritten section at approximately 400 words
+- Keep each rewritten section at approximately {targetWords} words
 - Maintain continuity with the sections that are not being rewritten
 - Follow all the style rules from the system prompt

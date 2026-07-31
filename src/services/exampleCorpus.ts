@@ -116,21 +116,21 @@ export function getAllExamples(): ExampleRecord[] {
   return [...BUNDLED_EXAMPLE_SCRIPTS, ...getUserExamples()]
 }
 
-// --- Bundled corpus opt-out --------------------------------------------
-// The shipped examples can be switched off so that generation is grounded
-// only in the user's own scripts. Bundled examples stay listed (and stay
-// available for id lookups) when disabled; they are just excluded from
-// retrieval.
+// --- Bundled corpus opt-in ---------------------------------------------
+// The shipped examples are placeholder stubs, so they stay out of retrieval
+// unless switched on and generation is grounded in the user's own scripts.
+// They stay listed (and stay available for id lookups) when disabled; they
+// are just excluded from retrieval.
 
 export const BUNDLED_EXAMPLES_ENABLED_KEY = 'bundledExamplesEnabled'
 
 export function areBundledExamplesEnabled(): boolean {
   try {
     const item = window.localStorage.getItem(BUNDLED_EXAMPLES_ENABLED_KEY)
-    return item ? JSON.parse(item) !== false : true
+    return item ? JSON.parse(item) === true : false
   } catch (error) {
     console.warn('Error loading bundled examples setting from localStorage:', error)
-    return true
+    return false
   }
 }
 

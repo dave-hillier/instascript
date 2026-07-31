@@ -115,7 +115,7 @@ const MOCK_TAG_VOCABULARY = [
 // claims to be live, so callers treat its output as a placeholder rather than
 // as a model's judgement.
 export class MockUtilityService implements UtilityModelService {
-  readonly model = 'mock-utility'
+  readonly model = 'The mock provider'
   readonly isLive = false
 
   async complete(request: UtilityCompletionRequest): Promise<string> {

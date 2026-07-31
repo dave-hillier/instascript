@@ -43,11 +43,16 @@ export function getRecommendedExampleCount(
   return calculateOptimalExampleCount(systemTokens, conversationTokens + plannedContextTokens)
 }
 
-// Estimated size of the outline context each section request carries: the
-// full outline plus the upcoming-sections block (story 8.10) — title and
-// one-sentence summary per section, twice over, at a generous line length.
-// Reserved up front so example selection leaves room for it.
-export const UPCOMING_SECTIONS_CONTEXT_TOKENS = 500
+// Rough tokens for one outline entry: a title and a one-sentence summary
+export const OUTLINE_TOKENS_PER_SECTION = 60
+
+// A section request carries the outline twice over — once whole, once as the
+// upcoming-sections block (story 8.10) — plus every word of the script written
+// so far, so the reservation grows with the script being written. Reserved up
+// front because the examples ride on those requests too.
+export function estimateSectionContextTokens(totalWords: number, sectionCount: number): number {
+  return Math.ceil(totalWords * 1.4) + sectionCount * OUTLINE_TOKENS_PER_SECTION * 2
+}
 
 export const CONTEXT_LIMITS = {
   MAX_TOKENS: 120000,

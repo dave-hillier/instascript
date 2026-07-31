@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parseOutlineCritiqueResponse } from '../outlineCritique'
 import { buildOutlineCritiquePrompt } from '../prompts'
+import { buildLengthPlan } from '../scriptLength'
 
 const revisedOutline = [
   '# Deep Rest',
@@ -78,9 +79,40 @@ describe('buildOutlineCritiquePrompt', () => {
   })
 
   it('is not corrupted by replacement patterns in the brief or outline', () => {
-    const prompt = buildOutlineCritiquePrompt("Use $' and $& literally", '# T\n## S\nAlso $`.')
+    const prompt = buildOutlineCritiquePrompt(
+      "Use $' and $& literally, and {sectionCount} as text",
+      '# T\n## S\nAlso $`.'
+    )
 
-    expect(prompt).toContain("Use $' and $& literally")
+    expect(prompt).toContain("Use $' and $& literally, and {sectionCount} as text")
     expect(prompt).toContain('Also $`.')
+  })
+
+  it('states the planned section count instead of a fixed one', () => {
+    const longPlan = buildLengthPlan(60)
+    const shortPlan = buildLengthPlan(10)
+
+    const longPrompt = buildOutlineCritiquePrompt('brief', revisedOutline, longPlan)
+    const shortPrompt = buildOutlineCritiquePrompt('brief', revisedOutline, shortPlan)
+
+    expect(longPrompt).toContain(`about ${longPlan.sectionCount} \`## Section Title\` headers`)
+    expect(shortPrompt).toContain(`about ${shortPlan.sectionCount} \`## Section Title\` headers`)
+    expect(longPlan.sectionCount).not.toBe(shortPlan.sectionCount)
+    expect(longPrompt).not.toMatch(/exactly 5 `## Section Title`/)
+  })
+
+  it('judges section balance against the plan per-section word budget', () => {
+    const plan = buildLengthPlan(40)
+    const prompt = buildOutlineCritiquePrompt('brief', revisedOutline, plan)
+
+    expect(prompt).toContain(`roughly ${plan.sectionWords} words`)
+    expect(prompt).toContain(`about ${plan.targetMinutes} minutes`)
+    expect(prompt).toContain(plan.totalWords.toLocaleString('en-US'))
+  })
+
+  it('leaves no unsubstituted length placeholders', () => {
+    const prompt = buildOutlineCritiquePrompt('brief', revisedOutline, buildLengthPlan(30))
+
+    expect(prompt).not.toMatch(/\{(targetMinutes|totalWords|minWords|maxWords|sectionCount|sectionWords)\}/)
   })
 })

@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
-import { getSystemPrompt, formatExamplesForPrompt } from './prompts'
+import { buildGenerationSystemPrompt } from './prompts'
 import type { ExampleScript } from './exampleSearchService'
 import type { ScriptGenerationService } from './scriptGenerationService'
 import { getModel } from './config'
@@ -35,15 +35,10 @@ export class OpenAIService implements ScriptGenerationService {
     return Math.abs(hash).toString(36)
   }
 
+  // Only reached when a caller supplies no messages of its own. The
+  // orchestrator always does, and builds this same string itself.
   private buildInstructions(examples?: ExampleScript[], targetMinutes?: number): string {
-    let instructions = getSystemPrompt(buildLengthPlan(targetMinutes))
-    
-    // Add examples to instructions if provided
-    if (examples && examples.length > 0) {
-      instructions += formatExamplesForPrompt(examples)
-    }
-
-    return instructions
+    return buildGenerationSystemPrompt(buildLengthPlan(targetMinutes), examples ?? [])
   }
 
   private chatMessagesToOpenAI(messages: ChatMessage[]): Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> {

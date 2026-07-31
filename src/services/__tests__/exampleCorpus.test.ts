@@ -206,7 +206,7 @@ describe('isImportableExampleFile', () => {
   })
 })
 
-describe('bundled corpus opt-out', () => {
+describe('bundled corpus opt-in', () => {
   const withStoredValue = (value: string | null) => {
     const store = new Map<string, string>()
     if (value !== null) store.set(BUNDLED_EXAMPLES_ENABLED_KEY, value)
@@ -224,8 +224,13 @@ describe('bundled corpus opt-out', () => {
     vi.unstubAllGlobals()
   })
 
-  it('defaults to enabled when nothing is stored', () => {
+  it('defaults to disabled when nothing is stored', () => {
     withStoredValue(null)
+    expect(areBundledExamplesEnabled()).toBe(false)
+  })
+
+  it('reads a stored opt-in', () => {
+    withStoredValue('true')
     expect(areBundledExamplesEnabled()).toBe(true)
   })
 
@@ -234,8 +239,20 @@ describe('bundled corpus opt-out', () => {
     expect(areBundledExamplesEnabled()).toBe(false)
   })
 
-  it('persists the setting so it survives a reload', () => {
+  it('treats an unreadable stored value as disabled', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    withStoredValue('not json')
+    expect(areBundledExamplesEnabled()).toBe(false)
+    vi.restoreAllMocks()
+  })
+
+  it('persists the setting in both directions so it survives a reload', () => {
     const store = withStoredValue(null)
+
+    setBundledExamplesEnabled(true)
+    expect(store.get(BUNDLED_EXAMPLES_ENABLED_KEY)).toBe('true')
+    expect(areBundledExamplesEnabled()).toBe(true)
+
     setBundledExamplesEnabled(false)
     expect(store.get(BUNDLED_EXAMPLES_ENABLED_KEY)).toBe('false')
     expect(areBundledExamplesEnabled()).toBe(false)
@@ -243,6 +260,11 @@ describe('bundled corpus opt-out', () => {
 
   it('keeps bundled examples out of the retrieval set when disabled', () => {
     withStoredValue('false')
+    expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(false)
+  })
+
+  it('keeps bundled examples out of the retrieval set by default', () => {
+    withStoredValue(null)
     expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(false)
   })
 

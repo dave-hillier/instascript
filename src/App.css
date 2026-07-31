@@ -1584,7 +1584,13 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--ink-muted);
 }
 
-.example-settings .example-warning {
+/* Outranks the centred muted `.examples-page > p` empty-state rule, which is
+   otherwise more specific and would render this as ordinary body copy */
+.examples-page > p.example-warning {
+  margin: 0 0 1rem;
+  padding: 0 1.125rem;
+  font-size: 0.8125rem;
+  text-align: left;
   color: var(--danger);
 }
 
@@ -2134,4 +2140,26 @@ dialog.performance-mode[open] {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Tells the user which provider will actually answer, so a keyless session or
+   a deliberately mocked one is never mistaken for real generation */
+.provider-notice {
+  display: block;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.provider-notice p {
+  margin: 0;
+}
+
+.provider-notice-error {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
 }

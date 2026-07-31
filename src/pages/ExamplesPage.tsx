@@ -249,7 +249,7 @@ export const ExamplesPage = () => {
     dispatch({
       type: 'IMPORT_ASSIST_FINISHED',
       outcome: { tagged, formatted },
-      model: service.isLive ? service.model : 'The mock provider'
+      model: service.model
     })
   }
 
@@ -275,11 +275,21 @@ export const ExamplesPage = () => {
       <header>
         <h2>Example corpus</h2>
         <p>
-          Generation is grounded in these scripts. Bundled examples ship with
-          the app and can be switched off; your own imports and promoted
-          scripts are stored in this browser and searched alongside them.
+          Generation is grounded in these scripts. Your imports and promoted
+          scripts are stored in this browser. A small set of bundled
+          placeholder examples ships with the app; they are off unless you
+          switch them on.
         </p>
       </header>
+
+      {!state.bundledEnabled && userExampleCount === 0 && (
+        <p className="example-warning" role="status">
+          You have no examples of your own yet, so generation has nothing to
+          ground itself in. Import a markdown or text file below, promote a
+          script you have written, or switch the bundled placeholder examples
+          on.
+        </p>
+      )}
 
       <form className="example-settings" aria-label="Corpus settings">
         <label className="checkbox-field" htmlFor="bundled-examples">
@@ -290,20 +300,14 @@ export const ExamplesPage = () => {
             onChange={event => handleBundledToggle(event.target.checked)}
             aria-describedby="bundled-examples-help"
           />
-          <span>Use bundled examples</span>
+          <span>Also use the bundled placeholder examples</span>
         </label>
         <p id="bundled-examples-help">
-          Off means generation draws only on your own examples. The bundled
-          scripts stay listed below, marked as excluded, so you can switch them
-          back on at any time.
+          On means the bundled placeholder scripts are searched alongside your
+          own. They are short stubs, so leaving them off keeps generation
+          grounded only in material whose style you chose. Either way they stay
+          listed below.
         </p>
-        {!state.bundledEnabled && userExampleCount === 0 && (
-          <p className="example-warning" role="status">
-            You have no examples of your own, so generation currently has
-            nothing to ground itself in. Import at least one, or switch the
-            bundled examples back on.
-          </p>
-        )}
       </form>
 
       <form className="example-import" aria-label="Import example scripts">

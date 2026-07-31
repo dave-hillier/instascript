@@ -89,6 +89,7 @@ const validateScript = (value: unknown, index: number): Script => {
     length: typeof value.length === 'string' ? value.length : undefined,
     conversationId: typeof value.conversationId === 'string' ? value.conversationId : undefined,
     initialPrompt: typeof value.initialPrompt === 'string' ? value.initialPrompt : undefined,
+    targetMinutes: typeof value.targetMinutes === 'number' ? value.targetMinutes : undefined,
     provider: typeof value.provider === 'string' ? value.provider : undefined,
     model: typeof value.model === 'string' ? value.model : undefined
   }

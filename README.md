@@ -6,7 +6,7 @@ InstaScript generates long-form hypnosis scripts for adults from a short brief. 
 
 ## How it works
 
-A brief is expanded in two stages: the model first produces an outline (section list with per-section word targets), then writes each section against that outline with example scripts as few-shot style exemplars. Examples come from the bundled corpus plus anything you import (markdown or text files, individually or a whole folder) or promote from your own scripts; the bundled corpus can be switched off on the Examples page so generation is grounded only in your own material. Generation streams live into a sectioned reading view, with per-section word-count and context-token meters. Each section can be regenerated individually using the full conversation history.
+A brief is expanded in two stages: the model first produces an outline (section list with per-section word targets), then writes each section against that outline with example scripts as few-shot style exemplars. Examples are whatever you import (markdown or text files, individually or a whole folder) or promote from your own scripts; a small bundled placeholder corpus ships with the app and can be switched on from the Examples page, but is off by default so generation is grounded only in your own material. Generation streams live into a sectioned reading view, with per-section word-count and context-token meters. Each section can be regenerated individually using the full conversation history.
 
 Providers: OpenAI, OpenRouter (any model id), or a mock provider for development — selected in settings along with the model and API key. API keys are held in sessionStorage; scripts and conversations are stored in localStorage as YAML front-matter + markdown.
 

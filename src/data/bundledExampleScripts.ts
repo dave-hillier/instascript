@@ -1,8 +1,8 @@
 import type { ExampleRecord } from '../types/example'
 
-// The bundled example corpus: whole scripts, shipped with the app so that
-// retrieval works offline with no API key. User-imported examples are merged
-// with these at search time (see exampleCorpus.ts).
+// Sample scripts shipped with the app, off by default: they are short
+// demonstrations of the format rather than material worth imitating, so
+// grounding a generation in them is opt-in (see exampleCorpus.ts).
 export const BUNDLED_EXAMPLE_SCRIPTS: ExampleRecord[] = [
   {
     id: 'confidence-building.md',

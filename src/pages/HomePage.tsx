@@ -5,7 +5,8 @@ import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { ScriptList } from '../components/ScriptList'
 import type { Script } from '../types/script'
-import { getApiProvider, getModel } from '../services/config'
+import { createAppConfig, getModel } from '../services/config'
+import { providerUsedFor, resolveProviderStatus, unavailableReason } from '../services/providerStatus'
 import { filterScriptsByQuery, parseSortOrder, sortScriptsByCreation } from '../utils/scriptLibrary'
 import type { SortOrder } from '../utils/scriptLibrary'
 import {
@@ -28,6 +29,11 @@ export const HomePage = () => {
   // The requested length, shown as both the duration the user is choosing and
   // the word count it works out to
   const lengthPlan = buildLengthPlan(targetMinutes)
+
+  // Resolved on every render so a key entered in Settings takes effect without
+  // a reload, and so the page can say which provider will really answer
+  const providerStatus = resolveProviderStatus(createAppConfig())
+  const providerWarning = unavailableReason(providerStatus)
 
   const { activeScripts, archivedScripts, dispatch: appDispatch } = useAppContext()
   const { createConversation, generateScript } = useConversationContext()
@@ -86,7 +92,9 @@ export const HomePage = () => {
         status: 'in-progress',
         initialPrompt: prompt,
         targetMinutes,
-        provider: getApiProvider(),
+        // The provider that will actually serve the request, not the one
+        // selected: a mocked script must not be labelled as a real one
+        provider: providerUsedFor(providerStatus),
         model: getModel()
       }
 
@@ -121,6 +129,21 @@ export const HomePage = () => {
         <h2>What script should we generate?</h2>
       </section>
 
+      {providerWarning && (
+        <aside role="alert" className="provider-notice provider-notice-error">
+          <p>{providerWarning}</p>
+        </aside>
+      )}
+
+      {providerStatus.kind === 'mock' && (
+        <aside role="status" className="provider-notice">
+          <p>
+            The mock provider is selected, so scripts are placeholder text rather
+            than generated writing. Choose a real provider in Settings.
+          </p>
+        </aside>
+      )}
+
       <section>
         <form onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}>
           <textarea
@@ -150,7 +173,7 @@ export const HomePage = () => {
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={!prompt.trim()}
+                disabled={!prompt.trim() || !!providerWarning}
                 aria-label="Generate script"
               >
                 <ArrowUp size={24} />
