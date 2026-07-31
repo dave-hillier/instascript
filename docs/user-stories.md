@@ -217,6 +217,17 @@ Acceptance criteria:
 - Voice and rate are selectable from the browser's available voices
 - The scrolled position follows the spoken position
 
+### 4.5 Hear the script in a natural voice [Implemented]
+As a user, I want the option of a hosted text-to-speech voice through OpenRouter, so that rehearsal and listening sound like a person rather than a system voice.
+
+Notes: browser speech synthesis stays the default — free, offline, and requiring no key — with the hosted voice offered alongside it whenever an OpenRouter key is saved. Hosted speech is billed per character, so utterances are cached and a replay of an unchanged script costs nothing. Pacing is unchanged between engines: the script is sent one line at a time and the silences from pacing marks are timed locally, which also keeps the spoken-position highlight working.
+
+Acceptance criteria:
+- Engine, model, voice and rate are selectable from performance mode, and the choices persist
+- Section headings and stage directions are never spoken, whichever engine is used
+- Generated audio is cached per model, voice and line, so an unchanged replay makes no request
+- A failed request (rejected key, no network) stops read-aloud and says why, without leaving the view
+
 ## Epic 5: Configuration & Settings
 
 ### 5.1 Choose a theme [Implemented]

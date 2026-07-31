@@ -50,6 +50,54 @@ export function getModel(): string {
   }
 }
 
+// Which engine reads the script aloud in performance mode (story 4.5):
+// the browser's built-in speech synthesis, or an OpenRouter text-to-speech
+// model. The browser engine stays the default — it is free and works offline.
+export type ReadAloudEngine = 'browser' | 'openrouter'
+
+function readSetting<T>(key: string, fallback: T): T {
+  try {
+    const item = window.localStorage.getItem(key)
+    return item ? (JSON.parse(item) as T) : fallback
+  } catch (error) {
+    console.warn(`Error loading ${key} from localStorage:`, error)
+    return fallback
+  }
+}
+
+function writeSetting(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch (error) {
+    console.warn(`Error saving ${key} to localStorage:`, error)
+  }
+}
+
+export function getReadAloudEngine(): ReadAloudEngine {
+  const engine = readSetting<ReadAloudEngine>('readAloudEngine', 'browser')
+  return engine === 'openrouter' ? 'openrouter' : 'browser'
+}
+
+export function setReadAloudEngine(engine: ReadAloudEngine): void {
+  writeSetting('readAloudEngine', engine)
+}
+
+export function getReadAloudVoice(engine: ReadAloudEngine, fallback: string): string {
+  return readSetting(`readAloudVoice.${engine}`, fallback)
+}
+
+export function setReadAloudVoice(engine: ReadAloudEngine, voice: string): void {
+  writeSetting(`readAloudVoice.${engine}`, voice)
+}
+
+export function getTtsModel(fallback: string): string {
+  return readSetting('ttsModel', fallback)
+}
+
+export function setTtsModel(model: string): void {
+  writeSetting('ttsModel', model)
+}
+
 // Whether the optional style-review pass (story 8.5) runs after each full
 // generation. Opt-in, since it adds one critique request plus up to two
 // section regenerations per run.

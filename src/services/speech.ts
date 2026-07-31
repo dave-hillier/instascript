@@ -1,12 +1,13 @@
-// Read-aloud support for performance mode (story 4.4).
+// Read-aloud support for performance mode (stories 4.4 and 4.5).
 //
 // The pure parts — chunking script text into utterances and computing pause
-// lengths from pacing marks — live here so they can be unit tested without
-// the browser speechSynthesis API (which jsdom does not provide). The
-// ScriptSpeaker class drives the API imperatively and is only ever
-// constructed after a feature-detection check.
+// lengths from pacing marks — live here so they can be unit tested without any
+// audio API. ScriptSpeaker walks that plan and hands each utterance to a
+// SpeechEngine (browser speech synthesis, or an OpenRouter text-to-speech
+// model), so pacing is identical whichever voice is chosen.
 
 import { tokenizeScriptLine } from '../utils/scriptLineTokens'
+import type { SpeechEngine } from './speechEngines'
 
 export const ELLIPSIS_PAUSE_MS = 600
 export const DASH_PAUSE_MS = 1200
@@ -86,37 +87,40 @@ export function buildSpeechPlan(sections: SpeechPlanSection[]): SpeechPlanItem[]
 export interface ScriptSpeakerCallbacks {
   onParagraphSpoken: (paragraphKey: string) => void
   onFinished: () => void
+  onFailed: (message: string) => void
 }
 
-// Imperative driver for the speech plan. Speaks each utterance, waits out
-// each pause (scaled by the chosen rate), and reports the paragraph being
-// spoken so the view can follow along. pause()/resume() work both mid-
-// utterance (via the API) and mid-silence (by suspending the timer).
+// Imperative driver for the speech plan. Speaks each utterance through the
+// engine, waits out each pause (scaled by the chosen rate), and reports the
+// paragraph being spoken so the view can follow along. pause()/resume() work
+// both mid-utterance (delegated to the engine) and mid-silence (by suspending
+// the timer).
 export class ScriptSpeaker {
   private index = 0
   private stopped = false
   private paused = false
-  private timerId: number | null = null
+  private timerId: ReturnType<typeof setTimeout> | null = null
   private pauseRemainingMs = 0
   private pauseStartedAt = 0
-  private voice: SpeechSynthesisVoice | null
   private rate: number
   private readonly plan: SpeechPlanItem[]
+  private readonly engine: SpeechEngine
   private readonly callbacks: ScriptSpeakerCallbacks
 
   constructor(
     plan: SpeechPlanItem[],
-    options: { voice: SpeechSynthesisVoice | null; rate: number },
+    engine: SpeechEngine,
+    options: { rate: number },
     callbacks: ScriptSpeakerCallbacks
   ) {
     this.plan = plan
+    this.engine = engine
     this.callbacks = callbacks
-    this.voice = options.voice
     this.rate = options.rate
   }
 
   start() {
-    window.speechSynthesis.cancel()
+    this.engine.reset()
     this.advance()
   }
 
@@ -124,11 +128,11 @@ export class ScriptSpeaker {
     if (this.paused || this.stopped) return
     this.paused = true
     if (this.timerId !== null) {
-      window.clearTimeout(this.timerId)
+      clearTimeout(this.timerId)
       this.timerId = null
       this.pauseRemainingMs = Math.max(0, this.pauseRemainingMs - (Date.now() - this.pauseStartedAt))
     } else {
-      window.speechSynthesis.pause()
+      this.engine.pause()
     }
   }
 
@@ -138,21 +142,21 @@ export class ScriptSpeaker {
     if (this.pauseRemainingMs > 0) {
       this.startTimer(this.pauseRemainingMs)
     } else {
-      window.speechSynthesis.resume()
+      this.engine.resume()
     }
   }
 
   stop() {
     this.stopped = true
     if (this.timerId !== null) {
-      window.clearTimeout(this.timerId)
+      clearTimeout(this.timerId)
       this.timerId = null
     }
-    window.speechSynthesis.cancel()
+    this.engine.cancel()
   }
 
-  setVoice(voice: SpeechSynthesisVoice | null) {
-    this.voice = voice
+  setVoice(voice: string) {
+    this.engine.setVoice(voice)
   }
 
   setRate(rate: number) {
@@ -174,21 +178,37 @@ export class ScriptSpeaker {
       return
     }
 
-    const utterance = new window.SpeechSynthesisUtterance(item.text)
-    if (this.voice) utterance.voice = this.voice
-    utterance.rate = this.rate
-    const next = () => {
-      if (!this.stopped) this.advance()
+    this.prefetchNextUtterance()
+    this.engine.speak(item.text, this.rate).then(
+      () => {
+        if (!this.stopped) this.advance()
+      },
+      (error: unknown) => {
+        if (this.stopped) return
+        this.stop()
+        this.callbacks.onFailed(
+          error instanceof Error ? error.message : 'Read-aloud stopped unexpectedly'
+        )
+      }
+    )
+  }
+
+  // Gives a network-backed engine the length of the current utterance and the
+  // silence after it to fetch the next one.
+  private prefetchNextUtterance() {
+    for (let index = this.index; index < this.plan.length; index += 1) {
+      const item = this.plan[index]
+      if (item.kind === 'speech') {
+        this.engine.prefetch(item.text)
+        return
+      }
     }
-    utterance.onend = next
-    utterance.onerror = next
-    window.speechSynthesis.speak(utterance)
   }
 
   private startTimer(durationMs: number) {
     this.pauseRemainingMs = durationMs
     this.pauseStartedAt = Date.now()
-    this.timerId = window.setTimeout(() => {
+    this.timerId = setTimeout(() => {
       this.timerId = null
       this.pauseRemainingMs = 0
       this.advance()

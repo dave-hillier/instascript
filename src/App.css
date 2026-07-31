@@ -1116,6 +1116,39 @@ dialog label.import-library-btn {
   outline-offset: 2px;
 }
 
+/* Debug settings: download or discard the captured provider transcripts */
+.transcript-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.transcript-actions button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.transcript-actions button:hover:not(:disabled) {
+  background-color: var(--accent-soft);
+}
+
+.transcript-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Backup settings (story 7.4): link/unlink the automatic backup folder */
 .backup-folder-btn {
   display: flex;
@@ -1908,6 +1941,7 @@ dialog.performance-mode[open] {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 1rem;
   padding: 0.75rem 1.25rem;
   border-top: 1px solid var(--line);
@@ -1938,13 +1972,13 @@ dialog.performance-mode[open] {
 }
 
 /* Undo the settings-dialog footer accent on the exit button */
-.performance-controls button:last-child {
+.performance-controls button:last-of-type {
   background: none;
   border-color: var(--line);
   color: var(--ink-muted);
 }
 
-.performance-controls button:last-child:hover {
+.performance-controls button:last-of-type:hover {
   color: var(--accent);
   border-color: var(--accent);
   opacity: 1;
@@ -1957,6 +1991,9 @@ dialog.performance-mode[open] {
 
 .performance-speed input[type="range"] {
   width: 10rem;
+  /* Undo the form-field bottom margin, which would sit the control high in
+     the centred control row */
+  margin: 0;
   accent-color: var(--accent);
 }
 
@@ -1970,8 +2007,14 @@ dialog.performance-mode[open] {
 }
 
 .performance-controls .read-aloud select {
-  max-width: 11rem;
-  padding: 0.35rem 0.5rem;
+  /* Each picker sizes to its own longest option — the form-wide full-width
+     select would make "1x" as wide as a model name — and is never squeezed
+     below that, since a shrunken select clips the label it exists to show */
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 14rem;
+  margin: 0;
+  padding: 0.35rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 999px;
   background-color: var(--surface);
@@ -1981,9 +2024,40 @@ dialog.performance-mode[open] {
 }
 
 .performance-controls .read-aloud select:hover,
-.performance-controls .read-aloud select:focus-visible {
+.performance-controls .read-aloud select:focus-visible,
+.performance-controls .read-aloud input[type="text"]:hover,
+.performance-controls .read-aloud input[type="text"]:focus-visible {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* Free-text voice id, for models without a fixed voice catalogue */
+.performance-controls .read-aloud input[type="text"] {
+  flex: 0 0 auto;
+  width: 8rem;
+  margin: 0;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background-color: var(--surface);
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+
+/* Read-aloud failures (a rejected key, an offline network) take a line of
+   their own beneath the controls, and collapse away when there is none */
+.read-aloud-error {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: center;
+  color: var(--danger);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+
+.read-aloud-error:empty {
+  display: none;
 }
 
 /* The paragraph currently being spoken steps forward from the page */
