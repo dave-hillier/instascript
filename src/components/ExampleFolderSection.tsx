@@ -11,6 +11,7 @@ import {
 } from '../services/standardTags'
 import { StandardTagFields } from './StandardTagFields'
 import { countWords } from '../utils/scriptMetrics'
+import { buildExampleFs } from '../services/exampleFs'
 import { describeSelectionCount } from '../utils/exampleDisplay'
 
 interface UserExampleDetailsFormProps {
@@ -198,6 +199,34 @@ const FolderName = ({ folder, headingId, onRenamed }: FolderNameProps) => {
   )
 }
 
+// The section files a transcript import was split into, addressed the way the
+// script filesystem addresses them. Only examples that came from a transcript
+// carry specs, so everything else renders without it.
+const ExampleSectionList = ({ example }: { example: ExampleRecord }) => {
+  const tree = buildExampleFs(example)
+
+  return (
+    <details className="example-sections">
+      <summary>
+        {tree.sections.length} {tree.sections.length === 1 ? 'section' : 'sections'} from
+        the transcript
+      </summary>
+      <ol>
+        {tree.sections.map(section => (
+          <li key={section.path}>
+            <h5>{section.title}</h5>
+            <p className="example-section-path">
+              <code>{section.path}</code> ·{' '}
+              {section.wordCount.toLocaleString('en-US')} words
+            </p>
+            {section.prompt && <p className="example-section-prompt">{section.prompt}</p>}
+          </li>
+        ))}
+      </ol>
+    </details>
+  )
+}
+
 interface ExampleFolderSectionProps {
   folder: string
   headingId: string
@@ -292,6 +321,9 @@ export const ExampleFolderSection = ({
                   {describeSelectionCount(selectionCounts[example.id] ?? 0)}
                   {example.sourceScriptId && ' · from your library'}
                 </p>
+                {example.sections && example.sections.length > 0 && (
+                  <ExampleSectionList example={example} />
+                )}
                 <UserExampleDetailsForm
                   key={`${example.id}_${example.tags.join(',')}_${exampleFolder(example)}`}
                   example={example}

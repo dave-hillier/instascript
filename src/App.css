@@ -2047,7 +2047,8 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
 }
 
 /* What the utility model made of a fresh import (story 5.7) */
-.example-import .example-assist-result {
+.example-import .example-assist-result,
+.example-import .example-split-result {
   color: var(--accent);
 }
 
@@ -2165,6 +2166,7 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
 }
 
 /* A file waiting on the utility model is the slow case worth animating */
+.import-meter-files li[data-stage="splitting"] .import-meter-fill,
 .import-meter-files li[data-stage="formatting"] .import-meter-fill,
 .import-meter-files li[data-stage="tagging"] .import-meter-fill,
 .import-meter-files li[data-stage="reading"] .import-meter-fill {
@@ -2482,6 +2484,43 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--danger);
   border-color: var(--danger);
   background-color: var(--danger-soft);
+}
+
+/* The section files a transcript import was split into */
+.example-sections {
+  margin-top: 0.625rem;
+  font-size: 0.8125rem;
+}
+
+.example-sections summary {
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.example-sections ol {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.example-sections li + li {
+  margin-top: 0.625rem;
+}
+
+.example-sections h5 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.example-section-path,
+.example-section-prompt {
+  margin: 0.125rem 0 0;
+  color: var(--ink-muted);
+}
+
+.example-section-path code {
+  font-size: 0.75rem;
 }
 
 .example-list li {

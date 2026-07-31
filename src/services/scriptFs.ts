@@ -65,16 +65,16 @@ export interface ScriptFsTree {
   examples: ScriptFsExample[]
 }
 
-const SECTIONS_ROOT = '/sections/'
+export const SECTIONS_ROOT = '/sections/'
 const EXAMPLES_ROOT = '/examples/'
 
 // Gap numbering (010, 020, 030) leaves room to insert a section between two
 // others without renumbering every path after it.
-function orderPrefix(index: number): string {
+export function sectionOrderPrefix(index: number): string {
   return String((index + 1) * 10).padStart(3, '0')
 }
 
-function slugify(title: string): string {
+export function slugifySectionTitle(title: string): string {
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -84,10 +84,10 @@ function slugify(title: string): string {
 
 // Two outline entries can share a title (or slugify to the same thing); the
 // path has to stay unique, so later collisions gain a numeric suffix.
-function uniqueSlugs(titles: string[]): string[] {
+export function uniqueSectionSlugs(titles: string[]): string[] {
   const taken = new Set<string>()
   return titles.map(title => {
-    const base = slugify(title)
+    const base = slugifySectionTitle(title)
     let candidate = base
     let suffix = 1
     // A generated suffix can itself collide with a title that slugifies to it
@@ -129,13 +129,13 @@ function optionalString(value: string | number | undefined): string | undefined 
 // caller that also formats them for the prompt can label each one with the path
 // it is mounted at.
 export function mountExamples(examples: ExampleScript[]): ScriptFsExample[] {
-  const slugs = uniqueSlugs(examples.map(example => exampleLabel(example) || 'example'))
+  const slugs = uniqueSectionSlugs(examples.map(example => exampleLabel(example) || 'example'))
 
   return examples.map((example, index) => ({
     id: optionalString(example.metadata?.id) ?? optionalString(example.metadata?.filename) ?? '',
     title: exampleLabel(example),
     slug: slugs[index],
-    path: `${EXAMPLES_ROOT}${orderPrefix(index)}-${slugs[index]}`,
+    path: `${EXAMPLES_ROOT}${sectionOrderPrefix(index)}-${slugs[index]}`,
     order: (index + 1) * 10,
     rank: index + 1,
     tags: exampleTags(example),
@@ -231,7 +231,7 @@ export function buildScriptFs(
   const bodies = bodyRecords(conversation.generations)
 
   const outlineSections = outline?.sections ?? []
-  const slugs = uniqueSlugs(outlineSections.map(section => section.title))
+  const slugs = uniqueSectionSlugs(outlineSections.map(section => section.title))
 
   const sections: ScriptFsSection[] = outlineSections.map((section, index) => {
     const content = contentByTitle.get(section.title) ?? ''
@@ -242,7 +242,7 @@ export function buildScriptFs(
     return {
       title: section.title,
       slug: slugs[index],
-      path: `${SECTIONS_ROOT}${orderPrefix(index)}-${slugs[index]}`,
+      path: `${SECTIONS_ROOT}${sectionOrderPrefix(index)}-${slugs[index]}`,
       order: (index + 1) * 10,
       prompt: section.description,
       content,

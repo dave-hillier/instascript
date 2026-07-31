@@ -575,6 +575,20 @@ Acceptance criteria:
 - The utility model's tagging prompt states the vocabulary with what decides each value, and asks for topic tags on top of it
 - Standard tags lead the tag list, so they read the same way on every example
 - Retrieval needs no special case: standard tags are tags, and score in the same weighted field as the rest
+### 8.18 Import an example from a session transcript [Implemented]
+As a practitioner, I want to import the transcript of a session I recorded and have it turned into a properly sectioned example, so that my own delivered work grounds generation without me restructuring it by hand.
+
+Notes: the utility model (5.7) does the one part code cannot — deciding where the session turns. It is asked for the same shape the script filesystem uses: a title, then one section per stage with a `> ` spec line and the words spoken beneath it. Everything else is pure and checked in code: the reply is parsed, and a split is only stored if it found real stages, gave each a spec and a body, and kept the session's words rather than summarising them. The specs are stored as front matter on the example so the body stays ordinary markdown for retrieval, and `exampleFs` projects the pair as the same `/sections/010-slug/{prompt.md,content.md,meta.yaml}` tree `scriptFs` projects over a script in progress.
+
+Acceptance criteria:
+- A transcript import control sits alongside the file and folder imports and accepts the same markdown and text files
+- The transcript is saved as an example immediately; the split only improves it and never blocks or fails the import
+- The split is a stage on the import meter, so a file waiting on the longest request the app makes says what it is waiting for
+- Tagging runs after the split, through the same tidy pass every import gets, so it sees the section titles
+- Speaker labels, timestamps and the client's replies are dropped; the hypnotist's words are kept as transcribed
+- A transcript the model cannot split usefully stays in the corpus exactly as imported, and the status line says so
+- With no provider configured, the import still happens and the status line says splitting was unavailable
+- A split example lists its sections, each with its virtual filesystem path, word count and spec
 
 ## Epic 9: Visual Design
 

@@ -1,3 +1,12 @@
+// What a section of an example is for, as decided when the example was split
+// out of a transcript. Only the pair the markdown body cannot carry is stored:
+// slug, path, order and word count are derived from the body by exampleFs, the
+// same way the script filesystem derives them from an outline.
+export interface ExampleSectionSpec {
+  title: string
+  prompt: string
+}
+
 export interface ExampleRecord {
   id: string
   title: string
@@ -14,4 +23,6 @@ export interface ExampleRecord {
   // so saving the same script twice is offered as a replacement rather than
   // quietly making a duplicate.
   sourceScriptId?: string
+  // Present on examples imported from a transcript, absent on everything else
+  sections?: ExampleSectionSpec[]
 }
