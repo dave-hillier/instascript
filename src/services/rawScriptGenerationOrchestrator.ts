@@ -1042,13 +1042,15 @@ export class RawScriptGenerationOrchestrator {
         conversation
       )
 
-      // The rewrite sees where this section sits in the whole script. Added at
-      // send time only, after START_GENERATION has stored the history, so the
-      // tree is never replayed from a later request's history.
+      // The rewrite sees where this section sits in the whole script, and the
+      // same exemplars the system prompt carries, mounted under /examples/ so
+      // both blocks name them the same way. Added at send time only, after
+      // START_GENERATION has stored the history, so the tree is never replayed
+      // from a later request's history.
       const stream = this.services.scriptService.regenerateSection(
         request,
         withGenerationSystemPrompt(
-          withStructureBlock(messages, buildScriptFs(conversation)),
+          withStructureBlock(messages, buildScriptFs(conversation, examples)),
           buildGenerationSystemPrompt(plan, examples)
         ),
         abortSignal
@@ -1159,11 +1161,12 @@ export class RawScriptGenerationOrchestrator {
       )
 
       // A whole-script refinement decides which sections to rewrite, so it is
-      // told what the sections currently are. Send-time only, as above.
+      // told what the sections currently are, and which exemplars it has to
+      // work from. Send-time only, as above.
       const stream = this.services.scriptService.regenerateSection(
         { prompt: request.prompt, conversationId, sectionTitle: '' },
         withGenerationSystemPrompt(
-          withStructureBlock(messages, buildScriptFs(conversation)),
+          withStructureBlock(messages, buildScriptFs(conversation, examples)),
           buildGenerationSystemPrompt(plan, examples)
         ),
         abortSignal

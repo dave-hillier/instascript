@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import type { Generation, RawConversation } from '../../types/conversation'
+import type { ExampleScript } from '../exampleSearchService'
 import {
   buildScriptFs,
   listScriptFsPaths,
+  mountExamples,
   readScriptFsPath,
   renderScriptFsTree,
+  resolveExamplePath,
   resolveSectionPath
 } from '../scriptFs'
 import { getOutlineGenerationPrompt, getSystemPrompt } from '../prompts'
@@ -184,6 +187,104 @@ describe('buildScriptFs', () => {
   })
 })
 
+const retrievedExamples: ExampleScript[] = [
+  {
+    content: 'Rain on the roof.',
+    score: 0.0324,
+    metadata: { id: 'ex-1', title: 'Deep Relaxation', source: 'bundled', tags: 'sleep, rain' }
+  },
+  {
+    content: 'A long slow stairway down.',
+    score: 0.0161,
+    metadata: { id: 'ex-2', title: 'The Stairway', source: 'user', tags: '' }
+  }
+]
+
+describe('mounted examples', () => {
+  it('mounts the retrieved exemplars in ranked order under /examples/', () => {
+    const tree = buildScriptFs(makeConversation([makeGeneration(outlineV1, 1)]), retrievedExamples)
+
+    expect(tree.examples.map(example => example.path)).toEqual([
+      '/examples/010-deep-relaxation',
+      '/examples/020-the-stairway'
+    ])
+    expect(tree.examples.map(example => example.rank)).toEqual([1, 2])
+    expect(tree.examples[0].tags).toEqual(['sleep', 'rain'])
+    expect(tree.examples[1].tags).toEqual([])
+  })
+
+  it('mounts nothing when no examples were retrieved', () => {
+    expect(buildScriptFs(makeConversation([makeGeneration(outlineV1, 1)])).examples).toEqual([])
+  })
+
+  it('names an unlabelled example generically and suffixes colliding titles', () => {
+    const mounted = mountExamples([
+      { content: 'One' },
+      { content: 'Two', metadata: { title: 'Drift' } },
+      { content: 'Three', metadata: { title: 'Drift!' } }
+    ])
+
+    expect(mounted.map(example => example.path)).toEqual([
+      '/examples/010-example',
+      '/examples/020-drift',
+      '/examples/030-drift-2'
+    ])
+    expect(mounted[0].id).toBe('')
+  })
+
+  it('falls back to the legacy filename for the id', () => {
+    expect(mountExamples([{ content: 'One', metadata: { filename: 'legacy.md' } }])[0].id).toBe('legacy.md')
+  })
+
+  it('reads an example body and its metadata', () => {
+    const tree = buildScriptFs(makeConversation([makeGeneration(outlineV1, 1)]), retrievedExamples)
+
+    expect(readScriptFsPath(tree, '/examples/010-deep-relaxation/content.md')).toBe('Rain on the roof.')
+    expect(readScriptFsPath(tree, '/examples/010-deep-relaxation/meta.yaml')).toBe(
+      [
+        'title: Deep Relaxation',
+        'slug: deep-relaxation',
+        'path: /examples/010-deep-relaxation',
+        'rank: 1',
+        'wordCount: 4',
+        'id: ex-1',
+        'source: bundled',
+        'tags: [sleep, rain]',
+        'score: 0.0324',
+        ''
+      ].join('\n')
+    )
+  })
+
+  it('has no prompt.md and no unknown files', () => {
+    const tree = buildScriptFs(makeConversation([makeGeneration(outlineV1, 1)]), retrievedExamples)
+
+    expect(readScriptFsPath(tree, '/examples/010-deep-relaxation/prompt.md')).toBeNull()
+    expect(readScriptFsPath(tree, '/examples/090-nowhere/content.md')).toBeNull()
+  })
+
+  it('addresses an example by directory, trailing slash, or a file beneath it', () => {
+    const tree = buildScriptFs(makeConversation([makeGeneration(outlineV1, 1)]), retrievedExamples)
+
+    expect(resolveExamplePath(tree, '/examples/020-the-stairway')?.title).toBe('The Stairway')
+    expect(resolveExamplePath(tree, '/examples/020-the-stairway/')?.title).toBe('The Stairway')
+    expect(resolveExamplePath(tree, '/examples/020-the-stairway/content.md')?.title).toBe('The Stairway')
+    expect(resolveExamplePath(tree, '/sections/010-induction')).toBeNull()
+  })
+
+  it('names the examples that informed a section by path, keeping unmounted ids as ids', () => {
+    const conversation = makeConversation([
+      makeGeneration('# T\n## Alpha\nAlpha spec.', 1),
+      makeGeneration('## Alpha\nAlpha body.', 2, { exampleIds: ['ex-2', 'ex-99'] })
+    ])
+    const tree = buildScriptFs(conversation, retrievedExamples)
+
+    expect(readScriptFsPath(tree, '/sections/010-alpha/meta.yaml')).toContain(
+      'examples: [/examples/020-the-stairway, ex-99]'
+    )
+  })
+})
+
 describe('listScriptFsPaths', () => {
   it('lists the brief, the script and three files per mounted section, sorted', () => {
     const tree = buildScriptFs(makeConversation([
@@ -199,6 +300,25 @@ describe('listScriptFsPaths', () => {
       '/sections/020-beta/content.md',
       '/sections/020-beta/meta.yaml',
       '/sections/020-beta/prompt.md'
+    ])
+  })
+
+  it('lists two files per mounted example alongside the sections', () => {
+    const tree = buildScriptFs(
+      makeConversation([makeGeneration('# T\n## Alpha\nAlpha spec.', 1)]),
+      retrievedExamples
+    )
+
+    expect(listScriptFsPaths(tree)).toEqual([
+      '/brief.md',
+      '/examples/010-deep-relaxation/content.md',
+      '/examples/010-deep-relaxation/meta.yaml',
+      '/examples/020-the-stairway/content.md',
+      '/examples/020-the-stairway/meta.yaml',
+      '/script.md',
+      '/sections/010-alpha/content.md',
+      '/sections/010-alpha/meta.yaml',
+      '/sections/010-alpha/prompt.md'
     ])
   })
 })
@@ -282,6 +402,25 @@ describe('renderScriptFsTree', () => {
         '  010-induction/       412w  fresh',
         '  020-deepening/       389w  stale',
         '  030-escalation/        0w  empty',
+        ''
+      ].join('\n')
+    )
+  })
+
+  it('lists the mounted examples with their tags, in the same columns', () => {
+    const conversation = makeConversation([
+      makeGeneration('# T\n## Induction\nSettle.', 1),
+      makeGeneration(`## Induction\n${words(412)}`, 2)
+    ])
+
+    expect(renderScriptFsTree(buildScriptFs(conversation, retrievedExamples))).toBe(
+      [
+        '# T',
+        '/sections/',
+        '  010-induction/            412w  fresh',
+        '/examples/',
+        '  010-deep-relaxation/        4w  sleep, rain',
+        '  020-the-stairway/           5w',
         ''
       ].join('\n')
     )
