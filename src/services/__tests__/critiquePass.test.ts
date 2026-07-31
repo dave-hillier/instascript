@@ -4,6 +4,7 @@ import {
   selectViolationsToRevise,
   buildRevisionInstruction,
   formatReviewSummary,
+  reviewReportDescribesStructure,
   MAX_REVIEW_REVISIONS
 } from '../critiquePass'
 import { buildStyleCritiquePrompt, getStyleRules } from '../prompts'
@@ -184,6 +185,43 @@ describe('formatReviewSummary', () => {
     expect(formatReviewSummary([{ sectionTitle: 'Deepening', ruleNumbers: [6] }])).toBe(
       'Review revised 1 section: Deepening (rule 6).'
     )
+  })
+})
+
+describe('reviewReportDescribesStructure', () => {
+  const structure = ['Induction', 'Deepening', 'Emergence']
+
+  it('holds while the script still has the sections it reviewed', () => {
+    expect(reviewReportDescribesStructure({ structure }, [...structure])).toBe(true)
+  })
+
+  it('retires once a section is added', () => {
+    expect(reviewReportDescribesStructure(
+      { structure },
+      ['Induction', 'Deepening', 'Drift', 'Emergence']
+    )).toBe(false)
+  })
+
+  it('retires once a section is removed', () => {
+    expect(reviewReportDescribesStructure({ structure }, ['Induction', 'Emergence'])).toBe(false)
+  })
+
+  it('retires once a section is renamed', () => {
+    expect(reviewReportDescribesStructure(
+      { structure },
+      ['Induction', 'Deep Drift', 'Emergence']
+    )).toBe(false)
+  })
+
+  it('retires once the sections are reordered', () => {
+    expect(reviewReportDescribesStructure(
+      { structure },
+      ['Induction', 'Emergence', 'Deepening']
+    )).toBe(false)
+  })
+
+  it('holds for a report that recorded no structure to compare against', () => {
+    expect(reviewReportDescribesStructure({}, ['Induction'])).toBe(true)
   })
 })
 

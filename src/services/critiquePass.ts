@@ -1,4 +1,4 @@
-import type { ReviewRevision } from '../types/conversation'
+import type { ReviewReport, ReviewRevision } from '../types/conversation'
 
 // Story 8.5: the optional style-review pass. Pure logic for parsing the
 // critique response, choosing which sections to revise, and describing the
@@ -100,4 +100,18 @@ export function formatReviewSummary(revised: ReviewRevision[]): string {
     .map(entry => `${entry.sectionTitle} (${formatRuleNumbers(entry.ruleNumbers ?? [])})`)
     .join(', ')
   return `Review revised ${revised.length} ${revised.length === 1 ? 'section' : 'sections'}: ${details}.`
+}
+
+// A review summary describes a particular set of sections. Once the script has
+// been restructured under it — a section added, removed, renamed or reordered —
+// it is reporting on a script that no longer exists, so it is retired rather
+// than left on screen. Reports from before structures were recorded are trusted
+// as-is, having nothing to compare against.
+export function reviewReportDescribesStructure(
+  report: Pick<ReviewReport, 'structure'>,
+  sectionTitles: string[]
+): boolean {
+  if (!report.structure) return true
+  return report.structure.length === sectionTitles.length &&
+    report.structure.every((title, i) => title === sectionTitles[i])
 }

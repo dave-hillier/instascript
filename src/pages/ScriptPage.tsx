@@ -11,8 +11,9 @@ import { ConversationPanel } from '../components/ConversationPanel'
 import { ScriptDocument } from '../components/ScriptDocument'
 import { buildThread } from '../services/conversationThread'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
+import { buildProgressRows, type ProgressPlan } from '../utils/scriptProgress'
 import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
-import { formatReviewSummary } from '../services/critiquePass'
+import { formatReviewSummary, reviewReportDescribesStructure } from '../services/critiquePass'
 import { SECTION_TARGET_WORDS } from '../services/sectionQuality'
 import type { Script } from '../types/script'
 import type { RawConversation } from '../types/conversation'
@@ -187,23 +188,17 @@ const TARGET_WORDS_PER_SECTION = SECTION_TARGET_WORDS
 
 interface WordCountMeterProps {
   sections: ScriptDocumentSection[]
-  generationMachine: {
-    phase: string
-    currentSectionIndex: number
-    totalSections: number
-    sectionWordCounts: number[]
-    outline: { sections: { title: string }[] } | null
-  } | null
+  generationMachine: ProgressPlan | null
 }
 
 const WordCountMeter = ({ sections, generationMachine }: WordCountMeterProps) => {
   const totalWords = sections.reduce((sum, s) => sum + s.wordCount, 0)
 
-  // During generation, use the outline to show planned sections
-  const plannedSections = generationMachine?.outline?.sections ?? []
-  const displaySections = plannedSections.length > 0 ? plannedSections : sections
+  // Written sections plus whatever the outline still plans, so sections added,
+  // renamed or split since the outline was drawn appear as soon as they exist
+  const rows = buildProgressRows(sections, generationMachine)
 
-  if (displaySections.length === 0 && !generationMachine) return null
+  if (rows.length === 0 && !generationMachine) return null
 
   return (
     <aside aria-label="Word count breakdown">
@@ -213,42 +208,26 @@ const WordCountMeter = ({ sections, generationMachine }: WordCountMeterProps) =>
           <span>{totalWords} total</span>
         </div>
         <div className="word-meter-bars">
-          {displaySections.map((displaySection, i) => {
-            const title = 'title' in displaySection ? displaySection.title : ''
-            const matchingSection = sections.find(s => s.title === title)
-            const wordCount = matchingSection?.wordCount ?? 0
-            const fillPercent = Math.min(100, (wordCount / TARGET_WORDS_PER_SECTION) * 100)
-
-            const isCurrentlyGenerating = generationMachine &&
-              generationMachine.phase === 'generating_section' &&
-              generationMachine.currentSectionIndex === i
-
-            const isPending = generationMachine &&
-              generationMachine.phase === 'generating_section' &&
-              i > generationMachine.currentSectionIndex &&
-              wordCount === 0
-
-            let barState = 'complete'
-            if (isCurrentlyGenerating) barState = 'active'
-            else if (isPending) barState = 'pending'
-            else if (wordCount === 0) barState = 'empty'
+          {rows.map((row, i) => {
+            const label = row.title || `Section ${i + 1}`
+            const fillPercent = Math.min(100, (row.wordCount / TARGET_WORDS_PER_SECTION) * 100)
 
             return (
-              <div key={title || i} className="word-meter-row" data-state={barState}>
-                <span className="word-meter-label">{title || `Section ${i + 1}`}</span>
+              <div key={row.title || i} className="word-meter-row" data-state={row.state}>
+                <span className="word-meter-label">{label}</span>
                 <div className="word-meter-track">
                   <div
                     className="word-meter-fill"
                     style={{ width: `${fillPercent}%` }}
                     role="progressbar"
-                    aria-valuenow={wordCount}
+                    aria-valuenow={row.wordCount}
                     aria-valuemin={0}
                     aria-valuemax={TARGET_WORDS_PER_SECTION}
-                    aria-label={`${title}: ${wordCount} words`}
+                    aria-label={`${label}: ${row.wordCount} words`}
                   />
                   <span className="word-meter-target" />
                 </div>
-                <span className="word-meter-count">{wordCount}</span>
+                <span className="word-meter-count">{row.wordCount}</span>
               </div>
             )
           })}
@@ -530,7 +509,11 @@ export const ScriptPage = ({
     isStreaming: generationState.isGenerating
   })
 
-  const reviewSummary = reviewReport && conversation && reviewReport.conversationId === conversation.id
+  // The summary names sections and states a length, so it survives only while
+  // the script still has the structure it was written against
+  const reviewSummary = reviewReport && conversation &&
+    reviewReport.conversationId === conversation.id &&
+    reviewReportDescribesStructure(reviewReport, document.sections.map(section => section.title))
     ? reviewReport.summary ?? formatReviewSummary(reviewReport.revised)
     : undefined
 

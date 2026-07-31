@@ -129,6 +129,10 @@ export interface ReviewReport {
   // Prebuilt one-line outcome; the style pass leaves it unset and the page
   // formats its rule-based revisions instead
   summary?: string
+  // The section titles the report was written against. A summary names sections
+  // and states a length, so it stops being true the moment the script gains,
+  // loses or renames one — the page checks this before showing it.
+  structure?: string[]
 }
 
 export interface OutlineSection {
