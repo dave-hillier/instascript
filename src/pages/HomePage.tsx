@@ -1,12 +1,13 @@
 import { ArrowUp } from 'lucide-react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { ScriptList } from '../components/ScriptList'
 import type { Script } from '../types/script'
 import { createAppConfig, getModel } from '../services/config'
 import { providerUsedFor, resolveProviderStatus, unavailableReason } from '../services/providerStatus'
+import { subscribeToConfig, getConfigRevision } from '../services/configStore'
 import { filterScriptsByQuery, parseSortOrder, sortScriptsByCreation } from '../utils/scriptLibrary'
 import type { SortOrder } from '../utils/scriptLibrary'
 import {
@@ -31,7 +32,10 @@ export const HomePage = () => {
   const lengthPlan = buildLengthPlan(targetMinutes)
 
   // Resolved on every render so a key entered in Settings takes effect without
-  // a reload, and so the page can say which provider will really answer
+  // a reload, and so the page can say which provider will really answer. The
+  // settings are written to storage after the render that saved them, so the
+  // subscription is what brings this page back to read them.
+  useSyncExternalStore(subscribeToConfig, getConfigRevision)
   const providerStatus = resolveProviderStatus(createAppConfig())
   const providerWarning = unavailableReason(providerStatus)
 
