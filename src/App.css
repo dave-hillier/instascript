@@ -1642,6 +1642,120 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--accent);
 }
 
+/* ------------------------------------------------------------------ */
+/* Examples page: import progress meter                                */
+/* ------------------------------------------------------------------ */
+
+.import-meter {
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background-color: var(--surface);
+}
+
+.import-meter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.625rem;
+}
+
+.import-meter-header h3 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+.example-import .import-meter-header p {
+  margin: 0;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-meter-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background-color: var(--line);
+}
+
+.import-meter-fill {
+  height: 100%;
+  border-radius: 3px;
+  background-color: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.import-meter-files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4375rem;
+  /* A folder import can be dozens of files: the list scrolls rather than
+     pushing the corpus below it off the page */
+  max-height: 15rem;
+  overflow-y: auto;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-meter-files li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.import-meter-name {
+  flex: 0 0 30%;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.import-meter-stage {
+  flex: 0 0 12rem;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.import-meter-stage small {
+  display: block;
+  font-size: 0.6875rem;
+}
+
+/* A file waiting on the utility model is the slow case worth animating */
+.import-meter-files li[data-stage="formatting"] .import-meter-fill,
+.import-meter-files li[data-stage="tagging"] .import-meter-fill,
+.import-meter-files li[data-stage="reading"] .import-meter-fill {
+  animation: meter-pulse 1.5s ease-in-out infinite;
+}
+
+.import-meter-files li[data-stage="queued"] .import-meter-name,
+.import-meter-files li[data-stage="skipped"] .import-meter-name {
+  color: var(--ink-muted);
+}
+
+.import-meter-files li[data-stage="queued"] .import-meter-fill,
+.import-meter-files li[data-stage="skipped"] .import-meter-fill {
+  background-color: var(--ink-muted);
+  opacity: 0.3;
+}
+
+.import-meter-files li[data-stage="failed"] .import-meter-fill {
+  background-color: var(--danger);
+}
+
+.import-meter-files li[data-stage="failed"] .import-meter-stage {
+  color: var(--danger);
+}
+
 .example-list li {
   align-items: flex-start;
   padding: 1rem 0.25rem;

@@ -361,6 +361,7 @@ Acceptance criteria:
 - Import markdown files as examples; my own completed scripts can be promoted to examples
 - Examples carry editable tags/themes used in selection
 - A corpus view lists examples with the ability to delete or re-tag
+- An import meter lists every selected file and the stage it is in — queued, reading, saved, formatting, tagging, imported, skipped or failed — so a folder import is not a silent wait
 
 ### 8.3 Diverse, budget-aware exemplar selection [Implemented]
 As a user, I want the app to pick a small set of *different* high-quality examples that fit the context budget, so that the model sees range rather than five variations of the same script.

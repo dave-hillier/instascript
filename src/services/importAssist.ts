@@ -112,6 +112,15 @@ export interface ImportEnhancement {
   content?: string
 }
 
+export type ImportAssistJob = 'formatting' | 'tagging'
+
+export interface EnhanceImportOptions {
+  signal?: AbortSignal
+  // Called as each job starts, so the import meter can name the stage a file
+  // is sitting in rather than showing an unexplained pause
+  onJobStarted?: (job: ImportAssistJob) => void
+}
+
 // Runs the utility jobs an imported example needs. Each job is independent:
 // a failure or an unusable reply leaves that part of the example as imported
 // rather than failing the import.
@@ -119,12 +128,13 @@ export async function enhanceImportedExample(
   example: ExampleRecord,
   service: UtilityModelService,
   knownTags: string[],
-  signal?: AbortSignal
+  { signal, onJobStarted }: EnhanceImportOptions = {}
 ): Promise<ImportEnhancement> {
   const enhancement: ImportEnhancement = {}
   let content = example.content
 
   if (needsMarkdownFormatting(content)) {
+    onJobStarted?.('formatting')
     try {
       const reply = await service.complete({
         job: 'formatting',
@@ -143,6 +153,7 @@ export async function enhanceImportedExample(
   }
 
   if (example.tags.length === 0) {
+    onJobStarted?.('tagging')
     try {
       const reply = await service.complete({
         job: 'tagging',
