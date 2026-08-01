@@ -240,7 +240,22 @@ Acceptance criteria:
 - Engine, model, voice and rate are selectable from performance mode, and the choices persist
 - Section headings and stage directions are never spoken, whichever engine is used
 - Generated audio is cached per model, voice and line, so an unchanged replay makes no request
+- The cache is held to a budget in bytes, discarding the least recently heard line first, and settings shows what it is holding with a control to clear it
+- A rate-limited or briefly unavailable request is tried again with exponential backoff, and the wait is shown so it does not look like a stall
 - A failed request (rejected key, no network) stops read-aloud and says why, without leaving the view
+
+### 4.6 Export the read-aloud as one recording [Implemented]
+As a user, I want to download the whole script as a single paced audio file, so that I can listen to it away from the app — on a phone, in a player, without a browser tab open.
+
+Notes: read-aloud plays the script fragment by fragment and times the silences locally, which is what keeps the spoken-position highlight working but leaves nothing behind. Export renders the same plan into one file: each utterance is synthesised and decoded, each pacing mark becomes real silence, and the pieces are laid end to end. It is offered with the hosted voice only — browser speech synthesis exposes no audio to capture. The file is 16-bit mono WAV, the one format a browser can write without a codec. There is no batch text-to-speech endpoint and pricing is per input character, so one request per fragment costs no more than one request for the whole script — which is also OpenRouter's own advice for long text: split at natural boundaries, keep the model and voice constant, concatenate.
+
+Acceptance criteria:
+- Export from performance mode, using the model, voice and rate already chosen there
+- The recording has the same pacing as read-aloud: pacing marks and paragraph breaks become silence, and headings and stage directions are never voiced
+- Utterances come from the same cache as read-aloud, so a script already played through costs nothing to record, and a line the script repeats is synthesised once
+- Progress is shown by line while rendering, and the export can be cancelled part-way
+- A rate limit part-way through costs a pause, not the whole recording: the request is retried with backoff and the wait is shown
+- A failed request stops the export and says why, without leaving the view
 
 ## Epic 5: Configuration & Settings
 

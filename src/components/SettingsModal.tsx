@@ -2,6 +2,13 @@ import { useRef, useEffect, useState, useReducer, useSyncExternalStore } from 'r
 import type { ChangeEvent } from 'react'
 import { Sun, Moon, Monitor, Trash2, Download, Upload, FolderSync, FolderX, FileText } from 'lucide-react'
 import { subscribeToTranscripts, getTranscripts, MAX_TRANSCRIPTS } from '../services/debugTranscript'
+import {
+  MAX_CACHE_BYTES,
+  clearCachedAudio,
+  speechCacheUsage,
+  type SpeechCacheUsage,
+} from '../services/speechAudioCache'
+import { formatBytes } from '../utils/formatBytes'
 import { getDefaultModel, type APIProvider } from '../services/config'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
@@ -242,6 +249,9 @@ export const SettingsModal = ({
   // Remounts the file input after each import so choosing the same file again
   // still fires a change event
   const [importRun, setImportRun] = useState(0)
+  // Null until the cache has been measured, which is a read of the whole
+  // store and so happens only while the panel is open
+  const [speechCache, setSpeechCache] = useState<SpeechCacheUsage | null>(null)
 
   // Initialize temp values when modal opens
   useEffect(() => {
@@ -277,6 +287,25 @@ export const SettingsModal = ({
       modalRef.current?.close()
     }
   }, [isOpen])
+
+  // Measure the voice audio cache each time the panel opens, and ignore a
+  // measurement that arrives after it has closed again
+  useEffect(() => {
+    if (!isOpen) {
+      setSpeechCache(null)
+      return
+    }
+    let current = true
+    void speechCacheUsage().then((usage) => {
+      if (current) setSpeechCache(usage)
+    })
+    return () => { current = false }
+  }, [isOpen])
+
+  const handleClearSpeechCache = async () => {
+    await clearCachedAudio()
+    setSpeechCache(await speechCacheUsage())
+  }
 
   const handleSave = () => {
     // An empty custom model field falls back to the provider's default rather
@@ -741,6 +770,31 @@ export const SettingsModal = ({
               </p>
             </>
           )}
+
+          <div className="speech-cache" role="group" aria-label="Voice audio cache">
+            <button
+              type="button"
+              className="clear-speech-cache-btn"
+              onClick={handleClearSpeechCache}
+              disabled={!speechCache || speechCache.entries === 0}
+            >
+              <Trash2 size={16} />
+              <span>Clear voice audio</span>
+            </button>
+            <p role="status" aria-live="polite">
+              {!speechCache
+                ? 'Measuring cached voice audio'
+                : speechCache.entries === 0
+                  ? 'No voice audio cached'
+                  : `${formatBytes(speechCache.bytes)} across ${pluralize(speechCache.entries, 'line')}`}
+            </p>
+          </div>
+          <p>
+            Lines spoken by a hosted voice are kept so replaying or exporting a
+            script does not pay for them again. Held to{' '}
+            {formatBytes(MAX_CACHE_BYTES)}, discarding the least recently heard
+            first. Clearing costs nothing but re-synthesising what you play next
+          </p>
 
           <button
             type="button"

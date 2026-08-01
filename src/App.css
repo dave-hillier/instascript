@@ -1359,6 +1359,46 @@ dialog label.import-library-btn {
   cursor: default;
 }
 
+/* Cached hosted-voice audio (stories 4.5 and 4.6): what it is holding, and
+   the one control that gives the space back */
+.speech-cache {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.speech-cache button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.speech-cache button:hover:not(:disabled) {
+  background-color: var(--accent-soft);
+}
+
+.speech-cache button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The measurement sits beside the button rather than under it, so the row
+   reads as one statement: this much cached, cleared here */
+dialog form .speech-cache p {
+  margin: 0;
+}
+
 /* Backup settings (story 7.4): link/unlink the automatic backup folder */
 .backup-folder-btn {
   display: flex;
@@ -2300,6 +2340,16 @@ dialog.performance-mode[open] {
   border-color: var(--accent);
 }
 
+.performance-controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.performance-controls button:disabled:hover {
+  color: var(--ink-muted);
+  border-color: var(--line);
+}
+
 .performance-controls button[aria-pressed="true"] {
   color: var(--accent);
   border-color: var(--accent);
@@ -2378,6 +2428,50 @@ dialog.performance-mode[open] {
   color: var(--ink-muted);
   font-family: var(--font-ui);
   font-size: 0.85rem;
+}
+
+/* A request waiting out a rate limit or a brief provider outage. Without it,
+   the wait is indistinguishable from a read that has simply stopped */
+.performance-controls .read-aloud-retry {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.performance-controls .read-aloud-retry svg {
+  /* Turning, because the wait ends by itself — nothing here needs clicking.
+     The global reduced-motion rule stops it for anyone who asks */
+  animation: spin 1.6s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* How far the exported recording has got (story 4.6). Rendering a long
+   script is a run of requests, so the count of lines is shown alongside the
+   bar — a percentage alone says nothing about what is left to pay for */
+.performance-controls .export-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.performance-controls .export-progress progress {
+  width: 4rem;
+  height: 0.4rem;
+  accent-color: var(--accent);
 }
 
 /* Read-aloud failures (a rejected key, an offline network) take a line of

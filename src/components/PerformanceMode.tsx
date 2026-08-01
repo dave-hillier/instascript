@@ -1,14 +1,29 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
-import { Pause, Play, Volume2, X } from 'lucide-react'
+import { Fragment, useEffect, useReducer, useRef, useState } from 'react'
+import { Download, Pause, Play, RotateCw, Square, Volume2, X } from 'lucide-react'
 import { tokenizeScriptLine } from '../utils/scriptLineTokens'
+import { audioFilename } from '../utils/scriptExport'
+import { downloadBlob } from '../utils/downloadFile'
 import { ScriptSpeaker, buildSpeechPlan, isSpeechSynthesisSupported } from '../services/speech'
-import { BrowserSpeechEngine, OpenRouterSpeechEngine, type SpeechEngine } from '../services/speechEngines'
+import {
+  BrowserSpeechEngine,
+  OpenRouterSpeechEngine,
+  fetchUtteranceAudio,
+  type SpeechEngine,
+} from '../services/speechEngines'
+import {
+  countUtterances,
+  createSpeechDecoder,
+  isSpeechExportCancelled,
+  isSpeechExportSupported,
+  renderSpeechExport,
+} from '../services/speechExport'
 import {
   DEFAULT_TTS_MODEL,
   DEFAULT_TTS_VOICE,
   TTS_MODELS,
   defaultVoiceForModel,
   findTtsModel,
+  type SpeechRetryNotice,
 } from '../services/openrouterTts'
 import {
   getOpenRouterApiKey,
@@ -41,11 +56,50 @@ const SPEECH_RATES = [0.5, 0.75, 1, 1.25, 1.5]
 
 type SpeechStatus = 'idle' | 'playing' | 'paused'
 
-// Full-screen read-aloud view (stories 4.2, 4.4 and 4.5): larger reading text,
-// pacing marks and stage directions muted, optional auto-scroll with
-// adjustable speed, and read-aloud through either browser speech synthesis or
-// an OpenRouter text-to-speech model, with engine, model, voice and rate
-// selection. Rendered as a modal <dialog>, so Escape and focus containment
+type ExportStatus =
+  | { phase: 'idle' }
+  | { phase: 'rendering'; completed: number; total: number }
+
+// Utterances are fetched several at a time, so more than one can be waiting
+// out a rate limit at once. The indicator stays up until the last of them has
+// gone through, showing the most recent wait; a request that is already
+// waiting only replaces the notice when it backs off again.
+interface RetryState {
+  waiting: number
+  notice: SpeechRetryNotice | null
+}
+
+type RetryEvent =
+  | { type: 'RETRY_SCHEDULED'; notice: SpeechRetryNotice }
+  | { type: 'RETRY_SETTLED' }
+  | { type: 'RETRIES_CLEARED' }
+
+const NOT_RETRYING: RetryState = { waiting: 0, notice: null }
+
+const retryReducer = (state: RetryState, event: RetryEvent): RetryState => {
+  switch (event.type) {
+    case 'RETRY_SCHEDULED':
+      return {
+        waiting: event.notice.attempt === 1 ? state.waiting + 1 : state.waiting,
+        notice: event.notice,
+      }
+    case 'RETRY_SETTLED': {
+      const waiting = Math.max(0, state.waiting - 1)
+      return { waiting, notice: waiting === 0 ? null : state.notice }
+    }
+    case 'RETRIES_CLEARED':
+      return NOT_RETRYING
+  }
+}
+
+const formatRetryWait = (waitMs: number): string =>
+  `in ${Math.max(1, Math.round(waitMs / 1000))}s`
+
+// Full-screen read-aloud view (stories 4.2, 4.4, 4.5 and 4.6): larger reading
+// text, pacing marks and stage directions muted, optional auto-scroll with
+// adjustable speed, read-aloud through either browser speech synthesis or an
+// OpenRouter text-to-speech model, and export of that same read as one paced
+// recording. Rendered as a modal <dialog>, so Escape and focus containment
 // come from the platform; refs exist only for the imperative dialog, scroll
 // and speech APIs.
 export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: PerformanceModeProps) => {
@@ -80,9 +134,20 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
   const [ttsModel, setTtsModelState] = useState(() => getTtsModel(DEFAULT_TTS_MODEL))
   const [ttsVoice, setTtsVoice] = useState(() => getReadAloudVoice('openrouter', DEFAULT_TTS_VOICE))
 
+  // Export renders the hosted voice into a file, so it is offered wherever
+  // that voice is: browser speech synthesis gives no audio to capture.
+  const [exportStatus, setExportStatus] = useState<ExportStatus>({ phase: 'idle' })
+  const exportControllerRef = useRef<AbortController | null>(null)
+  // A rate-limited request waits rather than fails, which without saying so
+  // looks exactly like a read that has stalled.
+  const [retryState, dispatchRetry] = useReducer(retryReducer, NOT_RETRYING)
+  const reportRetry = (notice: SpeechRetryNotice | null) =>
+    dispatchRetry(notice ? { type: 'RETRY_SCHEDULED', notice } : { type: 'RETRY_SETTLED' })
+
   const readAloudAvailable = speechSupported || openRouterAvailable
   const usingOpenRouter = engine === 'openrouter' && openRouterAvailable
   const ttsModelVoices = findTtsModel(ttsModel)?.voices
+  const exportAvailable = openRouterAvailable && isSpeechExportSupported()
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -108,6 +173,10 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
     return () => {
       speakerRef.current?.stop()
       speakerRef.current = null
+      // An export left running would go on paying for utterances nobody is
+      // waiting for, so it leaves with the view too.
+      exportControllerRef.current?.abort()
+      exportControllerRef.current = null
     }
   }, [])
 
@@ -152,11 +221,17 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
     speakerRef.current = null
     setSpeechStatus('idle')
     setSpokenParagraphKey(null)
+    dispatchRetry({ type: 'RETRIES_CLEARED' })
   }
 
   const createEngine = (): SpeechEngine =>
     usingOpenRouter
-      ? new OpenRouterSpeechEngine({ apiKey: openRouterApiKey!, model: ttsModel, voice: ttsVoice })
+      ? new OpenRouterSpeechEngine({
+          apiKey: openRouterApiKey!,
+          model: ttsModel,
+          voice: ttsVoice,
+          onRetry: reportRetry,
+        })
       : new BrowserSpeechEngine(voiceURI)
 
   const toggleReadAloud = () => {
@@ -197,11 +272,67 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
     speaker.start()
   }
 
+  // Renders the whole script — the same utterances and the same silences
+  // read-aloud would produce — into one file. Lines already heard come from
+  // the cache, so exporting a script that has been played through costs
+  // nothing; a long unheard script is a run of billed requests, which is why
+  // progress is shown and the button becomes a cancel while it runs.
+  const handleExport = async () => {
+    if (exportStatus.phase === 'rendering') {
+      exportControllerRef.current?.abort()
+      return
+    }
+
+    const plan = buildSpeechPlan(sections)
+    const total = countUtterances(plan)
+    if (total === 0) return
+
+    stopReadAloud()
+    setSpeechError(null)
+    const controller = new AbortController()
+    exportControllerRef.current = controller
+    setExportStatus({ phase: 'rendering', completed: 0, total })
+
+    try {
+      const recording = await renderSpeechExport({
+        plan,
+        rate: speechRate,
+        synthesize: (text) =>
+          fetchUtteranceAudio({
+            apiKey: openRouterApiKey!,
+            model: ttsModel,
+            voice: ttsVoice,
+            text,
+            signal: controller.signal,
+            onRetry: reportRetry,
+          }),
+        decode: createSpeechDecoder(),
+        signal: controller.signal,
+        onProgress: ({ completed }) => setExportStatus({ phase: 'rendering', completed, total }),
+      })
+      downloadBlob(recording, audioFilename(title ?? ''))
+    } catch (error) {
+      // A cancelled export is what the user asked for, so it says nothing.
+      if (!isSpeechExportCancelled(error)) {
+        setSpeechError(
+          error instanceof Error ? error.message : 'The recording could not be produced'
+        )
+      }
+    } finally {
+      exportControllerRef.current = null
+      setExportStatus({ phase: 'idle' })
+      // Requests abandoned mid-wait never report their own settling.
+      dispatchRetry({ type: 'RETRIES_CLEARED' })
+    }
+  }
+
   // Engine and model changes swap out the voice entirely, so an in-progress
-  // read stops rather than switching timbre mid-sentence. A voice change
-  // within one engine applies from the next utterance.
+  // read stops rather than switching timbre mid-sentence, and a recording
+  // being rendered is abandoned rather than finished in a voice no longer
+  // chosen. A voice change within one engine applies from the next utterance.
   const handleEngineChanged = (next: ReadAloudEngine) => {
     stopReadAloud()
+    exportControllerRef.current?.abort()
     setSpeechError(null)
     setEngine(next)
     setReadAloudEngine(next)
@@ -209,6 +340,7 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
 
   const handleModelChanged = (model: string) => {
     stopReadAloud()
+    exportControllerRef.current?.abort()
     setSpeechError(null)
     setTtsModelState(model)
     setTtsModel(model)
@@ -410,6 +542,41 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
                 </option>
               ))}
             </select>
+            {retryState.notice && (
+              <span className="read-aloud-retry" role="status">
+                <RotateCw size={16} aria-hidden="true" />
+                {`Retrying ${formatRetryWait(retryState.notice.waitMs)}` +
+                  ` (${retryState.notice.attempt} of ${retryState.notice.attempts})`}
+              </span>
+            )}
+            {exportAvailable && (
+              <>
+                <button
+                  onClick={handleExport}
+                  disabled={!usingOpenRouter}
+                  title={
+                    usingOpenRouter
+                      ? 'Download the whole script as one paced recording'
+                      : 'Choose an OpenRouter voice to export a recording'
+                  }
+                  aria-label={
+                    exportStatus.phase === 'rendering'
+                      ? 'Cancel recording export'
+                      : 'Export as a recording'
+                  }
+                  type="button"
+                >
+                  {exportStatus.phase === 'rendering' ? <Square size={18} /> : <Download size={18} />}
+                </button>
+                {exportStatus.phase === 'rendering' && (
+                  <label className="export-progress">
+                    <span className="sr-only">Lines recorded</span>
+                    <progress value={exportStatus.completed} max={exportStatus.total} />
+                    {exportStatus.completed} / {exportStatus.total}
+                  </label>
+                )}
+              </>
+            )}
           </div>
         )}
         <button

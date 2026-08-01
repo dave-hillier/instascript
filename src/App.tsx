@@ -6,6 +6,7 @@ import { useConversationContext } from './hooks/useConversationContext'
 import { SettingsModal } from './components/SettingsModal'
 import { InlineTitleEditor } from './components/InlineTitleEditor'
 import { buildConsolidatedMarkdown, markdownFilename } from './utils/scriptExport'
+import { downloadBlob } from './utils/downloadFile'
 import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import { ExamplesPage } from './pages/ExamplesPage'
@@ -367,12 +368,7 @@ function AppContent() {
   const handleDownloadScript = () => {
     if (!exportMarkdown || !currentScript) return
     const blob = new Blob([exportMarkdown], { type: 'text/markdown' })
-    const url = URL.createObjectURL(blob)
-    const anchor = window.document.createElement('a')
-    anchor.href = url
-    anchor.download = markdownFilename(currentScript.title)
-    anchor.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, markdownFilename(currentScript.title))
   }
 
   const handleRenameScript = (title: string) => {
@@ -403,12 +399,10 @@ function AppContent() {
     const blob = new Blob([contents], {
       type: format === 'json' ? 'application/json' : 'text/plain'
     })
-    const url = URL.createObjectURL(blob)
-    const anchor = window.document.createElement('a')
-    anchor.href = url
-    anchor.download = `instascript-transcripts-${now.toISOString().slice(0, 10)}.${format === 'json' ? 'json' : 'txt'}`
-    anchor.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(
+      blob,
+      `instascript-transcripts-${now.toISOString().slice(0, 10)}.${format === 'json' ? 'json' : 'txt'}`
+    )
   }
 
   const handleClearConversations = () => {
@@ -445,12 +439,7 @@ function AppContent() {
     const conversations = await loadStoredConversations()
     const json = serializeLibraryExport(state.scripts, conversations, getExampleSelectionCounts())
     const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const anchor = window.document.createElement('a')
-    anchor.href = url
-    anchor.download = `instascript-library-${new Date().toISOString().slice(0, 10)}.json`
-    anchor.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, `instascript-library-${new Date().toISOString().slice(0, 10)}.json`)
     // Remember what this export covered, so the staleness reminder measures
     // new work against it (story 7.4); a fresh export also clears dismissals
     setExportSnapshot(recordLibraryExported(state.scripts.map(script => script.id), Date.now()))
