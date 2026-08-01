@@ -483,3 +483,17 @@ Acceptance criteria:
 - Empty states, loading/streaming states, and error states styled intentionally, not as bare paragraphs
 - Inline styles removed from TSX except where values are computed at runtime
 - Existing semantic-HTML/classless approach and accessibility attributes preserved
+
+### 9.2 Edit a script on a phone [Implemented]
+As a user working on a phone, I want the script page to give the script the screen and keep the conversation within reach, so that I can read and refine a script without fighting the layout.
+
+Notes: below 900px the workspace stops splitting the viewport between two scrolling panes. The conversation folds to a single control that carries the live phase line (or "Generation failed" / "Generation interrupted" / "Review ready" when there is something to know), with the composer beneath it, and opens on demand to a thread capped at 45dvh. Everything that only appeared on hover — the section actions in both title modes — is visible on touch, and with the titles hidden those actions take a row of their own instead of floating over the opening line. The app bar wraps its actions to a second row below 600px rather than truncating the script title to an initial.
+
+Acceptance criteria:
+- The script occupies the majority of a phone viewport, with one thing scrolling at a time
+- The composer and the current generation phase are visible without opening anything
+- The thread, progress meters and usage open and close from a single control
+- Section Edit/Regenerate/instructions are reachable by touch with titles shown or hidden
+- Text inputs are at least 16px so focusing them does not zoom the page on iOS
+- Viewport height uses `dvh`, so collapsing browser chrome does not hide the composer
+- The two-pane desktop layout is unchanged

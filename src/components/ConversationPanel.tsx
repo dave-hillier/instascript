@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ArrowUp, Play, RotateCcw, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, Play, RotateCcw, Square, X } from 'lucide-react'
 import type { ThreadEntry } from '../services/conversationThread'
 
 interface ConversationPanelProps {
@@ -47,6 +48,10 @@ export const ConversationPanel = ({
   canRefine,
   children
 }: ConversationPanelProps) => {
+  // Narrow screens fold the thread away so the script keeps the viewport; the
+  // toggle and the folding are CSS-only above that width (see App.css)
+  const [threadExpanded, setThreadExpanded] = useState(false)
+
   // Enter sends, Shift+Enter breaks the line — the composer convention
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -57,11 +62,40 @@ export const ConversationPanel = ({
     }
   }
 
+  // Folded, the toggle is the only thing left of the thread, so it carries
+  // whatever the thread would otherwise be telling the user
+  const summary = isGenerating
+    ? { label: phaseLabel, state: 'running' }
+    : errorMessage
+      ? { label: 'Generation failed', state: 'error' }
+      : wasInterrupted
+        ? { label: 'Generation interrupted', state: 'error' }
+        : reviewSummary
+          ? { label: 'Review ready', state: 'notice' }
+          : { label: 'Conversation', state: 'idle' }
+
   return (
-    <aside className="conversation-panel" aria-label="Conversation">
+    <aside
+      className="conversation-panel"
+      aria-label="Conversation"
+      data-thread={threadExpanded ? 'expanded' : 'collapsed'}
+    >
+      <header className="thread-toggle">
+        <button
+          type="button"
+          onClick={() => setThreadExpanded(expanded => !expanded)}
+          aria-expanded={threadExpanded}
+          aria-controls="conversation-thread"
+          data-state={summary.state}
+        >
+          <ChevronDown size={16} />
+          <span>{summary.label}</span>
+        </button>
+      </header>
+
       {/* The scroller reverses its single child so it stays pinned to the
           newest turn as the thread grows, with no scripted scrolling */}
-      <div className="thread-scroller">
+      <div className="thread-scroller" id="conversation-thread">
         <ol className="thread">
           {entries.map(entry => (
             <li key={entry.id} data-kind={entry.kind}>

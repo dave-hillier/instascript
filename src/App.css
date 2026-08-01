@@ -66,6 +66,16 @@ button {
   min-width: 0;
 }
 
+/* The title and its metadata line must be allowed to shrink, or a long title
+   pushes the whole block over the actions instead of ellipsising */
+[data-theme] > header > div:first-child > div {
+  min-width: 0;
+}
+
+[data-theme] > header > nav {
+  flex-shrink: 0;
+}
+
 header h1 {
   font-family: var(--font-display);
   font-size: 1.5rem;
@@ -2169,9 +2179,12 @@ dialog.performance-mode[open] {
 /* ------------------------------------------------------------------ */
 
 /* The workspace owns the viewport: each pane scrolls on its own, so the
-   composer and the script header stay put while the other side moves */
+   composer and the script header stay put while the other side moves.
+   Dynamic viewport units keep the composer clear of the collapsing browser
+   chrome on a phone, where 100vh is taller than what is actually visible */
 [data-theme]:has(.workspace) {
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -2194,6 +2207,57 @@ main:has(> .workspace) {
   min-height: 0;
   border-right: 1px solid var(--line);
   background-color: var(--surface);
+}
+
+/* The fold control for the thread. There is room for the whole conversation
+   beside the script on a wide screen, so it only appears once the panes stack
+   (see the narrow-screen block at the end of this file) */
+.thread-toggle {
+  display: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.thread-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.625rem 1rem;
+  background: none;
+  border: none;
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  text-align: left;
+}
+
+/* The label is the live phase line while something runs, so it truncates
+   rather than wrapping the control onto a second line */
+.thread-toggle button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-toggle svg {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.conversation-panel[data-thread="expanded"] .thread-toggle svg {
+  transform: rotate(180deg);
+}
+
+.thread-toggle button[data-state="running"],
+.thread-toggle button[data-state="notice"] {
+  color: var(--accent);
+}
+
+.thread-toggle button[data-state="error"] {
+  color: var(--danger);
 }
 
 /* Reversing the scroller keeps it pinned to the newest turn without any
@@ -2458,16 +2522,20 @@ main:has(> .workspace) {
   color: var(--ink-muted);
 }
 
-/* Narrow screens: the two panes stack, the conversation keeping a fixed
-   share of the height so the composer is always reachable */
+/* Narrow screens: the two panes stack, and the conversation folds down to its
+   status line and composer so the script — the thing being read — keeps the
+   rest of the viewport. The thread opens on demand, capped so the script never
+   disappears behind it. */
 @media (max-width: 900px) {
   /* The app bar has to give: the title truncates so the actions keep their room */
   [data-theme] > header {
     gap: 0.5rem;
+    padding: 0.75rem 0.875rem;
   }
 
   [data-theme] > header > div:first-child {
     flex: 1;
+    min-width: 0;
   }
 
   header h1 {
@@ -2475,12 +2543,29 @@ main:has(> .workspace) {
   }
 
   header nav {
-    flex-shrink: 0;
+    gap: 0;
+  }
+
+  header nav button {
+    padding: 0.5rem 0.375rem;
+  }
+
+  header button[aria-label="Go back"] {
+    margin-right: 0.25rem;
+  }
+
+  /* One line of metadata, ellipsised, rather than an app bar that grows a row
+     taller on every extra fact */
+  header h1 + div,
+  .title-editor + div {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 45vh) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .conversation-panel {
@@ -2488,7 +2573,128 @@ main:has(> .workspace) {
     border-bottom: 1px solid var(--line);
   }
 
+  .thread-toggle {
+    display: block;
+  }
+
+  /* Folded: the status line and the composer, nothing else */
+  .conversation-panel[data-thread="collapsed"] .thread-scroller,
+  .conversation-panel[data-thread="collapsed"] .run-details {
+    display: none;
+  }
+
+  .thread-scroller {
+    max-height: 45dvh;
+    padding: 1rem;
+  }
+
+  .composer-area {
+    padding: 0.75rem 1rem 1rem;
+  }
+
+  /* 16px is the threshold below which iOS zooms the page on focus, which
+     leaves the composer half off-screen and the layout scrolled sideways */
+  .composer textarea,
+  .regenerate-form input {
+    font-size: 1rem;
+  }
+
+  .composer button {
+    width: 40px;
+    height: 40px;
+  }
+
   .document-pane {
     padding: 1.75rem 1.25rem 3rem;
+  }
+
+  /* No hover on touch: the section actions stay visible in both title modes,
+     and wrap under the heading rather than squeezing it */
+  article section > header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  article section header button {
+    padding: 0.375rem 0.75rem;
+  }
+
+  /* Nothing hovers on touch, so with the titles hidden the actions cannot
+     float over the opening line waiting to be revealed — they take a row of
+     their own above the section instead */
+  article[data-section-titles="hidden"] section > header {
+    position: static;
+    margin-bottom: 0.75rem;
+  }
+
+  article[data-section-titles="hidden"] section > header .section-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .script-utility {
+    flex-wrap: wrap;
+  }
+
+  .script-utility-actions {
+    justify-content: flex-start;
+  }
+
+  /* Below the width where the field and its button both read comfortably,
+     the button drops to its own line instead of the field shrinking away */
+  .regenerate-form {
+    flex-wrap: wrap;
+  }
+
+  .regenerate-form input {
+    min-width: 60%;
+  }
+}
+
+/* Phone widths: the script page's seven actions and a script title cannot share
+   one line without the title shrinking to an initial. Giving the title a floor
+   of 14rem lets the actions wrap to a second row when — and only when — they
+   would otherwise crowd it out, so the shorter home and examples bars stay on
+   one line. */
+@media (max-width: 600px) {
+  [data-theme] > header {
+    flex-wrap: wrap;
+    row-gap: 0.25rem;
+    padding-bottom: 0.5rem;
+  }
+
+  [data-theme] > header > div:first-child {
+    min-width: min(14rem, 100%);
+  }
+
+  header nav {
+    margin-left: auto;
+    gap: 0.125rem;
+  }
+
+  header nav button {
+    padding: 0.5rem 0.625rem;
+  }
+
+  /* The length row runs off the composer at this width with a fixed-width
+     slider: let it give way to the label and the word count instead */
+  main form > div:has(input[type="range"]) {
+    gap: 0.75rem;
+  }
+
+  main form > div:has(input[type="range"]) > div:first-child {
+    flex: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+
+  /* The slider takes a row of its own under its label and read-out, which both
+     keeps the read-out whole and gives the thumb a decent target */
+  main form input[type="range"] {
+    order: 1;
+    flex: 1 1 100%;
+    width: auto;
+    min-width: 0;
   }
 }
