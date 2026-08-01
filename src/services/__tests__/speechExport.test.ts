@@ -217,6 +217,22 @@ describe('renderSpeechExport', () => {
     expect(synthesize).toHaveBeenCalledTimes(2)
   })
 
+  it('pays once for a line the script repeats', async () => {
+    const { synthesize, decode, spokenTexts } = exportHarness()
+
+    const recording = await renderSpeechExport({
+      plan: buildSpeechPlan([{ content: 'Deeper now.\nAnd again.\nDeeper now.' }]),
+      synthesize,
+      decode,
+      sampleRate: SAMPLE_RATE,
+    })
+
+    expect(spokenTexts()).toEqual(['Deeper now.', 'And again.'])
+    // The repeat is still in the recording, in its own place.
+    const samples = await samplesOf(recording)
+    expect(samples.slice(0, 11)).toEqual(samples.slice(-11))
+  })
+
   it('stops without a recording once cancelled', async () => {
     const { synthesize, decode } = exportHarness()
     const controller = new AbortController()

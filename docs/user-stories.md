@@ -226,6 +226,7 @@ Acceptance criteria:
 - Engine, model, voice and rate are selectable from performance mode, and the choices persist
 - Section headings and stage directions are never spoken, whichever engine is used
 - Generated audio is cached per model, voice and line, so an unchanged replay makes no request
+- The cache is held to a budget in bytes, discarding the least recently heard line first, and settings shows what it is holding with a control to clear it
 - A rate-limited or briefly unavailable request is tried again with exponential backoff, and the wait is shown so it does not look like a stall
 - A failed request (rejected key, no network) stops read-aloud and says why, without leaving the view
 
@@ -237,7 +238,7 @@ Notes: read-aloud plays the script fragment by fragment and times the silences l
 Acceptance criteria:
 - Export from performance mode, using the model, voice and rate already chosen there
 - The recording has the same pacing as read-aloud: pacing marks and paragraph breaks become silence, and headings and stage directions are never voiced
-- Utterances come from the same cache as read-aloud, so a script already played through costs nothing to record
+- Utterances come from the same cache as read-aloud, so a script already played through costs nothing to record, and a line the script repeats is synthesised once
 - Progress is shown by line while rendering, and the export can be cancelled part-way
 - A rate limit part-way through costs a pause, not the whole recording: the request is retried with backoff and the wait is shown
 - A failed request stops the export and says why, without leaving the view

@@ -213,12 +213,23 @@ export async function renderSpeechExport({
   stopIfCancelled(signal)
 
   const pending = new Map<number, Promise<Blob>>()
+  // Scripts repeat themselves — "deeper", "that's right" — and the cache
+  // cannot help with two identical lines fetched at the same moment, since
+  // neither has been written when the other starts. Held for the whole
+  // export, so a line repeated much later is free too.
+  const byText = new Map<string, Promise<Blob>>()
+
   const request = (position: number) => {
     if (signal?.aborted || position >= utterances.length || pending.has(position)) return
-    const audio = synthesize(utterances[position].text)
-    // Awaited in order below; this only stops a failure several lines ahead
-    // from surfacing as an unhandled rejection in the meantime.
-    audio.catch(() => {})
+    const text = utterances[position].text
+    let audio = byText.get(text)
+    if (!audio) {
+      audio = synthesize(text)
+      // Awaited in order below; this only stops a failure several lines ahead
+      // from surfacing as an unhandled rejection in the meantime.
+      audio.catch(() => {})
+      byText.set(text, audio)
+    }
     pending.set(position, audio)
   }
 

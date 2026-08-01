@@ -1149,6 +1149,46 @@ dialog label.import-library-btn {
   cursor: default;
 }
 
+/* Cached hosted-voice audio (stories 4.5 and 4.6): what it is holding, and
+   the one control that gives the space back */
+.speech-cache {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.speech-cache button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.speech-cache button:hover:not(:disabled) {
+  background-color: var(--accent-soft);
+}
+
+.speech-cache button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The measurement sits beside the button rather than under it, so the row
+   reads as one statement: this much cached, cleared here */
+dialog form .speech-cache p {
+  margin: 0;
+}
+
 /* Backup settings (story 7.4): link/unlink the automatic backup folder */
 .backup-folder-btn {
   display: flex;
