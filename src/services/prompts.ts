@@ -6,6 +6,7 @@ import scriptRefinementPrompt from '../prompts/script-refinement.txt?raw'
 import styleCritiquePrompt from '../prompts/style-critique.txt?raw'
 import outlineCritiquePrompt from '../prompts/outline-critique.txt?raw'
 import scriptReviewPrompt from '../prompts/script-review.txt?raw'
+import briefQuestionsPrompt from '../prompts/brief-questions.txt?raw'
 import exampleTaggingPrompt from '../prompts/example-tagging.txt?raw'
 import importFormattingPrompt from '../prompts/import-formatting.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
@@ -226,6 +227,25 @@ export function buildScriptReviewPrompt(
     .replace('{brief}', () => brief.trim() || 'No brief was recorded for this script.')
     .replace('{lengthBrief}', () => lengthBrief)
     .replace('{script}', () => script)
+}
+
+// The shape the briefing questionnaire is asked for (story 1.10). Held here
+// with the template it fills in; the parser that reads the reply back is
+// deliberately more forgiving than these numbers.
+const BRIEF_QUESTION_COUNT = { min: 3, max: 5 }
+const BRIEF_OPTION_COUNT = { min: 3, max: 4 }
+
+// The questions request for the optional briefing stage: the user's brief and
+// nothing else, asking for a short multiple-choice questionnaire about what
+// the brief leaves open. Substitution runs on the template first, so
+// placeholder-shaped text in the brief is never replaced.
+export function buildBriefQuestionsPrompt(brief: string): string {
+  return briefQuestionsPrompt
+    .replace('{minQuestions}', String(BRIEF_QUESTION_COUNT.min))
+    .replace('{maxQuestions}', String(BRIEF_QUESTION_COUNT.max))
+    .replace('{minOptions}', String(BRIEF_OPTION_COUNT.min))
+    .replace('{maxOptions}', String(BRIEF_OPTION_COUNT.max))
+    .replace('{brief}', () => brief.trim())
 }
 
 // --- Utility-model prompts (story 5.7) ----------------------------------
