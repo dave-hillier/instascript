@@ -1,5 +1,10 @@
 import type { ExampleRecord } from '../types/example'
 
+// The group the shipped scripts belong to. Declared here, alongside the
+// records that carry it, so the corpus service can import both without the
+// data module having to import back.
+export const BUNDLED_GROUP = 'Bundled placeholders'
+
 // Sample scripts shipped with the app, off by default: they are short
 // demonstrations of the format rather than material worth imitating, so
 // grounding a generation in them is opt-in (see exampleCorpus.ts).
@@ -9,6 +14,7 @@ export const BUNDLED_EXAMPLE_SCRIPTS: ExampleRecord[] = [
     title: 'Confidence Building Script',
     tags: ['confidence', 'self-improvement'],
     source: 'bundled',
+    group: BUNDLED_GROUP,
     content: `# Confidence Building Script
 
 ## Introduction
@@ -34,6 +40,7 @@ When you're ready, gently return to full awareness, carrying this confidence wit
     title: 'Deep Relaxation for Sleep',
     tags: ['sleep', 'relaxation'],
     source: 'bundled',
+    group: BUNDLED_GROUP,
     content: `# Deep Relaxation for Sleep
 
 ## Preparation
@@ -59,6 +66,7 @@ Tonight you sleep deeply and wake feeling refreshed and energized.`
     title: 'Stress Relief and Calm',
     tags: ['relaxation', 'stress', 'calm'],
     source: 'bundled',
+    group: BUNDLED_GROUP,
     content: `# Stress Relief and Calm
 
 ## Centering
@@ -84,6 +92,7 @@ This sense of calm stays with you throughout your day.`
     title: 'Public Speaking Confidence',
     tags: ['confidence', 'speaking'],
     source: 'bundled',
+    group: BUNDLED_GROUP,
     content: `# Public Speaking Confidence
 
 ## Foundation Building
@@ -109,6 +118,7 @@ You look forward to sharing your voice and message with others.`
     title: 'Pain Management and Comfort',
     tags: ['healing', 'comfort'],
     source: 'bundled',
+    group: BUNDLED_GROUP,
     content: `# Pain Management and Comfort
 
 ## Comfort Positioning

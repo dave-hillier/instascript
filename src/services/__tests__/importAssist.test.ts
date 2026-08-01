@@ -20,6 +20,7 @@ const example = (overrides: Partial<ExampleRecord> = {}): ExampleRecord => ({
   id: 'example_1',
   title: 'Deep Rest',
   tags: [],
+  group: 'Test group',
   content: PLAIN_SCRIPT,
   source: 'user',
   ...overrides

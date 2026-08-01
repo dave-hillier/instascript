@@ -1,6 +1,6 @@
 import YAML from 'yaml'
-import type { ExampleRecord } from '../types/example'
-import { BUNDLED_EXAMPLE_SCRIPTS } from '../data/bundledExampleScripts'
+import type { ExampleRecord, ExampleGroupSummary } from '../types/example'
+import { BUNDLED_EXAMPLE_SCRIPTS, BUNDLED_GROUP } from '../data/bundledExampleScripts'
 
 // User-imported examples live in localStorage under example_* keys as YAML
 // front matter + markdown, matching the script storage format. Bundled and
@@ -8,20 +8,28 @@ import { BUNDLED_EXAMPLE_SCRIPTS } from '../data/bundledExampleScripts'
 
 export const EXAMPLE_KEY_PREFIX = 'example_'
 
+// Where an example lands when nothing names a group for it: a single file
+// imported without a group, or a stored example predating groups
+export const UNGROUPED = 'Ungrouped'
+
+export { BUNDLED_GROUP }
+
 interface ParsedExampleFile {
   title: string
   tags: string[]
+  group?: string
   content: string
   createdAt?: number
   embedding?: number[]
 }
 
-// Parses a markdown example file: optional YAML front matter (title, tags),
-// then the script body. Falls back to the first "# Title" heading, then to
-// the supplied fallback (typically the filename without extension).
+// Parses a markdown example file: optional YAML front matter (title, tags,
+// group), then the script body. Falls back to the first "# Title" heading,
+// then to the supplied fallback (typically the filename without extension).
 export function parseExampleMarkdown(raw: string, fallbackTitle: string): ParsedExampleFile {
   let title: string | undefined
   let tags: string[] = []
+  let group: string | undefined
   let createdAt: number | undefined
   let embedding: number[] | undefined
   let content = raw
@@ -36,6 +44,9 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
           tags = parsed.tags.map(String).map(tag => tag.trim()).filter(Boolean)
         } else if (typeof parsed.tags === 'string') {
           tags = parseTags(parsed.tags)
+        }
+        if (typeof parsed.group === 'string' && parsed.group.trim()) {
+          group = parsed.group.trim()
         }
         if (typeof parsed.createdAt === 'number') createdAt = parsed.createdAt
         if (
@@ -57,13 +68,14 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
     title = heading ? heading[1].trim() : fallbackTitle
   }
 
-  return { title, tags, content: content.trim(), createdAt, embedding }
+  return { title, tags, group, content: content.trim(), createdAt, embedding }
 }
 
 export function serializeExampleToMarkdown(example: ExampleRecord): string {
   const frontMatter: Record<string, unknown> = {
     title: example.title,
     tags: example.tags,
+    group: example.group,
     createdAt: example.createdAt ?? Date.now()
   }
   if (example.embedding && example.embedding.length > 0) {
@@ -85,6 +97,24 @@ export function parseTags(value: string): string[] {
     .filter(Boolean)
 }
 
+// Pure: a group name as it is stored. Case and surrounding space are kept as
+// typed — group names are shown to the reader — but a blank one is not a
+// group, so it becomes the ungrouped bucket.
+export function normalizeGroupName(value: string | undefined): string {
+  const trimmed = (value ?? '').trim()
+  return trimmed || UNGROUPED
+}
+
+// Pure: the group an imported file belongs to, from the path a folder import
+// supplies ("Long form/sleep/deep-rest.md" → "sleep", so subfolders are their
+// own groups). A bare filename has no folder to name it, so the group the
+// import form asked for is used instead.
+export function groupFromImportPath(path: string, fallback: string): string {
+  const segments = path.split('/').filter(Boolean)
+  if (segments.length < 2) return normalizeGroupName(fallback)
+  return normalizeGroupName(segments[segments.length - 2])
+}
+
 export function getUserExamples(): ExampleRecord[] {
   try {
     const examples: ExampleRecord[] = []
@@ -97,6 +127,9 @@ export function getUserExamples(): ExampleRecord[] {
         id: key,
         title: parsed.title,
         tags: parsed.tags,
+        // Examples stored before groups existed have no group key; they read
+        // back as ungrouped rather than needing a rewrite migration
+        group: normalizeGroupName(parsed.group),
         content: parsed.content,
         source: 'user',
         createdAt: parsed.createdAt,
@@ -116,37 +149,117 @@ export function getAllExamples(): ExampleRecord[] {
   return [...BUNDLED_EXAMPLE_SCRIPTS, ...getUserExamples()]
 }
 
-// --- Bundled corpus opt-in ---------------------------------------------
-// The shipped examples are placeholder stubs, so they stay out of retrieval
-// unless switched on and generation is grounded in the user's own scripts.
-// They stay listed (and stay available for id lookups) when disabled; they
-// are just excluded from retrieval.
+// --- Group enablement ----------------------------------------------------
+// A group is on or off as a unit, and retrieval only draws on the examples in
+// enabled groups — that is how the style is controlled: switch a folder of
+// long-form scripts on and the short ones off, and generation imitates the
+// former. Disabled groups stay listed (and stay available for id lookups),
+// they are just excluded from retrieval.
+//
+// Stored as the list of *disabled* groups, so a newly imported folder is on
+// by default without having to be registered anywhere first.
 
+export const DISABLED_GROUPS_KEY = 'disabledExampleGroups'
+
+// Superseded by DISABLED_GROUPS_KEY; still read once to carry an existing
+// opt-in across (the bundled group started out as the only toggle)
 export const BUNDLED_EXAMPLES_ENABLED_KEY = 'bundledExamplesEnabled'
 
-export function areBundledExamplesEnabled(): boolean {
+// Pure: the stored disabled-group list, ignoring anything malformed
+export function parseDisabledGroups(raw: string | null): string[] {
+  if (!raw) return []
   try {
-    const item = window.localStorage.getItem(BUNDLED_EXAMPLES_ENABLED_KEY)
-    return item ? JSON.parse(item) === true : false
-  } catch (error) {
-    console.warn('Error loading bundled examples setting from localStorage:', error)
-    return false
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return [...new Set(parsed.filter((name): name is string => typeof name === 'string' && name.length > 0))]
+  } catch {
+    return []
   }
 }
 
-export function setBundledExamplesEnabled(enabled: boolean): void {
+// Pure: what the disabled list should be for a browser that has never stored
+// one. The bundled placeholders were opt-in before groups existed, so they
+// stay off unless that opt-in was already given.
+export function migrateDisabledGroups(bundledEnabledRaw: string | null): string[] {
+  const bundledEnabled = bundledEnabledRaw
+    ? (() => {
+        try {
+          return JSON.parse(bundledEnabledRaw) === true
+        } catch {
+          return false
+        }
+      })()
+    : false
+  return bundledEnabled ? [] : [BUNDLED_GROUP]
+}
+
+export function getDisabledGroups(): string[] {
   try {
-    window.localStorage.setItem(BUNDLED_EXAMPLES_ENABLED_KEY, JSON.stringify(enabled))
+    const raw = window.localStorage.getItem(DISABLED_GROUPS_KEY)
+    if (raw !== null) return parseDisabledGroups(raw)
+
+    const migrated = migrateDisabledGroups(
+      window.localStorage.getItem(BUNDLED_EXAMPLES_ENABLED_KEY)
+    )
+    window.localStorage.setItem(DISABLED_GROUPS_KEY, JSON.stringify(migrated))
+    return migrated
   } catch (error) {
-    console.warn('Error saving bundled examples setting to localStorage:', error)
+    console.warn('Error loading example group settings from localStorage:', error)
+    return [BUNDLED_GROUP]
   }
+}
+
+export function isGroupEnabled(group: string): boolean {
+  return !getDisabledGroups().includes(group)
+}
+
+export function setGroupEnabled(group: string, enabled: boolean): void {
+  try {
+    const disabled = new Set(getDisabledGroups())
+    if (enabled) {
+      disabled.delete(group)
+    } else {
+      disabled.add(group)
+    }
+    window.localStorage.setItem(DISABLED_GROUPS_KEY, JSON.stringify([...disabled]))
+  } catch (error) {
+    console.warn('Error saving example group settings to localStorage:', error)
+  }
+}
+
+// Pure: the groups present across the corpus, in the order examples list them
+// (bundled first, then user examples oldest first), with their sizes
+export function summarizeGroups(
+  examples: ExampleRecord[],
+  disabledGroups: string[]
+): ExampleGroupSummary[] {
+  const disabled = new Set(disabledGroups)
+  const summaries = new Map<string, ExampleGroupSummary>()
+
+  for (const example of examples) {
+    const existing = summaries.get(example.group)
+    if (existing) {
+      existing.count += 1
+      // A group holding any user example can be edited; only a wholly bundled
+      // one is read-only
+      if (example.source === 'user') existing.readOnly = false
+      continue
+    }
+    summaries.set(example.group, {
+      name: example.group,
+      count: 1,
+      enabled: !disabled.has(example.group),
+      readOnly: example.source === 'bundled'
+    })
+  }
+
+  return [...summaries.values()]
 }
 
 // The examples retrieval is allowed to draw on
 export function getEnabledExamples(): ExampleRecord[] {
-  const user = getUserExamples()
-  if (!areBundledExamplesEnabled()) return user
-  return [...BUNDLED_EXAMPLE_SCRIPTS, ...user]
+  const disabled = new Set(getDisabledGroups())
+  return getAllExamples().filter(example => !disabled.has(example.group))
 }
 
 function saveUserExample(example: ExampleRecord): void {
@@ -176,11 +289,17 @@ export async function backfillMissingEmbeddings(): Promise<void> {
   }
 }
 
-function createUserExample(title: string, tags: string[], content: string): ExampleRecord {
+function createUserExample(
+  title: string,
+  tags: string[],
+  group: string,
+  content: string
+): ExampleRecord {
   const example: ExampleRecord = {
     id: `${EXAMPLE_KEY_PREFIX}${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
     title,
     tags,
+    group: normalizeGroupName(group),
     content,
     source: 'user',
     createdAt: Date.now()
@@ -204,22 +323,31 @@ export function isImportableExampleFile(path: string): boolean {
   return IMPORTABLE_EXTENSIONS.some(extension => name.toLowerCase().endsWith(extension))
 }
 
-// Imports a markdown or plain text file as a user example. Accepts a path
-// (as folder imports supply) and titles from the file name alone.
-export function importExampleFile(filename: string, text: string): ExampleRecord {
+// Imports a markdown or plain text file as a user example. Accepts a path (as
+// folder imports supply) and titles from the file name alone. The group comes
+// from the file's own front matter if it names one — an explicit label beats
+// an inferred one — otherwise from the folder the file sits in, falling back
+// to the group the import form asked for.
+export function importExampleFile(
+  filename: string,
+  text: string,
+  fallbackGroup: string = UNGROUPED
+): ExampleRecord {
   const name = filename.split('/').pop() ?? filename
   const fallbackTitle = name.replace(/\.(md|markdown|txt|text)$/i, '')
   const parsed = parseExampleMarkdown(text, fallbackTitle)
-  return createUserExample(parsed.title, parsed.tags, parsed.content)
+  const group = parsed.group ?? groupFromImportPath(filename, fallbackGroup)
+  return createUserExample(parsed.title, parsed.tags, group, parsed.content)
 }
 
 // Promotes a completed script's consolidated content to a user example
 export function promoteScriptToExample(
   title: string,
   content: string,
-  tags: string[] = []
+  tags: string[] = [],
+  group: string = UNGROUPED
 ): ExampleRecord {
-  return createUserExample(title, tags, content)
+  return createUserExample(title, tags, group, content)
 }
 
 // --- Example selection counts (story 8.11) -------------------------------
@@ -339,6 +467,32 @@ export function updateUserExampleTags(id: string, tags: string[]): void {
   const example = getUserExamples().find(candidate => candidate.id === id)
   if (!example) return
   saveUserExample({ ...example, tags })
+}
+
+// Moves one example to another group. A group that ends up holding nothing
+// simply stops existing — groups are derived from their members, not
+// registered separately.
+export function updateUserExampleGroup(id: string, group: string): void {
+  const example = getUserExamples().find(candidate => candidate.id === id)
+  if (!example) return
+  saveUserExample({ ...example, group: normalizeGroupName(group) })
+}
+
+// Renames a group across every user example in it, carrying its enabled or
+// disabled state over so a rename never silently switches the group back on
+export function renameExampleGroup(from: string, to: string): void {
+  const target = normalizeGroupName(to)
+  if (target === from) return
+
+  for (const example of getUserExamples()) {
+    if (example.group !== from) continue
+    saveUserExample({ ...example, group: target })
+  }
+
+  if (!isGroupEnabled(from)) {
+    setGroupEnabled(from, true)
+    setGroupEnabled(target, false)
+  }
 }
 
 // Applies what the utility model made of an import (story 5.7). Rewritten

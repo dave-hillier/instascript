@@ -16,6 +16,7 @@ const record = (
   id,
   title,
   tags: [],
+  group: 'Test group',
   content,
   source: 'user',
   embedding

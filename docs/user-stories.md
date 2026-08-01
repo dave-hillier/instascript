@@ -485,6 +485,17 @@ Acceptance criteria:
 - The number of rewrites per review is capped, and the outcome (what was rewritten, why, and the resulting length) appears in the review summary banner
 - A failed review is reported next to its own button without marking the generation as failed
 
+### 8.15 Group examples to control the style [Implemented]
+As a user with more than one kind of script in my corpus, I want examples organised into groups I can switch on and off, so that a generation imitates the style of the material I chose rather than an average of everything I ever imported.
+
+Notes: a group is derived from the folder an example was imported from — a folder import creates one group per folder, subfolders included — so organising the corpus is done in the filesystem rather than one example at a time. Front matter naming a `group` wins over the folder. Groups are not registered anywhere: they exist while examples name them, so the enable/disable state is stored as the list of *disabled* groups and a newly imported folder is on by default. The bundled placeholder scripts became an ordinary group, which subsumes the old bundled-corpus toggle; browsers holding the old setting migrate on first read.
+
+Acceptance criteria:
+- Every example belongs to a group, defaulting to the folder it was imported from and editable afterwards
+- The examples page lists examples under their group and offers a checkbox per group
+- Retrieval draws only on the examples in enabled groups; a disabled group stays listed with its examples intact
+- Renaming a group moves its examples together and carries its enabled state across
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]

@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  areBundledExamplesEnabled,
-  setBundledExamplesEnabled,
   getEnabledExamples,
   isImportableExampleFile,
   BUNDLED_EXAMPLES_ENABLED_KEY,
+  BUNDLED_GROUP,
+  DISABLED_GROUPS_KEY,
+  UNGROUPED,
+  groupFromImportPath,
+  isGroupEnabled,
+  migrateDisabledGroups,
+  normalizeGroupName,
+  parseDisabledGroups,
+  setGroupEnabled,
+  summarizeGroups,
   parseExampleMarkdown,
   serializeExampleToMarkdown,
   parseTags,
@@ -14,6 +22,17 @@ import {
   mergeSelectionCounts
 } from '../exampleCorpus'
 import type { ExampleRecord } from '../../types/example'
+
+const exampleRecord = (overrides: Partial<ExampleRecord> = {}): ExampleRecord => ({
+  id: 'example_test',
+  title: 'Round Trip',
+  tags: ['sleep', 'rest'],
+  group: 'Long form',
+  content: '# Round Trip\n\n## Induction\nSettle in.',
+  source: 'user',
+  createdAt: 1234567890,
+  ...overrides
+})
 
 describe('parseExampleMarkdown', () => {
   it('reads title and tags from YAML front matter', () => {
@@ -57,35 +76,42 @@ Content.`
     expect(parsed.tags).toEqual(['sleep', 'calm', 'rest'])
   })
 
+  it('reads the group from front matter', () => {
+    const raw = `---
+title: Evening Calm
+group: Long form
+---
+Body.`
+    expect(parseExampleMarkdown(raw, 'fallback').group).toBe('Long form')
+  })
+
+  it('reports no group when front matter names none or names a blank one', () => {
+    expect(parseExampleMarkdown('# Heading\n\nBody.', 'fallback').group).toBeUndefined()
+    expect(parseExampleMarkdown('---\ngroup: "   "\n---\nBody.', 'fallback').group).toBeUndefined()
+  })
+
   it('round-trips through serialization', () => {
-    const record: ExampleRecord = {
-      id: 'example_test',
-      title: 'Round Trip',
-      tags: ['sleep', 'rest'],
-      content: '# Round Trip\n\n## Induction\nSettle in.',
-      source: 'user',
-      createdAt: 1234567890
-    }
+    const record = exampleRecord()
 
     const serialized = serializeExampleToMarkdown(record)
     const parsed = parseExampleMarkdown(serialized, 'fallback')
 
     expect(parsed.title).toBe('Round Trip')
     expect(parsed.tags).toEqual(['sleep', 'rest'])
+    expect(parsed.group).toBe('Long form')
     expect(parsed.content).toBe(record.content)
     expect(parsed.createdAt).toBe(1234567890)
   })
 
   it('round-trips a stored embedding through serialization', () => {
-    const record: ExampleRecord = {
+    const record = exampleRecord({
       id: 'example_embedded',
       title: 'Embedded',
       tags: ['calm'],
       content: 'Body text.',
-      source: 'user',
       createdAt: 1,
       embedding: [0.123456789, -0.5, 1]
-    }
+    })
 
     const parsed = parseExampleMarkdown(serializeExampleToMarkdown(record), 'fallback')
     expect(parsed.embedding).toEqual([0.12346, -0.5, 1])
@@ -93,14 +119,7 @@ Content.`
   })
 
   it('omits the embedding key entirely when absent', () => {
-    const record: ExampleRecord = {
-      id: 'example_plain',
-      title: 'Plain',
-      tags: [],
-      content: 'Body.',
-      source: 'user',
-      createdAt: 1
-    }
+    const record = exampleRecord({ id: 'example_plain', title: 'Plain', tags: [], content: 'Body.' })
     expect(serializeExampleToMarkdown(record)).not.toContain('embedding')
   })
 
@@ -206,10 +225,93 @@ describe('isImportableExampleFile', () => {
   })
 })
 
-describe('bundled corpus opt-in', () => {
-  const withStoredValue = (value: string | null) => {
-    const store = new Map<string, string>()
-    if (value !== null) store.set(BUNDLED_EXAMPLES_ENABLED_KEY, value)
+describe('normalizeGroupName', () => {
+  it('keeps the name as typed, minus surrounding space', () => {
+    expect(normalizeGroupName('  Long form  ')).toBe('Long form')
+  })
+
+  it('treats a blank or missing name as ungrouped', () => {
+    expect(normalizeGroupName('   ')).toBe(UNGROUPED)
+    expect(normalizeGroupName(undefined)).toBe(UNGROUPED)
+  })
+})
+
+describe('groupFromImportPath', () => {
+  it('names the group after the folder holding the file', () => {
+    expect(groupFromImportPath('Long form/deep-rest.md', UNGROUPED)).toBe('Long form')
+  })
+
+  it('gives a subfolder its own group rather than the top folder', () => {
+    expect(groupFromImportPath('Scripts/sleep/deep-rest.md', UNGROUPED)).toBe('sleep')
+  })
+
+  it('falls back to the requested group for a file picked on its own', () => {
+    expect(groupFromImportPath('deep-rest.md', 'Meditations')).toBe('Meditations')
+    expect(groupFromImportPath('deep-rest.md', '')).toBe(UNGROUPED)
+  })
+})
+
+describe('summarizeGroups', () => {
+  const records: ExampleRecord[] = [
+    exampleRecord({ id: 'a', group: 'Long form' }),
+    exampleRecord({ id: 'b', group: 'Long form' }),
+    exampleRecord({ id: 'c', group: BUNDLED_GROUP, source: 'bundled' }),
+    exampleRecord({ id: 'd', group: 'Short' })
+  ]
+
+  it('counts the examples in each group, in the order they appear', () => {
+    expect(summarizeGroups(records, []).map(group => [group.name, group.count])).toEqual([
+      ['Long form', 2],
+      [BUNDLED_GROUP, 1],
+      ['Short', 1]
+    ])
+  })
+
+  it('marks the groups named in the disabled list as switched off', () => {
+    const summaries = summarizeGroups(records, ['Short'])
+    expect(summaries.find(group => group.name === 'Short')?.enabled).toBe(false)
+    expect(summaries.find(group => group.name === 'Long form')?.enabled).toBe(true)
+  })
+
+  it('marks a wholly bundled group read-only and a group with user examples editable', () => {
+    const summaries = summarizeGroups(records, [])
+    expect(summaries.find(group => group.name === BUNDLED_GROUP)?.readOnly).toBe(true)
+    expect(summaries.find(group => group.name === 'Long form')?.readOnly).toBe(false)
+  })
+
+  it('returns no groups for an empty corpus', () => {
+    expect(summarizeGroups([], [])).toEqual([])
+  })
+})
+
+describe('parseDisabledGroups', () => {
+  it('reads a stored list, dropping duplicates', () => {
+    expect(parseDisabledGroups('["Short","Short","Long form"]')).toEqual(['Short', 'Long form'])
+  })
+
+  it('treats missing or malformed storage as nothing disabled', () => {
+    expect(parseDisabledGroups(null)).toEqual([])
+    expect(parseDisabledGroups('not json')).toEqual([])
+    expect(parseDisabledGroups('{"a":1}')).toEqual([])
+    expect(parseDisabledGroups('["ok", 3, ""]')).toEqual(['ok'])
+  })
+})
+
+describe('migrateDisabledGroups', () => {
+  it('starts the bundled group switched off, as it was before groups existed', () => {
+    expect(migrateDisabledGroups(null)).toEqual([BUNDLED_GROUP])
+    expect(migrateDisabledGroups('false')).toEqual([BUNDLED_GROUP])
+    expect(migrateDisabledGroups('not json')).toEqual([BUNDLED_GROUP])
+  })
+
+  it('carries an existing opt-in across, leaving every group on', () => {
+    expect(migrateDisabledGroups('true')).toEqual([])
+  })
+})
+
+describe('group enablement', () => {
+  const withStorage = (entries: Record<string, string> = {}) => {
+    const store = new Map<string, string>(Object.entries(entries))
     vi.stubGlobal('window', {
       localStorage: {
         getItem: (key: string) => store.get(key) ?? null,
@@ -224,52 +326,41 @@ describe('bundled corpus opt-in', () => {
     vi.unstubAllGlobals()
   })
 
-  it('defaults to disabled when nothing is stored', () => {
-    withStoredValue(null)
-    expect(areBundledExamplesEnabled()).toBe(false)
+  it('treats a group nobody has switched off as on', () => {
+    withStorage({ [DISABLED_GROUPS_KEY]: '[]' })
+    expect(isGroupEnabled('Long form')).toBe(true)
   })
 
-  it('reads a stored opt-in', () => {
-    withStoredValue('true')
-    expect(areBundledExamplesEnabled()).toBe(true)
+  it('persists a group being switched off and back on', () => {
+    const store = withStorage({ [DISABLED_GROUPS_KEY]: '[]' })
+
+    setGroupEnabled('Long form', false)
+    expect(store.get(DISABLED_GROUPS_KEY)).toBe('["Long form"]')
+    expect(isGroupEnabled('Long form')).toBe(false)
+
+    setGroupEnabled('Long form', true)
+    expect(isGroupEnabled('Long form')).toBe(true)
   })
 
-  it('reads a stored opt-out', () => {
-    withStoredValue('false')
-    expect(areBundledExamplesEnabled()).toBe(false)
-  })
-
-  it('treats an unreadable stored value as disabled', () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    withStoredValue('not json')
-    expect(areBundledExamplesEnabled()).toBe(false)
-    vi.restoreAllMocks()
-  })
-
-  it('persists the setting in both directions so it survives a reload', () => {
-    const store = withStoredValue(null)
-
-    setBundledExamplesEnabled(true)
-    expect(store.get(BUNDLED_EXAMPLES_ENABLED_KEY)).toBe('true')
-    expect(areBundledExamplesEnabled()).toBe(true)
-
-    setBundledExamplesEnabled(false)
-    expect(store.get(BUNDLED_EXAMPLES_ENABLED_KEY)).toBe('false')
-    expect(areBundledExamplesEnabled()).toBe(false)
-  })
-
-  it('keeps bundled examples out of the retrieval set when disabled', () => {
-    withStoredValue('false')
-    expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(false)
+  it('migrates a browser that only ever stored the bundled opt-in', () => {
+    const store = withStorage({ [BUNDLED_EXAMPLES_ENABLED_KEY]: 'true' })
+    expect(isGroupEnabled(BUNDLED_GROUP)).toBe(true)
+    // The migration is written once, so the old key stops being consulted
+    expect(store.get(DISABLED_GROUPS_KEY)).toBe('[]')
   })
 
   it('keeps bundled examples out of the retrieval set by default', () => {
-    withStoredValue(null)
+    withStorage()
     expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(false)
   })
 
-  it('includes bundled examples in the retrieval set when enabled', () => {
-    withStoredValue('true')
+  it('includes bundled examples once their group is switched on', () => {
+    withStorage({ [DISABLED_GROUPS_KEY]: '[]' })
     expect(getEnabledExamples().some(example => example.source === 'bundled')).toBe(true)
+  })
+
+  it('excludes a switched-off group from the retrieval set', () => {
+    withStorage({ [DISABLED_GROUPS_KEY]: JSON.stringify([BUNDLED_GROUP]) })
+    expect(getEnabledExamples().some(example => example.group === BUNDLED_GROUP)).toBe(false)
   })
 })

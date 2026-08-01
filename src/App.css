@@ -1966,6 +1966,68 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--danger);
 }
 
+.example-group {
+  padding: 0 1.125rem;
+  margin-bottom: 1.5rem;
+}
+
+.example-group > header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.5rem;
+}
+
+.example-group > header h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  white-space: normal;
+}
+
+.example-group-meta {
+  margin: 0.125rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+/* A group switched off keeps its place in the list, dimmed, so it is clear
+   the examples still exist and are simply not being searched */
+.example-group[data-excluded="true"] > header,
+.example-group[data-excluded="true"] .example-summary {
+  opacity: 0.55;
+}
+
+.example-group-settings {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.example-group-settings li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+}
+
+.example-group-size {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.example-settings fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.example-settings legend {
+  padding: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
 .example-list li {
   align-items: flex-start;
   padding: 1rem 0.25rem;
@@ -1975,17 +2037,14 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   background: none;
 }
 
-/* Bundled examples while the bundled corpus is switched off */
-.example-list li[data-excluded="true"] .example-summary {
-  opacity: 0.55;
-}
-
 .example-summary {
   flex: 1;
   min-width: 0;
 }
 
-.example-summary h3 {
+.example-summary h4 {
+  margin: 0;
+  font-size: 0.9375rem;
   white-space: normal;
 }
 
@@ -1995,14 +2054,16 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--ink-muted);
 }
 
-.example-tags-form {
+.example-details-form,
+.group-rename-form {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.625rem;
 }
 
-.example-tags-form input {
+.example-details-form input,
+.group-rename-form input {
   flex: 1;
   min-width: 0;
   padding: 0.375rem 0.75rem;
@@ -2015,16 +2076,19 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   transition: border-color 0.15s ease;
 }
 
-.example-tags-form input::placeholder {
+.example-details-form input::placeholder,
+.group-rename-form input::placeholder {
   color: var(--ink-muted);
 }
 
-.example-tags-form input:focus {
+.example-details-form input:focus,
+.group-rename-form input:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.example-tags-form button {
+.example-details-form button,
+.group-rename-form button {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -2040,7 +2104,8 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 
-.example-tags-form button:hover {
+.example-details-form button:hover,
+.group-rename-form button:hover {
   color: var(--accent);
   border-color: var(--accent);
 }

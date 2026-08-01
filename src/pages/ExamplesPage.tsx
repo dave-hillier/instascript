@@ -1,19 +1,24 @@
 import { useEffect, useReducer, useState } from 'react'
 import { Trash2, Check } from 'lucide-react'
-import type { ExampleRecord } from '../types/example'
+import type { ExampleRecord, ExampleGroupSummary } from '../types/example'
 import {
   applyExampleEnhancement,
-  areBundledExamplesEnabled,
   backfillMissingEmbeddings,
   getAllExamples,
+  getDisabledGroups,
   getExampleSelectionCounts,
   getKnownTags,
   importExampleFile,
   isImportableExampleFile,
   deleteUserExample,
-  setBundledExamplesEnabled,
+  renameExampleGroup,
+  setGroupEnabled,
+  summarizeGroups,
+  updateUserExampleGroup,
   updateUserExampleTags,
-  parseTags
+  normalizeGroupName,
+  parseTags,
+  UNGROUPED
 } from '../services/exampleCorpus'
 import {
   describeImportAssist,
@@ -51,7 +56,9 @@ type AssistState =
 type ExamplesState = {
   examples: ExampleRecord[]
   importCount: number
-  bundledEnabled: boolean
+  // Groups switched off are excluded from retrieval. Stored as the disabled
+  // list so a freshly imported group is on without being registered first.
+  disabledGroups: string[]
   // The files of the most recent import and the stage each reached; the
   // summary counts are derived from these rather than tracked separately
   importFiles: ImportFileProgress[]
@@ -70,7 +77,9 @@ type ExamplesAction =
   | { type: 'EXAMPLES_IMPORTED'; examples: ExampleRecord[] }
   | { type: 'EXAMPLE_DELETED'; id: string }
   | { type: 'EXAMPLE_TAGS_CHANGED'; id: string; tags: string[] }
-  | { type: 'BUNDLED_EXAMPLES_TOGGLED'; enabled: boolean }
+  | { type: 'EXAMPLE_GROUP_CHANGED'; id: string; group: string }
+  | { type: 'GROUP_TOGGLED'; group: string; enabled: boolean }
+  | { type: 'GROUP_RENAMED'; from: string; to: string }
   | { type: 'EXAMPLE_ASSISTED'; example: ExampleRecord | null }
   | { type: 'IMPORT_ASSIST_FINISHED'; outcome: ImportAssistOutcome; model: string }
 
@@ -107,8 +116,27 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
         examples: [...state.examples, ...action.examples],
         importCount: state.importCount + 1
       }
-    case 'BUNDLED_EXAMPLES_TOGGLED':
-      return { ...state, bundledEnabled: action.enabled }
+    case 'GROUP_TOGGLED':
+      return {
+        ...state,
+        disabledGroups: action.enabled
+          ? state.disabledGroups.filter(group => group !== action.group)
+          : [...new Set([...state.disabledGroups, action.group])]
+      }
+    case 'GROUP_RENAMED':
+      return {
+        ...state,
+        examples: state.examples.map(example =>
+          example.group === action.from ? { ...example, group: action.to } : example
+        ),
+        // A disabled group stays disabled under its new name. Renaming onto an
+        // existing group merges the two, so the list is deduplicated.
+        disabledGroups: [
+          ...new Set(
+            state.disabledGroups.map(group => (group === action.from ? action.to : group))
+          )
+        ]
+      }
     case 'EXAMPLE_DELETED':
       return {
         ...state,
@@ -121,14 +149,16 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
           example.id === action.id ? { ...example, tags: action.tags } : example
         )
       }
+    case 'EXAMPLE_GROUP_CHANGED':
+      return {
+        ...state,
+        examples: state.examples.map(example =>
+          example.id === action.id ? { ...example, group: action.group } : example
+        )
+      }
     default:
       return state
   }
-}
-
-interface UserExampleTagsFormProps {
-  example: ExampleRecord
-  onTagsSaved: (id: string, tags: string[]) => void
 }
 
 // How often the example has actually informed a generation (story 8.11)
@@ -137,20 +167,43 @@ const describeSelectionCount = (count: number): string => {
   return `Selected for ${count} ${count === 1 ? 'generation' : 'generations'}`
 }
 
-const UserExampleTagsForm = ({ example, onTagsSaved }: UserExampleTagsFormProps) => {
+const describeGroupSize = (count: number): string =>
+  `${count} ${count === 1 ? 'example' : 'examples'}`
+
+interface UserExampleDetailsFormProps {
+  example: ExampleRecord
+  onDetailsSaved: (id: string, group: string, tags: string[]) => void
+}
+
+// Group and tags for one example. The group is free text: typing a name no
+// other example uses creates that group, and emptying it returns the example
+// to the ungrouped bucket.
+const UserExampleDetailsForm = ({ example, onDetailsSaved }: UserExampleDetailsFormProps) => {
+  const [groupText, setGroupText] = useState(example.group)
   const [tagText, setTagText] = useState(example.tags.join(', '))
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
-    onTagsSaved(example.id, parseTags(tagText))
+    onDetailsSaved(example.id, normalizeGroupName(groupText), parseTags(tagText))
   }
 
   return (
     <form
-      className="example-tags-form"
-      aria-label={`Edit tags for ${example.title}`}
+      className="example-details-form"
+      aria-label={`Edit group and tags for ${example.title}`}
       onSubmit={handleSubmit}
     >
+      <label className="sr-only" htmlFor={`${example.id}_group`}>
+        Group for {example.title}
+      </label>
+      <input
+        id={`${example.id}_group`}
+        type="text"
+        list="example-group-names"
+        value={groupText}
+        onChange={event => setGroupText(event.target.value)}
+        placeholder="group"
+      />
       <label className="sr-only" htmlFor={`${example.id}_tags`}>
         Tags for {example.title}, comma separated
       </label>
@@ -161,9 +214,45 @@ const UserExampleTagsForm = ({ example, onTagsSaved }: UserExampleTagsFormProps)
         onChange={event => setTagText(event.target.value)}
         placeholder="tags, comma separated"
       />
-      <button type="submit" aria-label={`Save tags for ${example.title}`}>
+      <button type="submit" aria-label={`Save group and tags for ${example.title}`}>
         <Check size={14} />
-        Save tags
+        Save
+      </button>
+    </form>
+  )
+}
+
+interface GroupRenameFormProps {
+  group: ExampleGroupSummary
+  onRenamed: (from: string, to: string) => void
+}
+
+const GroupRenameForm = ({ group, onRenamed }: GroupRenameFormProps) => {
+  const [name, setName] = useState(group.name)
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    onRenamed(group.name, normalizeGroupName(name))
+  }
+
+  return (
+    <form
+      className="group-rename-form"
+      aria-label={`Rename the group ${group.name}`}
+      onSubmit={handleSubmit}
+    >
+      <label className="sr-only" htmlFor={`group-name-${group.name}`}>
+        Name of the group {group.name}
+      </label>
+      <input
+        id={`group-name-${group.name}`}
+        type="text"
+        value={name}
+        onChange={event => setName(event.target.value)}
+      />
+      <button type="submit" aria-label={`Save the name of the group ${group.name}`}>
+        <Check size={14} />
+        Rename
       </button>
     </form>
   )
@@ -176,14 +265,20 @@ export const ExamplesPage = () => {
     (): ExamplesState => ({
       examples: getAllExamples(),
       importCount: 0,
-      bundledEnabled: areBundledExamplesEnabled(),
+      disabledGroups: getDisabledGroups(),
       importFiles: [],
       assist: { status: 'idle' }
     })
   )
+  // The group single files land in. A folder import takes its group from the
+  // folder instead, so this only applies to the file picker.
+  const [importGroup, setImportGroup] = useState('')
   const importSummary = summarizeImportProgress(state.importFiles)
   const selectionCounts = getExampleSelectionCounts()
-  const userExampleCount = state.examples.filter(example => example.source === 'user').length
+  const groups = summarizeGroups(state.examples, state.disabledGroups)
+  const enabledExampleCount = groups
+    .filter(group => group.enabled)
+    .reduce((total, group) => total + group.count, 0)
 
   // Migration: examples saved before embeddings existed get theirs computed
   // once in the background; retrieval works without them in the meantime
@@ -193,7 +288,8 @@ export const ExamplesPage = () => {
 
   // Handles both single files and whole folders: a folder selection arrives
   // as its flattened contents, so anything that is not a markdown or text
-  // file is skipped rather than imported as gibberish.
+  // file is skipped rather than imported as gibberish. Each file's group
+  // comes from the folder holding it, so one import can create several.
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files ?? [])
     if (selected.length === 0) return
@@ -224,7 +320,7 @@ export const ExamplesPage = () => {
           dispatch({ type: 'IMPORT_FILE_STAGED', id, stage: 'skipped', note: 'Empty file' })
           continue
         }
-        const example = importExampleFile(path, text)
+        const example = importExampleFile(path, text, normalizeGroupName(importGroup))
         imported.push({ fileId: id, example })
         dispatch({
           type: 'IMPORT_FILE_STAGED',
@@ -297,9 +393,15 @@ export const ExamplesPage = () => {
     })
   }
 
-  const handleBundledToggle = (enabled: boolean) => {
-    setBundledExamplesEnabled(enabled)
-    dispatch({ type: 'BUNDLED_EXAMPLES_TOGGLED', enabled })
+  const handleGroupToggle = (group: string, enabled: boolean) => {
+    setGroupEnabled(group, enabled)
+    dispatch({ type: 'GROUP_TOGGLED', group, enabled })
+  }
+
+  const handleGroupRenamed = (from: string, to: string) => {
+    if (from === to) return
+    renameExampleGroup(from, to)
+    dispatch({ type: 'GROUP_RENAMED', from, to })
   }
 
   const handleDelete = (example: ExampleRecord) => {
@@ -309,9 +411,11 @@ export const ExamplesPage = () => {
     }
   }
 
-  const handleTagsSaved = (id: string, tags: string[]) => {
+  const handleDetailsSaved = (id: string, group: string, tags: string[]) => {
     updateUserExampleTags(id, tags)
+    updateUserExampleGroup(id, group)
     dispatch({ type: 'EXAMPLE_TAGS_CHANGED', id, tags })
+    dispatch({ type: 'EXAMPLE_GROUP_CHANGED', id, group })
   }
 
   return (
@@ -320,41 +424,69 @@ export const ExamplesPage = () => {
         <h2>Example corpus</h2>
         <p>
           Generation is grounded in these scripts. Your imports and promoted
-          scripts are stored in this browser. A small set of bundled
-          placeholder examples ships with the app; they are off unless you
-          switch them on.
+          scripts are stored in this browser. Examples belong to groups —
+          normally the folder they were imported from — and only the groups
+          switched on below are searched, so the style a generation imitates is
+          the style of the groups you leave on.
         </p>
       </header>
 
-      {!state.bundledEnabled && userExampleCount === 0 && (
+      {enabledExampleCount === 0 && (
         <p className="example-warning" role="status">
-          You have no examples of your own yet, so generation has nothing to
-          ground itself in. Import a markdown or text file below, promote a
-          script you have written, or switch the bundled placeholder examples
-          on.
+          No group is switched on, so generation has nothing to ground itself
+          in. Import a folder of scripts below, promote a script you have
+          written, or switch a group on.
         </p>
       )}
 
       <form className="example-settings" aria-label="Corpus settings">
-        <label className="checkbox-field" htmlFor="bundled-examples">
-          <input
-            type="checkbox"
-            id="bundled-examples"
-            checked={state.bundledEnabled}
-            onChange={event => handleBundledToggle(event.target.checked)}
-            aria-describedby="bundled-examples-help"
-          />
-          <span>Also use the bundled placeholder examples</span>
-        </label>
-        <p id="bundled-examples-help">
-          On means the bundled placeholder scripts are searched alongside your
-          own. They are short stubs, so leaving them off keeps generation
-          grounded only in material whose style you chose. Either way they stay
-          listed below.
+        <fieldset>
+          <legend>Groups searched during generation</legend>
+          {groups.length === 0 ? (
+            <p>No groups yet. Importing examples creates them.</p>
+          ) : (
+            <ul className="example-group-settings">
+              {groups.map(group => (
+                <li key={group.name}>
+                  <label className="checkbox-field" htmlFor={`group-${group.name}`}>
+                    <input
+                      type="checkbox"
+                      id={`group-${group.name}`}
+                      checked={group.enabled}
+                      onChange={event => handleGroupToggle(group.name, event.target.checked)}
+                    />
+                    <span>{group.name}</span>
+                  </label>
+                  <span className="example-group-size">{describeGroupSize(group.count)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </fieldset>
+        <p>
+          A group switched off stays listed and keeps its examples; it is only
+          excluded from retrieval. The bundled placeholder scripts are a group
+          like any other, off until you switch them on.
         </p>
       </form>
 
       <form className="example-import" aria-label="Import example scripts">
+        <label htmlFor="example-import-group">Group for imported files</label>
+        <input
+          id="example-import-group"
+          type="text"
+          list="example-group-names"
+          value={importGroup}
+          onChange={event => setImportGroup(event.target.value)}
+          placeholder={UNGROUPED}
+          aria-describedby="example-import-group-help"
+        />
+        <p id="example-import-group-help">
+          Used for files picked individually. A folder import ignores it and
+          names each group after the folder the file sits in, so subfolders
+          become their own groups.
+        </p>
+
         <label htmlFor="example-import-input">
           Import markdown or text files as examples
         </label>
@@ -398,53 +530,78 @@ export const ExamplesPage = () => {
         )}
       </form>
 
+      {/* Offers the existing group names as suggestions wherever one is typed,
+          so moving an example into a group does not depend on retyping it
+          exactly */}
+      <datalist id="example-group-names">
+        {groups.map(group => (
+          <option key={group.name} value={group.name} />
+        ))}
+      </datalist>
+
       {state.examples.length === 0 ? (
         <p>No examples yet. Import a markdown or text file to get started.</p>
       ) : (
-        <ul className="example-list">
-          {state.examples.map(example => (
-            <li
-              key={example.id}
-              data-excluded={example.source === 'bundled' && !state.bundledEnabled}
-            >
-              <div className="example-summary">
-                <h3>{example.title}</h3>
-                <p className="example-meta">
-                  {example.source === 'bundled'
-                    ? state.bundledEnabled
-                      ? 'Bundled · read-only'
-                      : 'Bundled · excluded from generation'
-                    : 'Yours'}
-                  {' · '}
-                  {countWords(example.content).toLocaleString('en-US')} words
-                  {' · '}
-                  {describeSelectionCount(selectionCounts[example.id] ?? 0)}
-                  {example.source === 'bundled' && example.tags.length > 0 && (
-                    <> · {example.tags.join(', ')}</>
-                  )}
-                </p>
-                {example.source === 'user' && (
-                  <UserExampleTagsForm
-                    key={`${example.id}_${example.tags.join(',')}`}
-                    example={example}
-                    onTagsSaved={handleTagsSaved}
-                  />
-                )}
-              </div>
-              {example.source === 'user' && (
-                <div className="example-actions">
-                  <button
-                    onClick={() => handleDelete(example)}
-                    aria-label={`Delete example ${example.title}`}
-                    type="button"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+        groups.map(group => (
+          <section
+            key={group.name}
+            className="example-group"
+            aria-label={`Group ${group.name}`}
+            data-excluded={!group.enabled}
+          >
+            <header>
+              <h3>{group.name}</h3>
+              <p className="example-group-meta">
+                {describeGroupSize(group.count)}
+                {' · '}
+                {group.enabled ? 'Searched during generation' : 'Excluded from generation'}
+              </p>
+              {!group.readOnly && (
+                <GroupRenameForm group={group} onRenamed={handleGroupRenamed} />
               )}
-            </li>
-          ))}
-        </ul>
+            </header>
+
+            <ul className="example-list">
+              {state.examples
+                .filter(example => example.group === group.name)
+                .map(example => (
+                  <li key={example.id}>
+                    <div className="example-summary">
+                      <h4>{example.title}</h4>
+                      <p className="example-meta">
+                        {example.source === 'bundled' ? 'Bundled · read-only' : 'Yours'}
+                        {' · '}
+                        {countWords(example.content).toLocaleString('en-US')} words
+                        {' · '}
+                        {describeSelectionCount(selectionCounts[example.id] ?? 0)}
+                        {example.source === 'bundled' && example.tags.length > 0 && (
+                          <> · {example.tags.join(', ')}</>
+                        )}
+                      </p>
+                      {example.source === 'user' && (
+                        <UserExampleDetailsForm
+                          key={`${example.id}_${example.group}_${example.tags.join(',')}`}
+                          example={example}
+                          onDetailsSaved={handleDetailsSaved}
+                        />
+                      )}
+                    </div>
+                    {example.source === 'user' && (
+                      <div className="example-actions">
+                        <button
+                          onClick={() => handleDelete(example)}
+                          aria-label={`Delete example ${example.title}`}
+                          type="button"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+            </ul>
+          </section>
+        ))
       )}
     </section>
   )
