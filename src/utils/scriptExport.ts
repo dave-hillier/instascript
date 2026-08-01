@@ -32,14 +32,23 @@ export function buildConsolidatedMarkdown(
   ].filter(Boolean).join('\n\n')
 }
 
-// A safe download filename derived from the script title, e.g.
-// "A Quiet Descent" -> "a-quiet-descent.md"
-export function markdownFilename(title: string): string {
-  const base = title
+// A safe download filename stem derived from the script title, e.g.
+// "A Quiet Descent" -> "a-quiet-descent"
+function filenameStem(title: string): string {
+  const stem = title
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80)
     .replace(/-+$/, '')
-  return `${base || 'script'}.md`
+  return stem || 'script'
+}
+
+export function markdownFilename(title: string): string {
+  return `${filenameStem(title)}.md`
+}
+
+// The recorded read-aloud (story 4.6), which is written as WAV.
+export function audioFilename(title: string): string {
+  return `${filenameStem(title)}.wav`
 }

@@ -9,8 +9,28 @@
 // spirit as the existing speechSynthesis usage: they live in the service layer
 // and never touch the React tree.
 
-import { synthesizeSpeech } from './openrouterTts'
+import { synthesizeSpeech, type SynthesisRequest } from './openrouterTts'
 import { readCachedAudio, speechCacheKey, writeCachedAudio } from './speechAudioCache'
+
+// One utterance's audio: from the cache when that exact line has been
+// synthesised before, and from the model when it has not. Read-aloud and
+// export share it, so a line already heard costs nothing to record — and a
+// recorded script replays free.
+export async function fetchUtteranceAudio({
+  apiKey,
+  model,
+  voice,
+  text,
+  signal,
+}: SynthesisRequest): Promise<Blob> {
+  const key = speechCacheKey(model, voice, text)
+  const cached = await readCachedAudio(key)
+  if (cached) return cached
+
+  const audio = await synthesizeSpeech({ apiKey, model, voice, text, signal })
+  await writeCachedAudio(key, audio)
+  return audio
+}
 
 export interface SpeechEngine {
   // Resolves when the utterance has finished; rejects if it could not be
@@ -115,19 +135,13 @@ export class OpenRouterSpeechEngine implements SpeechEngine {
     const existing = this.inFlight.get(key)
     if (existing) return existing
 
-    const request = (async () => {
-      const cached = await readCachedAudio(key)
-      if (cached) return cached
-      const audio = await synthesizeSpeech({
-        apiKey: this.apiKey,
-        model: this.model,
-        voice: this.voice,
-        text,
-        signal: this.controller.signal,
-      })
-      await writeCachedAudio(key, audio)
-      return audio
-    })()
+    const request = fetchUtteranceAudio({
+      apiKey: this.apiKey,
+      model: this.model,
+      voice: this.voice,
+      text,
+      signal: this.controller.signal,
+    })
 
     this.inFlight.set(key, request)
     // A failed request must not poison the cache slot, or a retry after a
