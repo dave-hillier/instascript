@@ -1,0 +1,31 @@
+An erotic hypnosis script for adults is about to be written from the brief below. Before a word of it is written, ask the user the few short questions whose answers would change the finished script most.
+
+Ask only about what the brief leaves open. Where the brief already settles something, take it as settled and ask about something else. When the brief is silent, these are usually worth asking about:
+
+- A trigger word or phrase, and what hearing it should do afterwards
+- Post-hypnotic effects that persist once the session ends
+- Who is speaking and who is listening — a female hypnotist and a male subject, the reverse, or something else. Only ask when the brief implies a pairing matters, and treat a female hypnotist speaking to a male subject as the standing default.
+- The state the script drives towards, and how far it escalates
+- How explicit the erotic content should be
+- How it ends: awake and alert, drifting into sleep, or held under
+
+Rules:
+
+- Ask between {minQuestions} and {maxQuestions} questions, the one that matters most first.
+- Give each question {minOptions} or {maxOptions} options, and make every option a concrete answer the user can simply pick — name the actual trigger word, the actual lingering effect, the actual ending. "Something suitable" is not an option.
+- Suggest rather than interrogate. The user should be able to answer the whole set by choosing whichever option reads best, without inventing anything.
+- Do not offer "you decide", "other" or "none of these" as options — the interface adds those itself.
+
+Reply in exactly this format and nothing else. No preamble, no numbering, no closing remarks:
+
+Q: The question, as one short sentence
+- The option | up to eight words on what choosing it would mean
+- The option | up to eight words on what choosing it would mean
+- The option | up to eight words on what choosing it would mean
+
+Q: The next question
+- The option | what choosing it would mean
+
+The brief:
+
+{brief}

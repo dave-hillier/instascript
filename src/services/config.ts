@@ -145,6 +145,18 @@ export function setTtsModel(model: string): void {
   writeSetting('ttsModel', model)
 }
 
+// Whether the optional briefing stage (story 1.10) runs between the brief and
+// the generation: one request asks what the brief leaves open, and the
+// answers are folded back into it. Off by default — pressing generate should
+// still generate — and switched on from the composer itself.
+export function isBriefingStageEnabled(): boolean {
+  return readSetting<boolean>('briefingStage', false) === true
+}
+
+export function setBriefingStageEnabled(enabled: boolean): void {
+  writeSetting('briefingStage', enabled)
+}
+
 // Whether the optional style-review pass (story 8.5) runs after each full
 // generation. Opt-in, since it adds one critique request plus up to two
 // section regenerations per run.

@@ -4,6 +4,7 @@ import type { ScriptGenerationService } from './scriptGenerationService'
 import { STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 import { SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
+import { BRIEF_QUESTIONS_SECTION_TITLE } from './briefQuestions'
 import { SECTION_TARGET_WORDS } from './sectionQuality'
 import { countWords } from '../utils/scriptMetrics'
 import { beginTranscript, exampleIdsOf } from './debugTranscript'
@@ -396,6 +397,34 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
     return 'OUTLINE OK'
   }
 
+  // A plausible briefing questionnaire (story 1.10), in the line format the
+  // parser expects, so the stage can be exercised without a provider. The
+  // first question picks up the brief's own words, so the mock at least looks
+  // like it read it.
+  private generateBriefQuestionsContent(prompt: string): string {
+    const marker = 'The brief:'
+    const markerIndex = prompt.lastIndexOf(marker)
+    const brief = (markerIndex >= 0 ? prompt.slice(markerIndex + marker.length) : prompt).trim()
+    const subject = brief.split(/\s+/).slice(0, 6).join(' ') || 'the brief'
+
+    return [
+      `Q: How direct should "${subject}" be at the start?`,
+      '- Slow and oblique | Nothing named until the listener is deep',
+      '- Plain from the first minute | The intent is stated up front',
+      '- Escalating in steps | Each section names a little more',
+      '',
+      'Q: What trigger should the script plant?',
+      '- "Sink" | One word drops them straight back down',
+      '- "Eyes on me" | A phrase the hypnotist says aloud',
+      '- A snap of the fingers | A sound rather than a word',
+      '',
+      'Q: What should still be working tomorrow?',
+      '- The voice pulls them back | Each listen drops them faster',
+      '- Arousal returns on the trigger | The body answers before the mind',
+      '- Nothing lasting | The effects end with the script'
+    ].join('\n')
+  }
+
   async *regenerateSection(
     request: RegenerationRequest,
     messages: ChatMessage[],
@@ -414,9 +443,11 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
         ? this.generateScriptReviewContent(request.prompt)
         : request.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE
           ? this.generateOutlineCritiqueContent(request.prompt)
-          : request.sectionTitle === ''
-            ? this.generateRefinementContent(messages)
-            : this.generateSectionContent(request.sectionTitle)
+          : request.sectionTitle === BRIEF_QUESTIONS_SECTION_TITLE
+            ? this.generateBriefQuestionsContent(request.prompt)
+            : request.sectionTitle === ''
+              ? this.generateRefinementContent(messages)
+              : this.generateSectionContent(request.sectionTitle)
     yield* this.streamRecorded(
       content,
       messages,

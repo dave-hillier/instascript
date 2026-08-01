@@ -4,8 +4,14 @@ import { useState, useSyncExternalStore } from 'react'
 import { useAppContext } from '../hooks/useAppContext'
 import { useConversationContext } from '../hooks/useConversationContext'
 import { ScriptList } from '../components/ScriptList'
+import { BriefingStage } from '../components/BriefingStage'
 import type { Script } from '../types/script'
-import { createAppConfig, getModel } from '../services/config'
+import {
+  createAppConfig,
+  getModel,
+  isBriefingStageEnabled,
+  setBriefingStageEnabled
+} from '../services/config'
 import { providerUsedFor, resolveProviderStatus, unavailableReason } from '../services/providerStatus'
 import { subscribeToConfig, getConfigRevision } from '../services/configStore'
 import { filterScriptsByQuery, parseSortOrder, sortScriptsByCreation } from '../utils/scriptLibrary'
@@ -25,6 +31,10 @@ export const HomePage = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
   const [targetMinutes, setTargetMinutes] = useState(DEFAULT_TARGET_MINUTES)
+  // Whether the briefing stage runs before generation, and — once it is
+  // running — the brief it is asking about
+  const [askFirst, setAskFirst] = useState(isBriefingStageEnabled)
+  const [briefing, setBriefing] = useState<string | null>(null)
   const navigate = useNavigate()
 
   // The requested length, shown as both the duration the user is choosing and
@@ -81,8 +91,16 @@ export const HomePage = () => {
     updateSearchParams({ sort: order === 'oldest' ? 'oldest' : null })
   }
 
-  const handleGenerate = async () => {
-    if (!prompt.trim()) return
+  const handleBriefingToggled = (enabled: boolean) => {
+    setAskFirst(enabled)
+    setBriefingStageEnabled(enabled)
+  }
+
+  // `briefedPrompt` is what the model is asked to write from: the typed brief,
+  // or the typed brief with the briefing answers appended. The title still
+  // comes from what the user actually typed.
+  const startGeneration = async (briefedPrompt: string) => {
+    if (!briefedPrompt.trim()) return
 
     try {
       // Create new script entry
@@ -94,7 +112,7 @@ export const HomePage = () => {
         createdAt: new Date().toLocaleDateString(),
         isArchived: false,
         status: 'in-progress',
-        initialPrompt: prompt,
+        initialPrompt: briefedPrompt,
         targetMinutes,
         // The provider that will actually serve the request, not the one
         // selected: a mocked script must not be labelled as a real one
@@ -117,7 +135,7 @@ export const HomePage = () => {
 
       // Start generation directly (no job queue)
       await generateScript({
-        prompt: prompt,
+        prompt: briefedPrompt,
         conversationId: conversation.id,
         targetMinutes
       })
@@ -127,11 +145,25 @@ export const HomePage = () => {
     }
   }
 
+  // The composer's submit: with the briefing stage on, the questions come
+  // first and generation starts from whatever they add to the brief
+  const handleSubmit = () => {
+    if (!prompt.trim()) return
+
+    if (askFirst) {
+      setBriefing(prompt.trim())
+      return
+    }
+    void startGeneration(prompt)
+  }
+
   return (
     <>
-      <section>
-        <h2>What script should we generate?</h2>
-      </section>
+      {!briefing && (
+        <section>
+          <h2>What script should we generate?</h2>
+        </section>
+      )}
 
       {providerWarning && (
         <aside role="alert" className="provider-notice provider-notice-error">
@@ -148,44 +180,64 @@ export const HomePage = () => {
         </aside>
       )}
 
-      <section>
-        <form onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}>
-          <textarea
-            placeholder="Describe a script to generate"
-            aria-label="Script description"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          <div>
+      {briefing ? (
+        <BriefingStage
+          brief={briefing}
+          onReady={(briefedPrompt) => {
+            setBriefing(null)
+            void startGeneration(briefedPrompt)
+          }}
+          onBack={() => setBriefing(null)}
+        />
+      ) : (
+        <section>
+          <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+            <textarea
+              placeholder="Describe a script to generate"
+              aria-label="Script description"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
             <div>
-              <label htmlFor="target-length">Length</label>
-              <input
-                id="target-length"
-                type="range"
-                min={MIN_TARGET_MINUTES}
-                max={MAX_TARGET_MINUTES}
-                step={TARGET_MINUTES_STEP}
-                value={targetMinutes}
-                onChange={(e) => setTargetMinutes(Number(e.target.value))}
-                aria-describedby="target-length-value"
-              />
-              <output id="target-length-value" htmlFor="target-length">
-                {formatTargetLength(lengthPlan)}
-              </output>
+              <div>
+                <label htmlFor="target-length">Length</label>
+                <input
+                  id="target-length"
+                  type="range"
+                  min={MIN_TARGET_MINUTES}
+                  max={MAX_TARGET_MINUTES}
+                  step={TARGET_MINUTES_STEP}
+                  value={targetMinutes}
+                  onChange={(e) => setTargetMinutes(Number(e.target.value))}
+                  aria-describedby="target-length-value"
+                />
+                <output id="target-length-value" htmlFor="target-length">
+                  {formatTargetLength(lengthPlan)}
+                </output>
+                <label className="briefing-toggle" htmlFor="ask-first">
+                  <input
+                    id="ask-first"
+                    type="checkbox"
+                    checked={askFirst}
+                    onChange={(e) => handleBriefingToggled(e.target.checked)}
+                  />
+                  <span>Ask me questions first</span>
+                </label>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!prompt.trim() || !!providerWarning}
+                  aria-label="Generate script"
+                >
+                  <ArrowUp size={24} />
+                </button>
+              </div>
             </div>
-            <div>
-              <button
-                type="button"
-                onClick={handleGenerate}
-                disabled={!prompt.trim() || !!providerWarning}
-                aria-label="Generate script"
-              >
-                <ArrowUp size={24} />
-              </button>
-            </div>
-          </div>
-        </form>
-      </section>
+          </form>
+        </section>
+      )}
 
       <section>
         <search>

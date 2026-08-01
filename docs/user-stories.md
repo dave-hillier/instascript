@@ -90,6 +90,20 @@ Acceptance criteria:
 - Run admission, settlement, and abort-cleanup live in one module with no UI dependencies
 - Tests cover stop-during-stream, start-during-settlement, and abort-after-replacement orderings
 
+### 1.10 Be asked what the brief leaves out [Implemented]
+As a user who has typed two lines and wants a script that fits, I want the app to ask me a few multiple-choice questions before it starts writing — a trigger word, what should linger afterwards, who is speaking to whom — so that the details that shape the whole script are settled by choosing rather than by writing a longer brief.
+
+Notes: an optional stage between the composer and the first generated word, switched on from the composer itself and off by default. One request to the generation model (not the utility one — the questions are about the erotic content, which is what that model was chosen for) returns three to five questions with concrete options; the reply is parsed by a tolerant line-oriented parser and a built-in question set stands in when the reply is unusable or the request fails. Options are suggestions, never open prompts: the model is told to name the actual trigger word rather than ask the user to invent one. The answers are appended to the brief rather than rewriting it, so the conversation thread still shows what the user typed, and everything downstream — outline, sections, reviews, retries — sees one enriched brief and is otherwise unchanged.
+
+Acceptance criteria:
+- A switch on the composer turns the stage on; with it off, pressing generate generates as before
+- The questions are asked from the brief, cover what it leaves open, and each offers concrete options rather than asking the user to invent an answer
+- Every question also accepts a free-text answer and a "decide for me", which is the default — so the whole set can be answered by pressing the button
+- Where the brief is silent, a trigger word, post-hypnotic effects, and (where it matters) which of the hypnotist and subject is male or female are among the things asked about
+- A deferred question still reaches the model, marked as the writer's own call; a questionnaire nobody answered leaves the brief exactly as typed
+- The questions can be skipped while they are still being written, and the brief can be edited without losing what was typed
+- A failed request falls back to the built-in questions and says so, rather than blocking generation
+
 ## Epic 2: Section-Level Editing
 
 ### 2.1 Regenerate an individual section [Implemented]
