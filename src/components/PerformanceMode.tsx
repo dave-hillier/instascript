@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
-import { Download, Pause, Play, Square, Volume2, X } from 'lucide-react'
+import { Fragment, useEffect, useReducer, useRef, useState } from 'react'
+import { Download, Pause, Play, RotateCw, Square, Volume2, X } from 'lucide-react'
 import { tokenizeScriptLine } from '../utils/scriptLineTokens'
 import { audioFilename } from '../utils/scriptExport'
 import { downloadBlob } from '../utils/downloadFile'
@@ -23,6 +23,7 @@ import {
   TTS_MODELS,
   defaultVoiceForModel,
   findTtsModel,
+  type SpeechRetryNotice,
 } from '../services/openrouterTts'
 import {
   getOpenRouterApiKey,
@@ -58,6 +59,41 @@ type SpeechStatus = 'idle' | 'playing' | 'paused'
 type ExportStatus =
   | { phase: 'idle' }
   | { phase: 'rendering'; completed: number; total: number }
+
+// Utterances are fetched several at a time, so more than one can be waiting
+// out a rate limit at once. The indicator stays up until the last of them has
+// gone through, showing the most recent wait; a request that is already
+// waiting only replaces the notice when it backs off again.
+interface RetryState {
+  waiting: number
+  notice: SpeechRetryNotice | null
+}
+
+type RetryEvent =
+  | { type: 'RETRY_SCHEDULED'; notice: SpeechRetryNotice }
+  | { type: 'RETRY_SETTLED' }
+  | { type: 'RETRIES_CLEARED' }
+
+const NOT_RETRYING: RetryState = { waiting: 0, notice: null }
+
+const retryReducer = (state: RetryState, event: RetryEvent): RetryState => {
+  switch (event.type) {
+    case 'RETRY_SCHEDULED':
+      return {
+        waiting: event.notice.attempt === 1 ? state.waiting + 1 : state.waiting,
+        notice: event.notice,
+      }
+    case 'RETRY_SETTLED': {
+      const waiting = Math.max(0, state.waiting - 1)
+      return { waiting, notice: waiting === 0 ? null : state.notice }
+    }
+    case 'RETRIES_CLEARED':
+      return NOT_RETRYING
+  }
+}
+
+const formatRetryWait = (waitMs: number): string =>
+  `in ${Math.max(1, Math.round(waitMs / 1000))}s`
 
 // Full-screen read-aloud view (stories 4.2, 4.4, 4.5 and 4.6): larger reading
 // text, pacing marks and stage directions muted, optional auto-scroll with
@@ -102,6 +138,11 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
   // that voice is: browser speech synthesis gives no audio to capture.
   const [exportStatus, setExportStatus] = useState<ExportStatus>({ phase: 'idle' })
   const exportControllerRef = useRef<AbortController | null>(null)
+  // A rate-limited request waits rather than fails, which without saying so
+  // looks exactly like a read that has stalled.
+  const [retryState, dispatchRetry] = useReducer(retryReducer, NOT_RETRYING)
+  const reportRetry = (notice: SpeechRetryNotice | null) =>
+    dispatchRetry(notice ? { type: 'RETRY_SCHEDULED', notice } : { type: 'RETRY_SETTLED' })
 
   const readAloudAvailable = speechSupported || openRouterAvailable
   const usingOpenRouter = engine === 'openrouter' && openRouterAvailable
@@ -180,11 +221,17 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
     speakerRef.current = null
     setSpeechStatus('idle')
     setSpokenParagraphKey(null)
+    dispatchRetry({ type: 'RETRIES_CLEARED' })
   }
 
   const createEngine = (): SpeechEngine =>
     usingOpenRouter
-      ? new OpenRouterSpeechEngine({ apiKey: openRouterApiKey!, model: ttsModel, voice: ttsVoice })
+      ? new OpenRouterSpeechEngine({
+          apiKey: openRouterApiKey!,
+          model: ttsModel,
+          voice: ttsVoice,
+          onRetry: reportRetry,
+        })
       : new BrowserSpeechEngine(voiceURI)
 
   const toggleReadAloud = () => {
@@ -257,6 +304,7 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
             voice: ttsVoice,
             text,
             signal: controller.signal,
+            onRetry: reportRetry,
           }),
         decode: createSpeechDecoder(),
         signal: controller.signal,
@@ -273,6 +321,8 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
     } finally {
       exportControllerRef.current = null
       setExportStatus({ phase: 'idle' })
+      // Requests abandoned mid-wait never report their own settling.
+      dispatchRetry({ type: 'RETRIES_CLEARED' })
     }
   }
 
@@ -492,6 +542,13 @@ export const PerformanceMode = ({ title, sections, showSectionTitles, onExit }: 
                 </option>
               ))}
             </select>
+            {retryState.notice && (
+              <span className="read-aloud-retry" role="status">
+                <RotateCw size={16} aria-hidden="true" />
+                {`Retrying ${formatRetryWait(retryState.notice.waitMs)}` +
+                  ` (${retryState.notice.attempt} of ${retryState.notice.attempts})`}
+              </span>
+            )}
             {exportAvailable && (
               <>
                 <button

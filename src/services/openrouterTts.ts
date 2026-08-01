@@ -68,6 +68,36 @@ async function describeFailure(response: Response): Promise<string> {
   return `Speech request failed (${response.status} ${response.statusText})`.trim()
 }
 
+// A rejected request, carrying what the retry policy needs to decide: which
+// status came back, and how long OpenRouter asked us to wait.
+export class SpeechRequestFailed extends Error {
+  readonly status: number
+  readonly retryAfterMs: number | null
+
+  constructor(message: string, status: number, retryAfterMs: number | null) {
+    super(message)
+    this.name = 'SpeechRequestFailed'
+    this.status = status
+    this.retryAfterMs = retryAfterMs
+  }
+}
+
+// Retry-After is either a number of seconds or an HTTP date; OpenRouter sends
+// it with 429 and 503, and asks that it be honoured before trying again.
+//
+// From a browser it is usually invisible: the endpoint's
+// Access-Control-Expose-Headers lists only X-Generation-Id, X-Provider-Name
+// and cf-ray, and Retry-After is not CORS-safelisted, so fetch reads null for
+// it. It is honoured when present all the same — the backoff ladder below is
+// what actually paces retries here.
+export function parseRetryAfterMs(header: string | null, now: number = Date.now()): number | null {
+  if (!header) return null
+  const seconds = Number(header)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const at = Date.parse(header)
+  return Number.isNaN(at) ? null : Math.max(0, at - now)
+}
+
 // One request, one utterance. Callers chunk the script and cache the result;
 // this function stays a thin, testable wrapper over the HTTP call.
 export async function synthesizeSpeech({
@@ -97,8 +127,103 @@ export async function synthesizeSpeech({
   })
 
   if (!response.ok) {
-    throw new Error(await describeFailure(response))
+    throw new SpeechRequestFailed(
+      await describeFailure(response),
+      response.status,
+      parseRetryAfterMs(response.headers.get('Retry-After'))
+    )
   }
 
   return response.blob()
+}
+
+// What OpenRouter documents as worth trying again: rate limiting, a request
+// that timed out, and a provider that was briefly unavailable or answered
+// badly. Everything else — a rejected key, an empty balance, an unknown model
+// — would fail identically however many times it were asked.
+const RETRYABLE_STATUSES = new Set([408, 429, 502, 503])
+// One, two, four then eight seconds: without a readable Retry-After the ladder
+// is guesswork, so it is long enough to outlast a short burst of limiting and
+// short enough that a genuinely stuck request still fails while the listener
+// is watching. Utterances already fetched stay cached, so a read or export
+// that does give up resumes without paying for them again.
+const MAX_RETRIES = 4
+const BASE_BACKOFF_MS = 1000
+const MAX_BACKOFF_MS = 30000
+
+export interface SpeechRetryNotice {
+  // Which retry is about to be waited out, and out of how many.
+  attempt: number
+  attempts: number
+  waitMs: number
+}
+
+export interface RetryingSynthesisRequest extends SynthesisRequest {
+  // Called before each wait, so a long read or export can show that it is
+  // waiting rather than stalled.
+  onRetry?: (notice: SpeechRetryNotice) => void
+}
+
+function abortError(): Error {
+  const error = new Error('Speech request aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+function isRetryable(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'AbortError') return false
+  if (error instanceof SpeechRequestFailed) return RETRYABLE_STATUSES.has(error.status)
+  // A fetch that never reached OpenRouter — a dropped connection, a network
+  // that came back a moment later — rejects with a plain TypeError.
+  return error instanceof TypeError
+}
+
+// Honour what the server asked for; otherwise back off exponentially. The
+// jitter matters because utterances are fetched several at a time: without it
+// they would all come back at the same instant and be limited together again.
+function retryDelayMs(error: unknown, retry: number): number {
+  if (error instanceof SpeechRequestFailed && error.retryAfterMs !== null) {
+    return Math.min(MAX_BACKOFF_MS, error.retryAfterMs)
+  }
+  const backoff = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** retry)
+  return Math.round(backoff / 2 + Math.random() * (backoff / 2))
+}
+
+// A wait that a cancelled export does not have to sit through.
+function wait(durationMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError())
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(abortError())
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, durationMs)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+// One utterance, asked for again when OpenRouter says it is worth asking
+// again. A long script is a long run of requests, and a single rate limit
+// part-way through should cost a pause rather than the whole read or
+// recording.
+export async function synthesizeSpeechWithRetry({
+  onRetry,
+  ...request
+}: RetryingSynthesisRequest): Promise<Blob> {
+  for (let retry = 0; ; retry += 1) {
+    try {
+      return await synthesizeSpeech(request)
+    } catch (error) {
+      if (retry >= MAX_RETRIES || !isRetryable(error)) throw error
+      const waitMs = retryDelayMs(error, retry)
+      onRetry?.({ attempt: retry + 1, attempts: MAX_RETRIES, waitMs })
+      await wait(waitMs, request.signal)
+    }
+  }
 }

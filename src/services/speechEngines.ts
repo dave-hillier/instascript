@@ -9,8 +9,20 @@
 // spirit as the existing speechSynthesis usage: they live in the service layer
 // and never touch the React tree.
 
-import { synthesizeSpeech, type SynthesisRequest } from './openrouterTts'
+import {
+  synthesizeSpeechWithRetry,
+  type SynthesisRequest,
+  type SpeechRetryNotice,
+} from './openrouterTts'
 import { readCachedAudio, speechCacheKey, writeCachedAudio } from './speechAudioCache'
+
+// Told when an utterance starts waiting to be retried, and told null when
+// that same utterance stops waiting, however it ended.
+export type SpeechRetryListener = (notice: SpeechRetryNotice | null) => void
+
+export interface UtteranceRequest extends SynthesisRequest {
+  onRetry?: SpeechRetryListener
+}
 
 // One utterance's audio: from the cache when that exact line has been
 // synthesised before, and from the model when it has not. Read-aloud and
@@ -22,14 +34,35 @@ export async function fetchUtteranceAudio({
   voice,
   text,
   signal,
-}: SynthesisRequest): Promise<Blob> {
+  onRetry,
+}: UtteranceRequest): Promise<Blob> {
   const key = speechCacheKey(model, voice, text)
   const cached = await readCachedAudio(key)
   if (cached) return cached
 
-  const audio = await synthesizeSpeech({ apiKey, model, voice, text, signal })
-  await writeCachedAudio(key, audio)
-  return audio
+  // The end of the waiting is reported only by a request that was waiting, so
+  // a caller counting them can tell that one utterance is still held up while
+  // its neighbours have gone through.
+  let retried = false
+  const reportRetry = (notice: SpeechRetryNotice) => {
+    retried = true
+    onRetry?.(notice)
+  }
+
+  try {
+    const audio = await synthesizeSpeechWithRetry({
+      apiKey,
+      model,
+      voice,
+      text,
+      signal,
+      onRetry: reportRetry,
+    })
+    await writeCachedAudio(key, audio)
+    return audio
+  } finally {
+    if (retried) onRetry?.(null)
+  }
 }
 
 export interface SpeechEngine {
@@ -103,6 +136,9 @@ export interface OpenRouterSpeechEngineOptions {
   apiKey: string
   model: string
   voice: string
+  // Told when a request is waiting to be retried, and told again with null
+  // once that utterance has settled, so the view can show the wait.
+  onRetry?: SpeechRetryListener
 }
 
 // OpenRouter text-to-speech: one request per utterance, cached by text so a
@@ -112,6 +148,7 @@ export class OpenRouterSpeechEngine implements SpeechEngine {
   private readonly apiKey: string
   private readonly model: string
   private voice: string
+  private readonly onRetry?: SpeechRetryListener
   private readonly controller = new AbortController()
   private readonly inFlight = new Map<string, Promise<Blob>>()
   private audio: HTMLAudioElement | null = null
@@ -120,10 +157,11 @@ export class OpenRouterSpeechEngine implements SpeechEngine {
   private releasePause: (() => void) | null = null
   private pauseGate: Promise<void> | null = null
 
-  constructor({ apiKey, model, voice }: OpenRouterSpeechEngineOptions) {
+  constructor({ apiKey, model, voice, onRetry }: OpenRouterSpeechEngineOptions) {
     this.apiKey = apiKey
     this.model = model
     this.voice = voice
+    this.onRetry = onRetry
   }
 
   setVoice(voice: string) {
@@ -141,6 +179,7 @@ export class OpenRouterSpeechEngine implements SpeechEngine {
       voice: this.voice,
       text,
       signal: this.controller.signal,
+      onRetry: this.onRetry,
     })
 
     this.inFlight.set(key, request)

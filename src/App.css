@@ -2066,6 +2066,30 @@ dialog.performance-mode[open] {
   font-size: 0.85rem;
 }
 
+/* A request waiting out a rate limit or a brief provider outage. Without it,
+   the wait is indistinguishable from a read that has simply stopped */
+.performance-controls .read-aloud-retry {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.performance-controls .read-aloud-retry svg {
+  /* Turning, because the wait ends by itself — nothing here needs clicking.
+     The global reduced-motion rule stops it for anyone who asks */
+  animation: spin 1.6s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* How far the exported recording has got (story 4.6). Rendering a long
    script is a run of requests, so the count of lines is shown alongside the
    bar — a percentage alone says nothing about what is left to pay for */
