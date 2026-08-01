@@ -2265,7 +2265,9 @@ main:has(> .workspace) {
    at the top where it reads naturally */
 .thread-scroller {
   flex: 1;
-  min-height: 0;
+  /* Keeps a couple of turns in view when the progress details claim the rest
+     of the panel, rather than the thread vanishing entirely */
+  min-height: 5rem;
   overflow-y: auto;
   display: flex;
   flex-direction: column-reverse;
@@ -2392,9 +2394,21 @@ main:has(> .workspace) {
 /* Script workspace: composer                                          */
 /* ------------------------------------------------------------------ */
 
+/* A flex column that is allowed to shrink: with the progress details open its
+   content can be taller than the room left for it, and without min-height: 0 it
+   would refuse to give way — pushing the composer past the bottom of the panel
+   on a wide screen, and the script clean off a narrow one */
 .composer-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-top: 1px solid var(--line);
   padding: 0.875rem 1.125rem 1.125rem;
+}
+
+.composer-area .refine-error,
+.composer-area .composer {
+  flex-shrink: 0;
 }
 
 .composer-area .refine-error {
@@ -2473,9 +2487,14 @@ main:has(> .workspace) {
   cursor: default;
 }
 
-/* Progress meters and usage, folded beneath the composer */
+/* Progress meters and usage, folded beneath the composer. Open, they take
+   whatever height the panel has left and scroll within it, instead of growing
+   the panel past the composer — or, once the panes stack, pushing the script
+   out of the viewport altogether */
 .run-details {
+  min-height: 0;
   margin-top: 0.875rem;
+  overflow-y: auto;
 }
 
 .run-details > summary {
@@ -2568,7 +2587,11 @@ main:has(> .workspace) {
     grid-template-rows: auto minmax(0, 1fr);
   }
 
+  /* An auto grid row grows to whatever it holds, so without a ceiling the open
+     thread — or the open progress details — would push the script out of the
+     viewport entirely. The panel scrolls inside this instead. */
   .conversation-panel {
+    max-height: 60dvh;
     border-right: none;
     border-bottom: 1px solid var(--line);
   }
