@@ -165,6 +165,35 @@ describe('enhanceImportedExample', () => {
     expect(enhancement.tags).toEqual(['sleep'])
   })
 
+  it('announces each job as it starts, so the import meter can name the stage', async () => {
+    const service = new FakeUtilityService({
+      formatting: new Error('rate limited'),
+      tagging: 'sleep'
+    })
+    const jobs: string[] = []
+
+    await enhanceImportedExample(example(), service, [], {
+      onJobStarted: job => jobs.push(job)
+    })
+
+    // Announced before the request, so a failing job is still shown as run
+    expect(jobs).toEqual(['formatting', 'tagging'])
+  })
+
+  it('announces only the jobs an example actually needs', async () => {
+    const service = new FakeUtilityService({ tagging: 'sleep' })
+    const jobs: string[] = []
+
+    await enhanceImportedExample(
+      example({ content: `# Deep Rest\n\n${PLAIN_SCRIPT}` }),
+      service,
+      [],
+      { onJobStarted: job => jobs.push(job) }
+    )
+
+    expect(jobs).toEqual(['tagging'])
+  })
+
   it('returns nothing when both jobs fail', async () => {
     const service = new FakeUtilityService({
       formatting: new Error('offline'),
