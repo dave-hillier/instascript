@@ -70,11 +70,14 @@ type ExamplesState = {
   // The files of the most recent import and the stage each reached; the
   // summary counts are derived from these rather than tracked separately
   importFiles: ImportFileProgress[]
+  // How many files of the most recent selection were not example files at
+  // all. They get no row, so this is the one count the rows cannot derive.
+  importIgnored: number
   assist: AssistState
 }
 
 type ExamplesAction =
-  | { type: 'IMPORT_STARTED'; files: ImportFileProgress[] }
+  | { type: 'IMPORT_STARTED'; files: ImportFileProgress[]; ignored: number }
   | {
       type: 'IMPORT_FILE_STAGED'
       id: string
@@ -94,6 +97,10 @@ type ExamplesAction =
 const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
   examples.filter(example => example.source === 'user')
 
+// A folder selection knows where each file sat; a file chosen on its own has
+// only its name
+const importPathOf = (file: File): string => file.webkitRelativePath || file.name
+
 // Any change to the corpus can remove the folder that was active; the active
 // folder is re-resolved against what is left rather than tracked separately
 const withExamples = (state: ExamplesState, examples: ExampleRecord[]): ExamplesState => ({
@@ -111,6 +118,7 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
       return {
         ...state,
         importFiles: action.files,
+        importIgnored: action.ignored,
         importedFolders: [],
         assist: { status: 'idle' }
       }
@@ -185,10 +193,11 @@ export const ExamplesPage = () => {
       activeFolder: getActiveExampleFolder(),
       importedFolders: [],
       importFiles: [],
+      importIgnored: 0,
       assist: { status: 'idle' }
     })
   )
-  const importSummary = summarizeImportProgress(state.importFiles)
+  const importSummary = summarizeImportProgress(state.importFiles, state.importIgnored)
   const selectionCounts = getExampleSelectionCounts()
   const userExamples = userExamplesOf(state.examples)
   const bundledExamples = state.examples.filter(example => example.source === 'bundled')
@@ -215,30 +224,27 @@ export const ExamplesPage = () => {
 
   // Handles both single files and whole folders: a folder selection arrives
   // as its flattened contents, so anything that is not a markdown or text
-  // file is skipped rather than imported as gibberish.
+  // file is dropped rather than imported as gibberish.
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files ?? [])
     if (selected.length === 0) return
 
-    // Every selected file gets a row up front, so a folder import shows its
-    // whole queue rather than growing a list as it goes
-    const progress = createImportProgress(
-      selected.map(file => file.webkitRelativePath || file.name)
+    // A folder arrives with its images, PDFs and dotfiles in tow. Those are
+    // not part of the import, so they are counted aside rather than queued —
+    // the meter measures the work being done, not the size of the folder.
+    const importable = selected.filter(file =>
+      isImportableExampleFile(importPathOf(file))
     )
-    dispatch({ type: 'IMPORT_STARTED', files: progress })
+    const ignored = selected.length - importable.length
+
+    // Every file being imported gets a row up front, so a folder import shows
+    // its whole queue rather than growing a list as it goes
+    const progress = createImportProgress(importable.map(importPathOf))
+    dispatch({ type: 'IMPORT_STARTED', files: progress, ignored })
 
     const imported: ImportedFile[] = []
-    for (const [index, file] of selected.entries()) {
+    for (const [index, file] of importable.entries()) {
       const { id, path } = progress[index]
-      if (!isImportableExampleFile(path)) {
-        dispatch({
-          type: 'IMPORT_FILE_STAGED',
-          id,
-          stage: 'skipped',
-          note: 'Not a markdown or text file'
-        })
-        continue
-      }
       dispatch({ type: 'IMPORT_FILE_STAGED', id, stage: 'reading' })
       try {
         const text = await file.text()
@@ -426,7 +432,7 @@ export const ExamplesPage = () => {
         />
         <p id="example-import-folder-help">
           Every markdown and text file in the folder and its subfolders is
-          imported; anything else is skipped. Each script is filed under the
+          imported; anything else is ignored. Each script is filed under the
           folder it sits in, so a folder of categorised subfolders arrives as
           one corpus folder per subfolder.
         </p>
