@@ -15,6 +15,7 @@ Rules:
 - Give each question {minOptions} or {maxOptions} options, and make every option a concrete answer the user can simply pick — name the actual trigger word, the actual lingering effect, the actual ending. "Something suitable" is not an option.
 - Suggest rather than interrogate. The user should be able to answer the whole set by choosing whichever option reads best, without inventing anything.
 - Do not offer "you decide", "other" or "none of these" as options — the interface adds those itself.
+- Most questions take one answer. Where several answers could honestly hold at once — the effects that linger, the themes to touch, the sensations to draw on — end the question with "(choose any that apply)" and the user will be able to pick more than one. Mark at most two questions this way, and make sure every option on such a question still works alongside the others.
 
 Reply in exactly this format and nothing else. No preamble, no numbering, no closing remarks:
 
@@ -22,6 +23,10 @@ Q: The question, as one short sentence
 - The option | up to eight words on what choosing it would mean
 - The option | up to eight words on what choosing it would mean
 - The option | up to eight words on what choosing it would mean
+
+Q: A question several answers could hold at once? (choose any that apply)
+- The option | what choosing it would mean
+- The option | what choosing it would mean
 
 Q: The next question
 - The option | what choosing it would mean

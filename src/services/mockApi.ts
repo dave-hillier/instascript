@@ -418,10 +418,10 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
       '- "Eyes on me" | A phrase the hypnotist says aloud',
       '- A snap of the fingers | A sound rather than a word',
       '',
-      'Q: What should still be working tomorrow?',
+      'Q: What should still be working tomorrow? (choose any that apply)',
       '- The voice pulls them back | Each listen drops them faster',
       '- Arousal returns on the trigger | The body answers before the mind',
-      '- Nothing lasting | The effects end with the script'
+      '- Obedience carries into the day | Following stays easy once they wake'
     ].join('\n')
   }
 

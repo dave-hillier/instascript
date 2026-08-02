@@ -23,6 +23,7 @@ interface QuestionFieldsetProps {
   question: BriefQuestion
   answer: BriefAnswer
   onOptionChosen: (option: string) => void
+  onOptionToggled: (option: string) => void
   onAnswerTyped: (text: string) => void
   onDeferred: () => void
 }
@@ -30,61 +31,91 @@ interface QuestionFieldsetProps {
 // What a question shows before the user touches it: the writer's call
 const DEFERRED: BriefAnswer = { kind: 'deferred' }
 
+// Whether an option is chosen, on a question of either kind
+function isChosen(answer: BriefAnswer, label: string): boolean {
+  if (answer.kind === 'options') return answer.values.includes(label)
+  return answer.kind === 'option' && answer.value === label
+}
+
+// The user's own words as the question currently holds them. A multi-select
+// question keeps them beside its ticked options; a single-choice one only has
+// them when nothing was picked from the list.
+function typedAnswer(answer: BriefAnswer): string {
+  if (answer.kind === 'options') return answer.custom
+  return answer.kind === 'custom' ? answer.value : ''
+}
+
+// A question taking any number of answers: checkboxes, and nothing ticked
+// means the writer decides, so it needs no "decide for me" of its own. One
+// taking a single answer keeps the radio group, where "something else" and
+// "decide for me" are choices in the same list.
 const QuestionFieldset = ({
   question,
   answer,
   onOptionChosen,
+  onOptionToggled,
   onAnswerTyped,
   onDeferred
-}: QuestionFieldsetProps) => (
-  <fieldset>
-    <legend>{question.question}</legend>
+}: QuestionFieldsetProps) => {
+  const multiSelect = question.multiSelect === true
 
-    {question.options.map(option => (
-      <label key={option.label}>
-        <input
-          type="radio"
-          name={question.id}
-          value={option.label}
-          checked={answer.kind === 'option' && answer.value === option.label}
-          onChange={() => onOptionChosen(option.label)}
-        />
-        <span>
-          {option.label}
-          {option.detail && <small>{option.detail}</small>}
-        </span>
-      </label>
-    ))}
+  return (
+    <fieldset data-select={multiSelect ? 'many' : 'one'}>
+      <legend>{question.question}</legend>
+      {multiSelect && <p>Choose as many as fit — or none, and the writer decides.</p>}
 
-    <label>
+      {question.options.map(option => (
+        <label key={option.label}>
+          <input
+            type={multiSelect ? 'checkbox' : 'radio'}
+            name={question.id}
+            value={option.label}
+            checked={isChosen(answer, option.label)}
+            onChange={() =>
+              multiSelect ? onOptionToggled(option.label) : onOptionChosen(option.label)
+            }
+          />
+          <span>
+            {option.label}
+            {option.detail && <small>{option.detail}</small>}
+          </span>
+        </label>
+      ))}
+
+      {!multiSelect && (
+        <label>
+          <input
+            type="radio"
+            name={question.id}
+            checked={answer.kind === 'custom'}
+            onChange={() => onAnswerTyped('')}
+          />
+          <span>Something else</span>
+        </label>
+      )}
       <input
-        type="radio"
-        name={question.id}
-        checked={answer.kind === 'custom'}
-        onChange={() => onAnswerTyped('')}
+        type="text"
+        className="briefing-custom"
+        placeholder={multiSelect ? 'Anything else, in your own words' : 'In your own words'}
+        aria-label={`Your own answer: ${question.question}`}
+        value={typedAnswer(answer)}
+        onChange={event => onAnswerTyped(event.target.value)}
       />
-      <span>Something else</span>
-    </label>
-    <input
-      type="text"
-      className="briefing-custom"
-      placeholder="In your own words"
-      aria-label={`Your own answer: ${question.question}`}
-      value={answer.kind === 'custom' ? answer.value : ''}
-      onChange={event => onAnswerTyped(event.target.value)}
-    />
 
-    <label>
-      <input
-        type="radio"
-        name={question.id}
-        checked={answer.kind === 'deferred'}
-        onChange={onDeferred}
-      />
-      <span>Decide for me</span>
-    </label>
-  </fieldset>
-)
+      {!multiSelect && (
+        <label>
+          <input
+            type="radio"
+            name={question.id}
+            checked={answer.kind === 'deferred'}
+            onChange={onDeferred}
+          />
+          <span>Decide for me</span>
+        </label>
+      )}
+    </fieldset>
+  )
+}
 
 // The optional briefing stage (story 1.10): between the brief and the first
 // generated word, the model asks what the brief leaves open and the answers
@@ -163,6 +194,9 @@ export const BriefingStage = ({ brief, onReady, onBack }: BriefingStageProps) =>
               answer={state.answers[question.id] ?? DEFERRED}
               onOptionChosen={option =>
                 dispatch({ type: 'OPTION_CHOSEN', questionId: question.id, option })
+              }
+              onOptionToggled={option =>
+                dispatch({ type: 'OPTION_TOGGLED', questionId: question.id, option })
               }
               onAnswerTyped={text =>
                 dispatch({ type: 'ANSWER_TYPED', questionId: question.id, text })
