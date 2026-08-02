@@ -17,7 +17,18 @@ import {
   folderFromImportPath,
   listExampleFolders,
   resolveActiveFolder,
+  resolveImportFolder,
+  parseFolderList,
+  createExampleFolder,
+  renameExampleFolder,
+  deleteExampleFolder,
+  moveExampleToFolder,
+  getDeclaredFolders,
+  getExampleFolders,
+  getActiveExampleFolder,
+  getUserExamples,
   ACTIVE_EXAMPLE_FOLDER_KEY,
+  EXAMPLE_FOLDERS_KEY,
   UNFILED_FOLDER
 } from '../exampleCorpus'
 import type { ExampleRecord } from '../../types/example'
@@ -253,6 +264,49 @@ describe('example folders', () => {
     expect(parseExampleMarkdown(serialized, 'fallback').folder).toBe('Deep Sleep')
   })
 
+  it('keeps a folder that has been made but not filled, and lists it in order', () => {
+    const folders = listExampleFolders(
+      [example({ id: 'a', folder: 'sleep' }), example({ id: 'b' })],
+      ['Anxiety', 'sleep']
+    )
+    expect(folders).toEqual(['Anxiety', 'sleep', UNFILED_FOLDER])
+  })
+
+  it('does not invent an unfiled folder when nothing is unfiled', () => {
+    expect(listExampleFolders([example({ id: 'a', folder: 'sleep' })], ['Focus'])).toEqual([
+      'Focus',
+      'sleep'
+    ])
+  })
+
+  it('reads a stored folder list, dropping malformed and implicit entries', () => {
+    expect(parseFolderList('["Sleep", "  ", 7, "Sleep", "Unfiled", "Focus"]')).toEqual([
+      'Sleep',
+      'Focus'
+    ])
+    expect(parseFolderList(null)).toEqual([])
+    expect(parseFolderList('not json')).toEqual([])
+    expect(parseFolderList('{"a":1}')).toEqual([])
+  })
+
+  it('sends an import to the chosen folder whatever the file says', () => {
+    expect(
+      resolveImportFolder('Corpus/sleep/rest.md', 'Anxiety', {
+        folder: 'Chosen',
+        fallback: 'Active'
+      })
+    ).toBe('Chosen')
+  })
+
+  it('falls back through path, front matter, then the folder in use', () => {
+    expect(resolveImportFolder('Corpus/sleep/rest.md', 'Anxiety', { fallback: 'Active' })).toBe(
+      'sleep'
+    )
+    expect(resolveImportFolder('rest.md', 'Anxiety', { fallback: 'Active' })).toBe('Anxiety')
+    expect(resolveImportFolder('rest.md', undefined, { fallback: 'Active' })).toBe('Active')
+    expect(resolveImportFolder('rest.md', undefined)).toBe(UNFILED_FOLDER)
+  })
+
   it('writes no folder key for an unfiled example, so old files are unchanged', () => {
     expect(serializeExampleToMarkdown(example({ createdAt: 1 }))).not.toContain('folder')
     expect(
@@ -352,6 +406,102 @@ describe('one folder at a time grounds generation', () => {
     })
 
     expect(getEnabledExamples().map(example => example.title)).toEqual(['Calm Breath'])
+  })
+
+  it('makes an empty folder that exists before anything is filed in it', () => {
+    withStoredExamples({ example_1: stored('Calm Breath', 'Anxiety') })
+
+    expect(createExampleFolder('  Deep  Sleep ')).toBe('Deep Sleep')
+    expect(getDeclaredFolders()).toContain('Deep Sleep')
+    expect(getExampleFolders()).toEqual(['Anxiety', 'Deep Sleep'])
+  })
+
+  it('refuses to make a folder out of nothing, or a second unfiled', () => {
+    withStoredExamples({})
+
+    expect(createExampleFolder('   ')).toBe('')
+    expect(createExampleFolder(UNFILED_FOLDER)).toBe('')
+    expect(getDeclaredFolders()).toEqual([])
+  })
+
+  it('keeps a folder that has been emptied by moving its last example out', () => {
+    withStoredExamples({ example_1: stored('Calm Breath', 'Anxiety') })
+
+    moveExampleToFolder('example_1', 'Sleep')
+
+    expect(getExampleFolders()).toEqual(['Anxiety', 'Sleep'])
+  })
+
+  it('renames a folder, taking its examples and the active setting with it', () => {
+    withStoredExamples({
+      example_1: stored('Deep Rest', 'Sleep'),
+      example_2: stored('Night Drift', 'Sleep'),
+      example_3: stored('Calm Breath', 'Anxiety'),
+      [ACTIVE_EXAMPLE_FOLDER_KEY]: 'Sleep'
+    })
+
+    expect(renameExampleFolder('Sleep', 'Deep Sleep')).toBe('Deep Sleep')
+    expect(getExampleFolders()).toEqual(['Anxiety', 'Deep Sleep'])
+    expect(getActiveExampleFolder()).toBe('Deep Sleep')
+    expect(getEnabledExamples().map(example => example.title)).toEqual([
+      'Deep Rest',
+      'Night Drift'
+    ])
+  })
+
+  it('merges when renamed onto a folder that already exists', () => {
+    withStoredExamples({
+      example_1: stored('Deep Rest', 'Sleep'),
+      example_2: stored('Calm Breath', 'Anxiety'),
+      [ACTIVE_EXAMPLE_FOLDER_KEY]: 'Anxiety'
+    })
+
+    renameExampleFolder('Sleep', 'Anxiety')
+
+    expect(getExampleFolders()).toEqual(['Anxiety'])
+    expect(getEnabledExamples().map(example => example.title)).toEqual([
+      'Deep Rest',
+      'Calm Breath'
+    ])
+  })
+
+  it('files loose examples under a name when the unfiled folder is renamed', () => {
+    withStoredExamples({ example_1: stored('An Old Import') })
+
+    renameExampleFolder(UNFILED_FOLDER, 'My Scripts')
+
+    expect(getExampleFolders()).toEqual(['My Scripts'])
+    expect(getUserExamples()[0].folder).toBe('My Scripts')
+  })
+
+  it('leaves a rename to nothing alone', () => {
+    withStoredExamples({ example_1: stored('Deep Rest', 'Sleep') })
+
+    expect(renameExampleFolder('Sleep', '   ')).toBe('Sleep')
+    expect(getExampleFolders()).toEqual(['Sleep'])
+  })
+
+  it('deleting a folder takes its examples and the folder itself', () => {
+    withStoredExamples({
+      example_1: stored('Deep Rest', 'Sleep'),
+      example_2: stored('Calm Breath', 'Anxiety'),
+      [EXAMPLE_FOLDERS_KEY]: JSON.stringify(['Sleep', 'Anxiety'])
+    })
+
+    expect(deleteExampleFolder('Sleep')).toBe(1)
+    expect(getExampleFolders()).toEqual(['Anxiety'])
+    expect(getUserExamples().map(example => example.title)).toEqual(['Calm Breath'])
+  })
+
+  it('deletes an empty folder without touching anything else', () => {
+    withStoredExamples({
+      example_1: stored('Calm Breath', 'Anxiety'),
+      [EXAMPLE_FOLDERS_KEY]: JSON.stringify(['Anxiety', 'Focus'])
+    })
+
+    expect(deleteExampleFolder('Focus')).toBe(0)
+    expect(getExampleFolders()).toEqual(['Anxiety'])
+    expect(getUserExamples()).toHaveLength(1)
   })
 })
 

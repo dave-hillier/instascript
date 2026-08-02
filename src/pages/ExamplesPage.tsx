@@ -1,13 +1,16 @@
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, useState } from 'react'
+import { FolderPlus } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import {
   applyExampleEnhancement,
   areBundledExamplesEnabled,
   backfillMissingEmbeddings,
+  createExampleFolder,
   deleteExampleFolder,
   exampleFolder,
   getActiveExampleFolder,
   getAllExamples,
+  getDeclaredFolders,
   getExampleSelectionCounts,
   getKnownTags,
   importExampleFile,
@@ -15,9 +18,11 @@ import {
   listExampleFolders,
   deleteUserExample,
   moveExampleToFolder,
+  renameExampleFolder,
   resolveActiveFolder,
   setActiveExampleFolder,
   setBundledExamplesEnabled,
+  UNFILED_FOLDER,
   updateUserExampleTags
 } from '../services/exampleCorpus'
 import {
@@ -36,7 +41,7 @@ import {
 } from '../services/importProgress'
 import { ImportProgressMeter } from '../components/ImportProgressMeter'
 import { ExampleFolderSection } from '../components/ExampleFolderSection'
-import { describeSelectionCount, FOLDER_SUGGESTIONS_ID } from '../utils/exampleDisplay'
+import { describeSelectionCount } from '../utils/exampleDisplay'
 import { createUtilityService } from '../services/serviceFactory'
 import { isImportAssistEnabled } from '../services/config'
 import { countWords } from '../utils/scriptMetrics'
@@ -63,6 +68,12 @@ type ExamplesState = {
   // change, so a folder disappearing (deleted, or emptied by moving its last
   // example) resolves to a folder that still exists.
   activeFolder: string
+  // Folders the user has made, which exist whether or not anything is filed
+  // in them yet
+  declaredFolders: string[]
+  // Where the next import goes: a folder name, or '' for the folder each
+  // file came from
+  importDestination: string
   // Folders the most recent import filed examples into, so an import that
   // landed outside the active folder can say so rather than appearing to
   // have done nothing
@@ -89,7 +100,10 @@ type ExamplesAction =
   | { type: 'EXAMPLE_DELETED'; id: string }
   | { type: 'EXAMPLE_DETAILS_CHANGED'; id: string; tags: string[]; folder: string }
   | { type: 'FOLDER_ACTIVATED'; folder: string }
+  | { type: 'FOLDER_CREATED'; folder: string }
+  | { type: 'FOLDER_RENAMED'; from: string; to: string }
   | { type: 'FOLDER_DELETED'; folder: string }
+  | { type: 'IMPORT_DESTINATION_CHANGED'; folder: string }
   | { type: 'BUNDLED_EXAMPLES_TOGGLED'; enabled: boolean }
   | { type: 'EXAMPLE_ASSISTED'; example: ExampleRecord | null }
   | { type: 'IMPORT_ASSIST_FINISHED'; outcome: ImportAssistOutcome; model: string }
@@ -101,16 +115,34 @@ const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
 // only its name
 const importPathOf = (file: File): string => file.webkitRelativePath || file.name
 
-// Any change to the corpus can remove the folder that was active; the active
-// folder is re-resolved against what is left rather than tracked separately
-const withExamples = (state: ExamplesState, examples: ExampleRecord[]): ExamplesState => ({
-  ...state,
-  examples,
-  activeFolder: resolveActiveFolder(
-    listExampleFolders(userExamplesOf(examples)),
-    state.activeFolder
-  )
-})
+// Emptying a folder is not deleting it: a folder an example leaves (or was
+// the last one in) is recorded so it stays on the page, matching what the
+// corpus stores. Only Delete folder takes one away.
+const declaredWith = (declared: string[], ...names: string[]): string[] => [
+  ...declared,
+  ...names.filter(name => name !== UNFILED_FOLDER && !declared.includes(name))
+]
+
+// Any change to the corpus can remove the folder that was active — deleted,
+// renamed, or emptied and never declared. The active folder and the import
+// destination are re-resolved against what is left rather than tracked
+// separately, so neither can point at a folder that is gone.
+const withCorpus = (
+  state: ExamplesState,
+  examples: ExampleRecord[],
+  declaredFolders: string[] = state.declaredFolders
+): ExamplesState => {
+  const folders = listExampleFolders(userExamplesOf(examples), declaredFolders)
+  return {
+    ...state,
+    examples,
+    declaredFolders,
+    activeFolder: resolveActiveFolder(folders, state.activeFolder),
+    importDestination: folders.includes(state.importDestination)
+      ? state.importDestination
+      : ''
+  }
+}
 
 const examplesReducer = (state: ExamplesState, action: ExamplesAction): ExamplesState => {
   switch (action.type) {
@@ -145,41 +177,124 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
         ...state,
         assist: { status: 'finished', outcome: action.outcome, model: action.model }
       }
-    case 'EXAMPLES_IMPORTED':
+    case 'EXAMPLES_IMPORTED': {
+      const arrivedIn = [...new Set(action.examples.map(exampleFolder))]
       return {
-        ...withExamples(state, [...state.examples, ...action.examples]),
+        ...withCorpus(
+          state,
+          [...state.examples, ...action.examples],
+          declaredWith(state.declaredFolders, ...arrivedIn)
+        ),
         importCount: state.importCount + 1,
-        importedFolders: [...new Set(action.examples.map(exampleFolder))]
+        importedFolders: arrivedIn
       }
+    }
     case 'BUNDLED_EXAMPLES_TOGGLED':
       return { ...state, bundledEnabled: action.enabled }
-    case 'EXAMPLE_DELETED':
-      return withExamples(
+    case 'EXAMPLE_DELETED': {
+      const deleted = state.examples.find(example => example.id === action.id)
+      return withCorpus(
         state,
-        state.examples.filter(example => example.id !== action.id)
+        state.examples.filter(example => example.id !== action.id),
+        deleted
+          ? declaredWith(state.declaredFolders, exampleFolder(deleted))
+          : state.declaredFolders
       )
+    }
     case 'FOLDER_DELETED':
-      return withExamples(
+      return withCorpus(
         state,
         state.examples.filter(
           example =>
             example.source !== 'user' || exampleFolder(example) !== action.folder
-        )
+        ),
+        state.declaredFolders.filter(folder => folder !== action.folder)
       )
+    case 'FOLDER_CREATED':
+      return withCorpus(state, state.examples, [
+        ...state.declaredFolders.filter(folder => folder !== action.folder),
+        action.folder
+      ])
+    case 'FOLDER_RENAMED': {
+      // The active folder follows its own rename, so generation keeps
+      // drawing on the material it was drawing on
+      const renamed =
+        state.activeFolder === action.from ? action.to : state.activeFolder
+      return withCorpus(
+        { ...state, activeFolder: renamed },
+        state.examples.map(example =>
+          example.source === 'user' && exampleFolder(example) === action.from
+            ? { ...example, folder: action.to }
+            : example
+        ),
+        [
+          ...state.declaredFolders.filter(
+            folder => folder !== action.from && folder !== action.to
+          ),
+          action.to
+        ]
+      )
+    }
     case 'FOLDER_ACTIVATED':
       return { ...state, activeFolder: action.folder }
-    case 'EXAMPLE_DETAILS_CHANGED':
-      return withExamples(
+    case 'IMPORT_DESTINATION_CHANGED':
+      return { ...state, importDestination: action.folder }
+    case 'EXAMPLE_DETAILS_CHANGED': {
+      const moved = state.examples.find(example => example.id === action.id)
+      return withCorpus(
         state,
         state.examples.map(example =>
           example.id === action.id
             ? { ...example, tags: action.tags, folder: action.folder }
             : example
+        ),
+        declaredWith(
+          state.declaredFolders,
+          ...(moved ? [exampleFolder(moved)] : []),
+          action.folder
         )
       )
+    }
     default:
       return state
   }
+}
+
+// Makes an empty folder, ready to be imported into or filed into. Folders
+// are otherwise implied by the examples in them, which leaves no way to set
+// one up before there is anything to put in it.
+const NewFolderForm = ({
+  onFolderCreated
+}: {
+  onFolderCreated: (name: string) => void
+}) => {
+  const [name, setName] = useState('')
+
+  return (
+    <form
+      className="example-new-folder"
+      aria-label="Create a folder"
+      onSubmit={event => {
+        event.preventDefault()
+        if (!name.trim()) return
+        onFolderCreated(name)
+        setName('')
+      }}
+    >
+      <label htmlFor="new-folder-name">New folder</label>
+      <input
+        id="new-folder-name"
+        type="text"
+        value={name}
+        onChange={event => setName(event.target.value)}
+        placeholder="Folder name"
+      />
+      <button type="submit">
+        <FolderPlus size={14} />
+        Create folder
+      </button>
+    </form>
+  )
 }
 
 export const ExamplesPage = () => {
@@ -191,6 +306,8 @@ export const ExamplesPage = () => {
       importCount: 0,
       bundledEnabled: areBundledExamplesEnabled(),
       activeFolder: getActiveExampleFolder(),
+      declaredFolders: getDeclaredFolders(),
+      importDestination: '',
       importedFolders: [],
       importFiles: [],
       importIgnored: 0,
@@ -201,7 +318,12 @@ export const ExamplesPage = () => {
   const selectionCounts = getExampleSelectionCounts()
   const userExamples = userExamplesOf(state.examples)
   const bundledExamples = state.examples.filter(example => example.source === 'bundled')
-  const folders = listExampleFolders(userExamples)
+  const folders = listExampleFolders(userExamples, state.declaredFolders)
+  // Unfiled is offered as somewhere to move an example even when nothing is
+  // unfiled: it is how an example is taken out of a folder
+  const folderOptions = folders.includes(UNFILED_FOLDER)
+    ? folders
+    : [...folders, UNFILED_FOLDER]
   const activeFolderExamples = userExamples.filter(
     example => exampleFolder(example) === state.activeFolder
   )
@@ -252,10 +374,14 @@ export const ExamplesPage = () => {
           dispatch({ type: 'IMPORT_FILE_STAGED', id, stage: 'skipped', note: 'Empty file' })
           continue
         }
-        // A folder import files each script under the folder it came from;
-        // files chosen on their own join the folder in use, so they are
-        // available to the next generation without being filed first
-        const example = importExampleFile(path, text, state.activeFolder)
+        // A chosen destination takes every file in the import. Without one,
+        // a folder import files each script under the folder it came from,
+        // and files chosen on their own join the folder in use — so they are
+        // available to the next generation without being filed first.
+        const example = importExampleFile(path, text, {
+          folder: state.importDestination,
+          fallback: state.activeFolder
+        })
         imported.push({ fileId: id, example })
         dispatch({
           type: 'IMPORT_FILE_STAGED',
@@ -342,8 +468,11 @@ export const ExamplesPage = () => {
 
   const handleFolderDelete = (folder: string) => {
     const count = userExamples.filter(example => exampleFolder(example) === folder).length
-    const subject = count === 1 ? 'its 1 example' : `all ${count} of its examples`
-    if (confirm(`Delete the folder "${folder}" and ${subject}? This cannot be undone.`)) {
+    const question =
+      count === 0
+        ? `Delete the empty folder "${folder}"?`
+        : `Delete the folder "${folder}" and ${count === 1 ? 'its 1 example' : `all ${count} of its examples`}? This cannot be undone.`
+    if (confirm(question)) {
       deleteExampleFolder(folder)
       dispatch({ type: 'FOLDER_DELETED', folder })
     }
@@ -351,6 +480,19 @@ export const ExamplesPage = () => {
 
   const handleFolderActivated = (folder: string) => {
     dispatch({ type: 'FOLDER_ACTIVATED', folder })
+  }
+
+  const handleFolderCreated = (name: string) => {
+    const folder = createExampleFolder(name)
+    if (!folder) return
+    dispatch({ type: 'FOLDER_CREATED', folder })
+    // A folder is made to put something in, so the next import goes there
+    dispatch({ type: 'IMPORT_DESTINATION_CHANGED', folder })
+  }
+
+  const handleFolderRenamed = (from: string, to: string) => {
+    const renamed = renameExampleFolder(from, to)
+    dispatch({ type: 'FOLDER_RENAMED', from, to: renamed })
   }
 
   const handleDetailsSaved = (
@@ -403,6 +545,31 @@ export const ExamplesPage = () => {
       </form>
 
       <form className="example-import" aria-label="Import example scripts">
+        <label htmlFor="example-import-destination">Import into</label>
+        <select
+          id="example-import-destination"
+          value={state.importDestination}
+          onChange={event =>
+            dispatch({
+              type: 'IMPORT_DESTINATION_CHANGED',
+              folder: event.target.value
+            })
+          }
+          aria-describedby="example-import-destination-help"
+        >
+          <option value="">The folder each file came from</option>
+          {folderOptions.map(folder => (
+            <option key={folder} value={folder}>
+              {folder}
+            </option>
+          ))}
+        </select>
+        <p id="example-import-destination-help">
+          {state.importDestination
+            ? `Everything imported below goes into "${state.importDestination}", whatever it was filed under before.`
+            : `A folder import files each script under the folder it sits in; files chosen individually join "${state.activeFolder}", the folder generation is using. Pick a folder above to send the whole import there instead.`}
+        </p>
+
         <label htmlFor="example-import-input">
           Import markdown or text files as examples
         </label>
@@ -413,12 +580,7 @@ export const ExamplesPage = () => {
           accept=".md,.markdown,.txt,.text,text/markdown,text/plain"
           multiple
           onChange={handleImport}
-          aria-describedby="example-import-files-help"
         />
-        <p id="example-import-files-help">
-          Files chosen this way join "{state.activeFolder}", the folder
-          generation is currently using.
-        </p>
 
         <label htmlFor="example-import-folder">Or import an entire folder</label>
         <input
@@ -432,9 +594,7 @@ export const ExamplesPage = () => {
         />
         <p id="example-import-folder-help">
           Every markdown and text file in the folder and its subfolders is
-          imported; anything else is ignored. Each script is filed under the
-          folder it sits in, so a folder of categorised subfolders arrives as
-          one corpus folder per subfolder.
+          imported; anything else is ignored.
         </p>
 
         <ImportProgressMeter files={state.importFiles} />
@@ -470,13 +630,9 @@ export const ExamplesPage = () => {
         )}
       </form>
 
-      <datalist id={FOLDER_SUGGESTIONS_ID}>
-        {folders.map(folder => (
-          <option key={folder} value={folder} />
-        ))}
-      </datalist>
+      <NewFolderForm onFolderCreated={handleFolderCreated} />
 
-      {userExamples.length === 0 ? (
+      {folders.length === 0 ? (
         <p>No examples of your own yet. Import a markdown or text file to get started.</p>
       ) : (
         folders.map((folder, index) => (
@@ -485,9 +641,11 @@ export const ExamplesPage = () => {
             folder={folder}
             headingId={`example-folder-${index}`}
             examples={userExamples.filter(example => exampleFolder(example) === folder)}
+            folders={folderOptions}
             active={folder === state.activeFolder}
             selectionCounts={selectionCounts}
             onActivated={handleFolderActivated}
+            onFolderRenamed={handleFolderRenamed}
             onFolderDeleted={handleFolderDelete}
             onExampleDeleted={handleDelete}
             onDetailsSaved={handleDetailsSaved}

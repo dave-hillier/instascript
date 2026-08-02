@@ -97,13 +97,20 @@ export function parseTags(value: string): string[] {
 // --- Folders --------------------------------------------------------------
 // User examples are filed into folders, and exactly one folder at a time is
 // the one retrieval draws on. Folders come from imports (a folder import
-// files its scripts under the folder they came from) and can be changed per
-// example afterwards. Examples with no folder — everything imported before
-// folders existed — belong to the unfiled folder, which is what a fresh
-// install and every upgraded install start on.
+// files its scripts under the folder they came from), from being created
+// outright, and from filing an example into one. Examples with no folder —
+// everything imported before folders existed — belong to the unfiled folder,
+// which is what a fresh install and every upgraded install start on.
+//
+// The folder lives on the example, so the folders that hold something need
+// no separate record. A folder the user has made, though, outlives its
+// contents: the names are kept in their own list so that a new folder can be
+// made before anything goes in it, and so that emptying a folder does not
+// silently discard it. Only deleting a folder takes it off that list.
 
 export const UNFILED_FOLDER = 'Unfiled'
 export const ACTIVE_EXAMPLE_FOLDER_KEY = 'activeExampleFolder'
+export const EXAMPLE_FOLDERS_KEY = 'exampleFolders'
 
 const MAX_FOLDER_NAME_LENGTH = 64
 
@@ -137,13 +144,40 @@ export function folderFromImportPath(path: string): string {
   return normalizeFolderName(segments[segments.length - 2]) || UNFILED_FOLDER
 }
 
-// Pure: every folder in use, alphabetically, with the unfiled catch-all last
-export function listExampleFolders(examples: ExampleRecord[]): string[] {
+// Pure: every folder there is — the ones holding examples and the ones the
+// user made — alphabetically, with the unfiled catch-all last. Unfiled is
+// listed only when something is actually unfiled: it is where examples with
+// no folder live, not a folder in its own right.
+export function listExampleFolders(
+  examples: ExampleRecord[],
+  declared: string[] = []
+): string[] {
   const folders = new Set(examples.map(exampleFolder))
-  const named = [...folders]
-    .filter(folder => folder !== UNFILED_FOLDER)
-    .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))
-  return folders.has(UNFILED_FOLDER) ? [...named, UNFILED_FOLDER] : named
+  const named = new Set(declared.map(normalizeFolderName).filter(Boolean))
+  for (const folder of folders) {
+    if (folder !== UNFILED_FOLDER) named.add(folder)
+  }
+  const sorted = [...named].sort((a, b) =>
+    a.localeCompare(b, 'en', { sensitivity: 'base' })
+  )
+  return folders.has(UNFILED_FOLDER) ? [...sorted, UNFILED_FOLDER] : sorted
+}
+
+// Pure: the stored list of folder names the user has made, cleaned of
+// anything malformed. The unfiled folder is implicit and never listed.
+export function parseFolderList(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const names = parsed
+      .filter((value): value is string => typeof value === 'string')
+      .map(normalizeFolderName)
+      .filter(name => name && name !== UNFILED_FOLDER)
+    return [...new Set(names)]
+  } catch {
+    return []
+  }
 }
 
 // Pure: which folder is actually active, given what is stored and which
@@ -157,6 +191,73 @@ export function resolveActiveFolder(folders: string[], stored: string | null): s
   return folders[0] ?? UNFILED_FOLDER
 }
 
+export function getDeclaredFolders(): string[] {
+  try {
+    return parseFolderList(window.localStorage.getItem(EXAMPLE_FOLDERS_KEY))
+  } catch (error) {
+    console.warn('Error loading example folders from localStorage:', error)
+    return []
+  }
+}
+
+function saveDeclaredFolders(folders: string[]): void {
+  try {
+    window.localStorage.setItem(EXAMPLE_FOLDERS_KEY, JSON.stringify(folders))
+  } catch (error) {
+    console.warn('Error saving example folders to localStorage:', error)
+  }
+}
+
+// Records that a folder exists, so it survives being emptied. Every path
+// that files something into a folder goes through here.
+function declareFolder(folder: string): void {
+  if (folder === UNFILED_FOLDER) return
+  const declared = getDeclaredFolders()
+  if (declared.includes(folder)) return
+  saveDeclaredFolders([...declared, folder])
+}
+
+// Creates an empty folder, ready to be filed into or made the active one.
+// Returns the name as stored, or '' for a name that is nothing at all.
+export function createExampleFolder(name: string): string {
+  const folder = normalizeFolderName(name)
+  // Unfiled is where examples with no folder already live; it needs no
+  // creating, and a folder of that name would be indistinguishable from it
+  if (!folder || folder === UNFILED_FOLDER) return ''
+  declareFolder(folder)
+  return folder
+}
+
+// Renames a folder, taking its examples with it. Renaming onto an existing
+// name merges the two, and renaming the unfiled folder files everything that
+// was loose under the new name. The active folder follows the rename, so
+// generation keeps drawing on the same material. Returns the new name.
+export function renameExampleFolder(from: string, to: string): string {
+  const source = normalizeFolderName(from) || UNFILED_FOLDER
+  const target = normalizeFolderName(to)
+  if (!target || target === source) return source
+
+  for (const example of getUserExamples()) {
+    if (exampleFolder(example) !== source) continue
+    saveUserExample({
+      ...example,
+      folder: target === UNFILED_FOLDER ? undefined : target
+    })
+  }
+
+  const declared = getDeclaredFolders().filter(folder => folder !== source)
+  saveDeclaredFolders(
+    target === UNFILED_FOLDER || declared.includes(target)
+      ? declared
+      : [...declared, target]
+  )
+
+  if ((getStoredActiveFolder() ?? UNFILED_FOLDER) === source) {
+    setActiveExampleFolder(target)
+  }
+  return target
+}
+
 function getStoredActiveFolder(): string | null {
   try {
     return window.localStorage.getItem(ACTIVE_EXAMPLE_FOLDER_KEY)
@@ -166,9 +267,14 @@ function getStoredActiveFolder(): string | null {
   }
 }
 
+// Every folder there is, for listing and for filing an example into one
+export function getExampleFolders(): string[] {
+  return listExampleFolders(getUserExamples(), getDeclaredFolders())
+}
+
 // The folder retrieval draws on, resolved against the folders that exist
 export function getActiveExampleFolder(): string {
-  return resolveActiveFolder(listExampleFolders(getUserExamples()), getStoredActiveFolder())
+  return resolveActiveFolder(getExampleFolders(), getStoredActiveFolder())
 }
 
 export function setActiveExampleFolder(folder: string): void {
@@ -245,7 +351,10 @@ export function setBundledExamplesEnabled(enabled: boolean): void {
 // left out, which is the point of folders — one body of material at a time.
 export function getEnabledExamples(): ExampleRecord[] {
   const examples = getUserExamples()
-  const active = resolveActiveFolder(listExampleFolders(examples), getStoredActiveFolder())
+  const active = resolveActiveFolder(
+    listExampleFolders(examples, getDeclaredFolders()),
+    getStoredActiveFolder()
+  )
   const user = examples.filter(example => exampleFolder(example) === active)
   if (!areBundledExamplesEnabled()) return user
   return [...BUNDLED_EXAMPLE_SCRIPTS, ...user]
@@ -295,6 +404,7 @@ function createUserExample(
     createdAt: Date.now()
   }
   saveUserExample(example)
+  declareFolder(filed)
   void attachEmbedding(example)
   return example
 }
@@ -313,21 +423,41 @@ export function isImportableExampleFile(path: string): boolean {
   return IMPORTABLE_EXTENSIONS.some(extension => name.toLowerCase().endsWith(extension))
 }
 
+// Where an imported file is filed. `folder` is a destination the user chose,
+// which overrides everything; without one the file goes to the folder it came
+// from, then to what its own front matter says, then to `fallback` — the
+// folder in use, for a file chosen on its own.
+export interface ImportDestination {
+  folder?: string
+  fallback?: string
+}
+
+// Pure: the folder a file lands in, given the path it arrived under, any
+// folder its front matter carries, and the destination the user chose
+export function resolveImportFolder(
+  path: string,
+  frontMatterFolder: string | undefined,
+  destination: ImportDestination = {}
+): string {
+  const chosen = destination.folder ? normalizeFolderName(destination.folder) : ''
+  if (chosen) return chosen
+  const fromPath = folderFromImportPath(path)
+  if (fromPath !== UNFILED_FOLDER) return fromPath
+  if (frontMatterFolder) return normalizeFolderName(frontMatterFolder) || UNFILED_FOLDER
+  return normalizeFolderName(destination.fallback ?? '') || UNFILED_FOLDER
+}
+
 // Imports a markdown or plain text file as a user example. Accepts a path
-// (as folder imports supply) and titles from the file name alone. The file
-// is filed under the folder it came from; a file chosen on its own has no
-// folder to take, so the caller's fallback (the active folder) applies.
+// (as folder imports supply) and titles from the file name alone.
 export function importExampleFile(
   filename: string,
   text: string,
-  fallbackFolder: string = UNFILED_FOLDER
+  destination: ImportDestination = {}
 ): ExampleRecord {
   const name = filename.split('/').pop() ?? filename
   const fallbackTitle = name.replace(/\.(md|markdown|txt|text)$/i, '')
   const parsed = parseExampleMarkdown(text, fallbackTitle)
-  const fromPath = folderFromImportPath(filename)
-  const folder =
-    fromPath !== UNFILED_FOLDER ? fromPath : parsed.folder ?? fallbackFolder
+  const folder = resolveImportFolder(filename, parsed.folder, destination)
   return createUserExample(parsed.title, parsed.tags, parsed.content, folder)
 }
 
@@ -455,6 +585,10 @@ function forgetSelectionCounts(ids: string[]): void {
 
 export function deleteUserExample(id: string): void {
   if (!id.startsWith(EXAMPLE_KEY_PREFIX)) return
+  // Removing the last example in a folder is not removing the folder, so the
+  // folder is recorded before its contents go
+  const example = getUserExamples().find(candidate => candidate.id === id)
+  if (example) declareFolder(exampleFolder(example))
   window.localStorage.removeItem(id)
   forgetSelectionCounts([id])
 }
@@ -469,6 +603,7 @@ export function deleteExampleFolder(folder: string): number {
     window.localStorage.removeItem(example.id)
   }
   forgetSelectionCounts(doomed.map(example => example.id))
+  saveDeclaredFolders(getDeclaredFolders().filter(name => name !== target))
   return doomed.length
 }
 
@@ -488,6 +623,10 @@ export function moveExampleToFolder(id: string, folder: string): string {
     ...example,
     folder: target === UNFILED_FOLDER ? undefined : target
   })
+  // Both ends are folders the user has: the one being filed into, and the one
+  // being left, which stays even if this was the last example in it
+  declareFolder(exampleFolder(example))
+  declareFolder(target)
   return target
 }
 
