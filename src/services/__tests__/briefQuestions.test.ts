@@ -132,6 +132,59 @@ describe('parseBriefQuestions', () => {
     expect(parseBriefQuestions(reply)[0].options).toHaveLength(6)
   })
 
+  it('reads a question marked as taking several answers, and takes the marker off it', () => {
+    const questions = parseBriefQuestions([
+      'Q: What should linger afterwards? (choose any that apply)',
+      '- The voice pulls them back',
+      '- Arousal returns on the trigger',
+      'Q: How should it end?',
+      '- Awake and alert',
+      '- Drifting into sleep'
+    ].join('\n'))
+
+    expect(questions[0].question).toBe('What should linger afterwards?')
+    expect(questions[0].multiSelect).toBe(true)
+    expect(questions[1].multiSelect).toBeUndefined()
+  })
+
+  it('reads the other phrasings, and keeps the question mark the marker swallowed', () => {
+    const asked = (marked: string) =>
+      parseBriefQuestions([marked, '- One', '- Two'].join('\n'))[0]
+
+    expect(asked('Q: Which themes (select all that apply)?')).toEqual({
+      id: 'q1',
+      question: 'Which themes?',
+      options: [{ label: 'One' }, { label: 'Two' }],
+      multiSelect: true
+    })
+    expect(asked('Q: Which sensations — choose as many as apply').multiSelect).toBe(true)
+    expect(asked('Q: Which effects? [one or more]').multiSelect).toBe(true)
+    expect(asked('Q: Which effects? Multi-select.').multiSelect).toBe(true)
+  })
+
+  it('reads an unmarked multi-select question that lost its "Q:"', () => {
+    const questions = parseBriefQuestions([
+      'What should linger afterwards? (choose any that apply)',
+      '- The voice pulls them back',
+      '- Arousal returns on the trigger'
+    ].join('\n'))
+
+    expect(questions).toHaveLength(1)
+    expect(questions[0].question).toBe('What should linger afterwards?')
+    expect(questions[0].multiSelect).toBe(true)
+  })
+
+  it('leaves an ordinary question alone', () => {
+    const questions = parseBriefQuestions([
+      'Q: How many triggers should there be?',
+      '- One',
+      '- Two'
+    ].join('\n'))
+
+    expect(questions[0].question).toBe('How many triggers should there be?')
+    expect(questions[0].multiSelect).toBeUndefined()
+  })
+
   it('returns nothing for a reply with no questionnaire in it', () => {
     expect(parseBriefQuestions('I cannot help with that request.')).toEqual([])
     expect(parseBriefQuestions('')).toEqual([])
@@ -151,6 +204,19 @@ const questions: BriefQuestion[] = [
     id: 'q2',
     question: 'Who is speaking, and who is listening?',
     options: [{ label: 'A female hypnotist to a male subject' }, { label: 'The reverse' }]
+  }
+]
+
+const multiSelectQuestions: BriefQuestion[] = [
+  {
+    id: 'q1',
+    question: 'What should linger afterwards?',
+    multiSelect: true,
+    options: [
+      { label: 'The voice pulls them back', detail: 'Each listen drops them faster' },
+      { label: 'Arousal returns on the trigger' },
+      { label: 'Obedience carries into the day' }
+    ]
   }
 ]
 
@@ -201,6 +267,43 @@ describe('buildBriefedPrompt', () => {
     expect(buildBriefedPrompt(brief, questions, answers)).toBe(brief)
   })
 
+  it('appends every option ticked on a multi-select question, in the order it offered them', () => {
+    const answers: BriefAnswers = {
+      q1: {
+        kind: 'options',
+        values: ['Obedience carries into the day', 'The voice pulls them back'],
+        custom: ''
+      }
+    }
+
+    expect(buildBriefedPrompt(brief, multiSelectQuestions, answers)).toBe(
+      `${brief}\n\n` +
+      'Direction from the briefing questions:\n' +
+      '- What should linger afterwards? The voice pulls them back (Each listen drops them faster); ' +
+      'Obedience carries into the day'
+    )
+  })
+
+  it('carries the user\'s own words alongside what they ticked', () => {
+    const answers: BriefAnswers = {
+      q1: {
+        kind: 'options',
+        values: ['Arousal returns on the trigger'],
+        custom: '  they sleep better  '
+      }
+    }
+
+    expect(buildBriefedPrompt(brief, multiSelectQuestions, answers)).toContain(
+      '- What should linger afterwards? Arousal returns on the trigger; they sleep better'
+    )
+  })
+
+  it('leaves the brief alone when a multi-select question was left empty', () => {
+    const answers: BriefAnswers = { q1: { kind: 'options', values: [], custom: '   ' } }
+
+    expect(buildBriefedPrompt(brief, multiSelectQuestions, answers)).toBe(brief)
+  })
+
   it('answers a question whose option is no longer on offer with what was chosen', () => {
     const answers: BriefAnswers = { q1: { kind: 'option', value: 'A retired option' } }
 
@@ -217,6 +320,10 @@ describe('defaultBriefQuestions', () => {
     expect(fallback).toHaveLength(4)
     expect(fallback.every(question => question.options.length >= 3)).toBe(true)
     expect(new Set(fallback.map(question => question.id)).size).toBe(fallback.length)
+  })
+
+  it('lets the question that can hold several answers take them', () => {
+    expect(defaultBriefQuestions().filter(question => question.multiSelect)).toHaveLength(1)
   })
 })
 
@@ -272,6 +379,10 @@ describe('buildBriefQuestionsPrompt', () => {
     expect(prompt).toContain(brief)
     expect(prompt).not.toMatch(/\{(min|max)(Questions|Options)\}/)
     expect(prompt).not.toContain('{brief}')
+  })
+
+  it('asks for the marker the parser reads multi-select questions by', () => {
+    expect(buildBriefQuestionsPrompt(brief)).toContain('(choose any that apply)')
   })
 
   it('never substitutes placeholder-shaped text inside the brief', () => {

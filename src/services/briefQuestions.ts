@@ -35,12 +35,18 @@ export interface BriefQuestion {
   id: string
   question: string
   options: BriefQuestionOption[]
+  // Set when the honest answer could be several options at once — lingering
+  // effects, themes to include. Absent on the ordinary one-answer question.
+  multiSelect?: boolean
 }
 
 // One question's answer. "deferred" is the decide-for-me case: the question
-// still reaches the model, marked as the writer's own call.
+// still reaches the model, marked as the writer's own call. "options" belongs
+// to a multi-select question, where any number of options can be chosen and
+// the user's own words sit alongside them rather than replacing them.
 export type BriefAnswer =
   | { kind: 'option'; value: string }
+  | { kind: 'options'; values: string[]; custom: string }
   | { kind: 'custom'; value: string }
   | { kind: 'deferred' }
 
@@ -55,10 +61,47 @@ const OPTION_PREFIX = /^(?:[-*•]\s+|[A-Za-z][).]\s+|\d+[).]\s+)/
 // a separator: it belongs to hyphenated words.
 const OPTION_SPLIT = /\s*\|\s*|\s+[—–]\s+/
 
+// How a model says a question takes more than one answer. The prompt asks for
+// a trailing "(choose any that apply)", but the phrasings a model reaches for
+// instead — "select all that apply", "one or more" — mean the same thing.
+const MULTI_SELECT_HINT =
+  '(?:(?:choose|select|pick|tick)\\s+(?:any|all|as\\s+many|multiple|more\\s+than\\s+one)' +
+  '(?:\\s+(?:that|as))?(?:\\s+apply)?' +
+  '|(?:any|all|as\\s+many)\\s+(?:that\\s+|as\\s+)?apply' +
+  '|one\\s+or\\s+more' +
+  '|multi(?:ple)?[-\\s]?(?:select|answers?|choices?))'
+
+// The hint as it trails a question line, bracketed or dash-separated, with
+// the question mark on either side of it
+const MULTI_SELECT_SUFFIX = new RegExp(
+  `[\\s(\\[{—–-]*${MULTI_SELECT_HINT}[\\s.!?]*[)\\]}]*[\\s.!?]*$`,
+  'i'
+)
+
 // Emphasis markers a model adds around its own text. Quotes are left alone:
 // a trigger word is usually quoted, and the quotes are part of the answer.
 function stripDecoration(text: string): string {
   return text.replace(/\*\*|__/g, '').trim()
+}
+
+// Pure: the question as the user should read it, and whether it takes more
+// than one answer. The hint is instruction to the interface rather than part
+// of the question, so it is taken off the text — restoring the question mark
+// when the hint swallowed it.
+function readSelection(raw: string): { question: string; multiSelect: boolean } {
+  if (!MULTI_SELECT_SUFFIX.test(raw)) return { question: raw, multiSelect: false }
+
+  const stripped = raw.replace(MULTI_SELECT_SUFFIX, '').trim()
+  if (!stripped) return { question: raw, multiSelect: true }
+
+  const lostItsMark = raw.includes('?') && !/[?.!]$/.test(stripped)
+  return { question: lostItsMark ? `${stripped}?` : stripped, multiSelect: true }
+}
+
+// Whether an unmarked line reads as a question. Usually it ends in a question
+// mark; a multi-select hint can sit after it.
+function readsAsQuestion(text: string): boolean {
+  return text.endsWith('?') || (text.includes('?') && MULTI_SELECT_SUFFIX.test(text))
 }
 
 function parseOption(text: string): BriefQuestionOption | null {
@@ -76,19 +119,23 @@ function parseOption(text: string): BriefQuestionOption | null {
 // still produces a usable set. A question that ends up with fewer than two
 // options is dropped rather than shown as a single-choice.
 export function parseBriefQuestions(text: string): BriefQuestion[] {
-  const questions: { question: string; options: BriefQuestionOption[] }[] = []
+  const questions: {
+    question: string
+    options: BriefQuestionOption[]
+    multiSelect: boolean
+  }[] = []
   const seen = new Set<string>()
   // A question that was rejected still owns the option lines beneath it, so
   // they are dropped rather than piled onto the question before it
   let skipping = false
 
   const startQuestion = (raw: string) => {
-    const question = stripDecoration(raw)
+    const { question, multiSelect } = readSelection(stripDecoration(raw))
     const key = question.toLowerCase()
     skipping = !question || question.length > MAX_QUESTION_LENGTH || seen.has(key)
     if (skipping) return
     seen.add(key)
-    questions.push({ question, options: [] })
+    questions.push({ question, options: [], multiSelect })
   }
 
   for (const line of text.split('\n')) {
@@ -108,7 +155,7 @@ export function parseBriefQuestions(text: string): BriefQuestion[] {
       // A bulleted line before any question, phrased as a question, is the
       // question itself under a bullet rather than an orphaned option
       if (!current) {
-        if (body.trim().endsWith('?')) startQuestion(body)
+        if (readsAsQuestion(body.trim())) startQuestion(body)
         continue
       }
       if (current.options.length >= MAX_OPTIONS_PER_QUESTION) continue
@@ -121,13 +168,16 @@ export function parseBriefQuestions(text: string): BriefQuestion[] {
 
     // An unmarked line is only a question when it reads as one; anything else
     // is preamble or commentary the prompt asked for and did not get
-    if (trimmed.endsWith('?')) startQuestion(trimmed)
+    if (readsAsQuestion(trimmed)) startQuestion(trimmed)
   }
 
   return questions
     .filter(entry => entry.options.length >= MIN_OPTIONS_PER_QUESTION)
     .slice(0, MAX_QUESTIONS)
-    .map((entry, index) => ({ id: `q${index + 1}`, ...entry }))
+    .map(({ multiSelect, ...entry }, index) => {
+      const question: BriefQuestion = { id: `q${index + 1}`, ...entry }
+      return multiSelect ? { ...question, multiSelect } : question
+    })
 }
 
 // The questions asked when the model cannot be reached, or replies with
@@ -149,6 +199,7 @@ export function defaultBriefQuestions(): BriefQuestion[] {
     {
       id: 'q2',
       question: 'What should still be working after the session ends?',
+      multiSelect: true,
       options: [
         { label: 'The voice pulls them back', detail: 'Hearing it again drops them faster each time' },
         { label: 'Arousal returns on the trigger', detail: 'The body answers before the mind does' },
@@ -183,21 +234,49 @@ export function defaultBriefQuestions(): BriefQuestion[] {
 // should still settle it deliberately.
 const DEFERRED_ANSWER = 'your choice — decide what serves the script best'
 
-// The answer as the writer should read it, including the model's own gloss on
-// the option so the direction is as specific as the questionnaire was
-function describeAnswer(question: BriefQuestion, answer: BriefAnswer): string {
-  if (answer.kind === 'custom') return answer.value.trim()
-  if (answer.kind === 'deferred') return DEFERRED_ANSWER
-
-  const option = question.options.find(entry => entry.label === answer.value)
-  if (!option) return answer.value
+// One chosen option, with the model's own gloss on it so the direction is as
+// specific as the questionnaire was. An option that is no longer on offer
+// answers with what was chosen.
+function describeOption(question: BriefQuestion, label: string): string {
+  const option = question.options.find(entry => entry.label === label)
+  if (!option) return label
   return option.detail ? `${option.label} (${option.detail})` : option.label
 }
 
-// Pure: whether an answer says anything. A deferred question, or a custom
-// answer left empty, does not.
+// Several chosen options, read back in the order the question offered them
+// rather than the order they were clicked, with the user's own words last
+function describeChoices(question: BriefQuestion, values: string[], custom: string): string {
+  const offered = question.options
+    .filter(option => values.includes(option.label))
+    .map(option => option.label)
+  const retired = values.filter(value => !offered.includes(value))
+  const described = [...offered, ...retired].map(label => describeOption(question, label))
+
+  if (custom.trim()) described.push(custom.trim())
+  return described.join('; ')
+}
+
+// The answer as the writer should read it
+function describeAnswer(question: BriefQuestion, answer: BriefAnswer): string {
+  switch (answer.kind) {
+    case 'custom':
+      return answer.value.trim()
+    case 'deferred':
+      return DEFERRED_ANSWER
+    case 'options':
+      return describeChoices(question, answer.values, answer.custom)
+    case 'option':
+      return describeOption(question, answer.value)
+  }
+}
+
+// Pure: whether an answer says anything. A deferred question, a custom answer
+// left empty, or a multi-select question with nothing ticked, does not.
 function isAnswered(answer: BriefAnswer | undefined): answer is BriefAnswer {
   if (!answer || answer.kind === 'deferred') return false
+  if (answer.kind === 'options') {
+    return answer.values.length > 0 || answer.custom.trim().length > 0
+  }
   return answer.value.trim().length > 0
 }
 

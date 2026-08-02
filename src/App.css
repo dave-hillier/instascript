@@ -373,11 +373,21 @@ main form.briefing-form {
   cursor: pointer;
 }
 
-.briefing-form label input[type="radio"] {
+.briefing-form label input[type="radio"],
+.briefing-form label input[type="checkbox"] {
   width: auto;
   margin: 0;
   accent-color: var(--accent);
   flex-shrink: 0;
+}
+
+/* The one paragraph in a fieldset is the multi-select question's note that
+   several answers can be ticked at once */
+.briefing-form fieldset p {
+  margin: 0 0 0.375rem;
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
 }
 
 .briefing-form label small {
