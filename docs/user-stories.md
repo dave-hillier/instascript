@@ -500,6 +500,19 @@ Acceptance criteria:
 - The number of rewrites per review is capped, and the outcome (what was rewritten, why, and the resulting length) appears in the review summary banner
 - A failed review is reported next to its own button without marking the generation as failed
 
+### 8.15 Keep several corpora and switch between them [Implemented]
+As a user with material for different kinds of script, I want my examples filed into folders with one folder grounding generation at a time, so that a session on sleep is not styled by my smoking-cessation scripts — and so that a body of material I am done with can go in one action rather than one example at a time.
+
+Notes: the folder is a field on the example, stored in its front matter, so folders exist only as the examples filed under them and nothing has to be created before it can be used. A folder import files each script under the directory it sits in, which makes a folder of categorised subfolders arrive as one corpus folder per subfolder. Examples with no folder — everything imported before this existed — belong to the "Unfiled" folder, which is what an upgraded install starts on, so a corpus that was grounding generation still is. The active folder is resolved against the folders that exist rather than trusted blindly, so deleting the folder in use leaves generation grounded in one that remains instead of in nothing.
+
+Acceptance criteria:
+- Examples are filed into folders; a folder import files each script under the folder it came from, and files chosen individually join the folder in use
+- Exactly one folder grounds generation at a time, chosen on the examples page and persisted; the bundled corpus toggle is unchanged and still applies alongside it
+- An example can be moved to another folder, including one that does not exist yet, from its row
+- A whole folder can be deleted with its examples in one action, with confirmation
+- Deleting or emptying the folder in use falls back to a folder that exists
+- An import that lands outside the folder in use says so and offers to switch to it
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]
