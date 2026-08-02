@@ -503,14 +503,17 @@ Acceptance criteria:
 ### 8.15 Keep several corpora and switch between them [Implemented]
 As a user with material for different kinds of script, I want my examples filed into folders with one folder grounding generation at a time, so that a session on sleep is not styled by my smoking-cessation scripts — and so that a body of material I am done with can go in one action rather than one example at a time.
 
-Notes: the folder is a field on the example, stored in its front matter, so folders exist only as the examples filed under them and nothing has to be created before it can be used. A folder import files each script under the directory it sits in, which makes a folder of categorised subfolders arrive as one corpus folder per subfolder. Examples with no folder — everything imported before this existed — belong to the "Unfiled" folder, which is what an upgraded install starts on, so a corpus that was grounding generation still is. The active folder is resolved against the folders that exist rather than trusted blindly, so deleting the folder in use leaves generation grounded in one that remains instead of in nothing.
+Notes: the folder is a field on the example, stored in its front matter, so a folder holding something needs no separate record. Folders the user has made are also kept as a list of names, so that one can be made before there is anything to put in it and so that emptying a folder does not silently discard it — only deleting takes a folder away. A folder import files each script under the directory it sits in unless a destination is chosen, which makes a folder of categorised subfolders arrive as one corpus folder per subfolder. Examples with no folder — everything imported before this existed — belong to the "Unfiled" folder, which is what an upgraded install starts on, so a corpus that was grounding generation still is. Unfiled is where loose examples live rather than a folder in its own right: it is listed only while something is unfiled, and it cannot be renamed. The active folder is resolved against the folders that exist rather than trusted blindly, so deleting the folder in use leaves generation grounded in one that remains instead of in nothing.
 
 Acceptance criteria:
 - Examples are filed into folders; a folder import files each script under the folder it came from, and files chosen individually join the folder in use
+- An empty folder can be created outright, and survives being emptied — only deleting removes it
+- An import can be sent to a chosen folder, overriding both the structure it arrived in and the folder in use
+- A folder can be renamed, taking its examples with it; the folder in use follows its own rename, and renaming onto an existing name merges the two
 - Exactly one folder grounds generation at a time, chosen on the examples page and persisted; the bundled corpus toggle is unchanged and still applies alongside it
-- An example can be moved to another folder, including one that does not exist yet, from its row
+- An example can be moved to another folder from its row, chosen from the folders that exist
 - A whole folder can be deleted with its examples in one action, with confirmation
-- Deleting or emptying the folder in use falls back to a folder that exists
+- Deleting the folder in use falls back to a folder that exists
 - An import that lands outside the folder in use says so and offers to switch to it
 
 ## Epic 9: Visual Design
