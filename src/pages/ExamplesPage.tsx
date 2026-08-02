@@ -1,19 +1,24 @@
-import { useEffect, useReducer, useState } from 'react'
-import { Trash2, Check } from 'lucide-react'
+import { useEffect, useReducer } from 'react'
 import type { ExampleRecord } from '../types/example'
 import {
   applyExampleEnhancement,
   areBundledExamplesEnabled,
   backfillMissingEmbeddings,
+  deleteExampleFolder,
+  exampleFolder,
+  getActiveExampleFolder,
   getAllExamples,
   getExampleSelectionCounts,
   getKnownTags,
   importExampleFile,
   isImportableExampleFile,
+  listExampleFolders,
   deleteUserExample,
+  moveExampleToFolder,
+  resolveActiveFolder,
+  setActiveExampleFolder,
   setBundledExamplesEnabled,
-  updateUserExampleTags,
-  parseTags
+  updateUserExampleTags
 } from '../services/exampleCorpus'
 import {
   describeImportAssist,
@@ -30,6 +35,8 @@ import {
   type ImportStage
 } from '../services/importProgress'
 import { ImportProgressMeter } from '../components/ImportProgressMeter'
+import { ExampleFolderSection } from '../components/ExampleFolderSection'
+import { describeSelectionCount, FOLDER_SUGGESTIONS_ID } from '../utils/exampleDisplay'
 import { createUtilityService } from '../services/serviceFactory'
 import { isImportAssistEnabled } from '../services/config'
 import { countWords } from '../utils/scriptMetrics'
@@ -52,6 +59,14 @@ type ExamplesState = {
   examples: ExampleRecord[]
   importCount: number
   bundledEnabled: boolean
+  // The one folder retrieval draws on. Held in state and persisted on
+  // change, so a folder disappearing (deleted, or emptied by moving its last
+  // example) resolves to a folder that still exists.
+  activeFolder: string
+  // Folders the most recent import filed examples into, so an import that
+  // landed outside the active folder can say so rather than appearing to
+  // have done nothing
+  importedFolders: string[]
   // The files of the most recent import and the stage each reached; the
   // summary counts are derived from these rather than tracked separately
   importFiles: ImportFileProgress[]
@@ -69,15 +84,36 @@ type ExamplesAction =
     }
   | { type: 'EXAMPLES_IMPORTED'; examples: ExampleRecord[] }
   | { type: 'EXAMPLE_DELETED'; id: string }
-  | { type: 'EXAMPLE_TAGS_CHANGED'; id: string; tags: string[] }
+  | { type: 'EXAMPLE_DETAILS_CHANGED'; id: string; tags: string[]; folder: string }
+  | { type: 'FOLDER_ACTIVATED'; folder: string }
+  | { type: 'FOLDER_DELETED'; folder: string }
   | { type: 'BUNDLED_EXAMPLES_TOGGLED'; enabled: boolean }
   | { type: 'EXAMPLE_ASSISTED'; example: ExampleRecord | null }
   | { type: 'IMPORT_ASSIST_FINISHED'; outcome: ImportAssistOutcome; model: string }
 
+const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
+  examples.filter(example => example.source === 'user')
+
+// Any change to the corpus can remove the folder that was active; the active
+// folder is re-resolved against what is left rather than tracked separately
+const withExamples = (state: ExamplesState, examples: ExampleRecord[]): ExamplesState => ({
+  ...state,
+  examples,
+  activeFolder: resolveActiveFolder(
+    listExampleFolders(userExamplesOf(examples)),
+    state.activeFolder
+  )
+})
+
 const examplesReducer = (state: ExamplesState, action: ExamplesAction): ExamplesState => {
   switch (action.type) {
     case 'IMPORT_STARTED':
-      return { ...state, importFiles: action.files, assist: { status: 'idle' } }
+      return {
+        ...state,
+        importFiles: action.files,
+        importedFolders: [],
+        assist: { status: 'idle' }
+      }
     case 'IMPORT_FILE_STAGED':
       return {
         ...state,
@@ -103,70 +139,39 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
       }
     case 'EXAMPLES_IMPORTED':
       return {
-        ...state,
-        examples: [...state.examples, ...action.examples],
-        importCount: state.importCount + 1
+        ...withExamples(state, [...state.examples, ...action.examples]),
+        importCount: state.importCount + 1,
+        importedFolders: [...new Set(action.examples.map(exampleFolder))]
       }
     case 'BUNDLED_EXAMPLES_TOGGLED':
       return { ...state, bundledEnabled: action.enabled }
     case 'EXAMPLE_DELETED':
-      return {
-        ...state,
-        examples: state.examples.filter(example => example.id !== action.id)
-      }
-    case 'EXAMPLE_TAGS_CHANGED':
-      return {
-        ...state,
-        examples: state.examples.map(example =>
-          example.id === action.id ? { ...example, tags: action.tags } : example
+      return withExamples(
+        state,
+        state.examples.filter(example => example.id !== action.id)
+      )
+    case 'FOLDER_DELETED':
+      return withExamples(
+        state,
+        state.examples.filter(
+          example =>
+            example.source !== 'user' || exampleFolder(example) !== action.folder
         )
-      }
+      )
+    case 'FOLDER_ACTIVATED':
+      return { ...state, activeFolder: action.folder }
+    case 'EXAMPLE_DETAILS_CHANGED':
+      return withExamples(
+        state,
+        state.examples.map(example =>
+          example.id === action.id
+            ? { ...example, tags: action.tags, folder: action.folder }
+            : example
+        )
+      )
     default:
       return state
   }
-}
-
-interface UserExampleTagsFormProps {
-  example: ExampleRecord
-  onTagsSaved: (id: string, tags: string[]) => void
-}
-
-// How often the example has actually informed a generation (story 8.11)
-const describeSelectionCount = (count: number): string => {
-  if (count === 0) return 'Never selected for a generation'
-  return `Selected for ${count} ${count === 1 ? 'generation' : 'generations'}`
-}
-
-const UserExampleTagsForm = ({ example, onTagsSaved }: UserExampleTagsFormProps) => {
-  const [tagText, setTagText] = useState(example.tags.join(', '))
-
-  const handleSubmit = (event: React.FormEvent) => {
-    event.preventDefault()
-    onTagsSaved(example.id, parseTags(tagText))
-  }
-
-  return (
-    <form
-      className="example-tags-form"
-      aria-label={`Edit tags for ${example.title}`}
-      onSubmit={handleSubmit}
-    >
-      <label className="sr-only" htmlFor={`${example.id}_tags`}>
-        Tags for {example.title}, comma separated
-      </label>
-      <input
-        id={`${example.id}_tags`}
-        type="text"
-        value={tagText}
-        onChange={event => setTagText(event.target.value)}
-        placeholder="tags, comma separated"
-      />
-      <button type="submit" aria-label={`Save tags for ${example.title}`}>
-        <Check size={14} />
-        Save tags
-      </button>
-    </form>
-  )
 }
 
 export const ExamplesPage = () => {
@@ -177,13 +182,30 @@ export const ExamplesPage = () => {
       examples: getAllExamples(),
       importCount: 0,
       bundledEnabled: areBundledExamplesEnabled(),
+      activeFolder: getActiveExampleFolder(),
+      importedFolders: [],
       importFiles: [],
       assist: { status: 'idle' }
     })
   )
   const importSummary = summarizeImportProgress(state.importFiles)
   const selectionCounts = getExampleSelectionCounts()
-  const userExampleCount = state.examples.filter(example => example.source === 'user').length
+  const userExamples = userExamplesOf(state.examples)
+  const bundledExamples = state.examples.filter(example => example.source === 'bundled')
+  const folders = listExampleFolders(userExamples)
+  const activeFolderExamples = userExamples.filter(
+    example => exampleFolder(example) === state.activeFolder
+  )
+  // Where the last import landed, when that is not where generation is
+  // looking — otherwise the import appears to have done nothing
+  const idleFolders = state.importedFolders.filter(folder => folder !== state.activeFolder)
+
+  // The active folder is a stored setting; the reducer resolves it, and this
+  // writes each resolution back, including the one that follows deleting the
+  // folder that was active
+  useEffect(() => {
+    setActiveExampleFolder(state.activeFolder)
+  }, [state.activeFolder])
 
   // Migration: examples saved before embeddings existed get theirs computed
   // once in the background; retrieval works without them in the meantime
@@ -224,7 +246,10 @@ export const ExamplesPage = () => {
           dispatch({ type: 'IMPORT_FILE_STAGED', id, stage: 'skipped', note: 'Empty file' })
           continue
         }
-        const example = importExampleFile(path, text)
+        // A folder import files each script under the folder it came from;
+        // files chosen on their own join the folder in use, so they are
+        // available to the next generation without being filed first
+        const example = importExampleFile(path, text, state.activeFolder)
         imported.push({ fileId: id, example })
         dispatch({
           type: 'IMPORT_FILE_STAGED',
@@ -309,9 +334,26 @@ export const ExamplesPage = () => {
     }
   }
 
-  const handleTagsSaved = (id: string, tags: string[]) => {
-    updateUserExampleTags(id, tags)
-    dispatch({ type: 'EXAMPLE_TAGS_CHANGED', id, tags })
+  const handleFolderDelete = (folder: string) => {
+    const count = userExamples.filter(example => exampleFolder(example) === folder).length
+    const subject = count === 1 ? 'its 1 example' : `all ${count} of its examples`
+    if (confirm(`Delete the folder "${folder}" and ${subject}? This cannot be undone.`)) {
+      deleteExampleFolder(folder)
+      dispatch({ type: 'FOLDER_DELETED', folder })
+    }
+  }
+
+  const handleFolderActivated = (folder: string) => {
+    dispatch({ type: 'FOLDER_ACTIVATED', folder })
+  }
+
+  const handleDetailsSaved = (
+    id: string,
+    details: { tags: string[]; folder: string }
+  ) => {
+    updateUserExampleTags(id, details.tags)
+    const folder = moveExampleToFolder(id, details.folder)
+    dispatch({ type: 'EXAMPLE_DETAILS_CHANGED', id, tags: details.tags, folder })
   }
 
   return (
@@ -320,18 +362,18 @@ export const ExamplesPage = () => {
         <h2>Example corpus</h2>
         <p>
           Generation is grounded in these scripts. Your imports and promoted
-          scripts are stored in this browser. A small set of bundled
-          placeholder examples ships with the app; they are off unless you
-          switch them on.
+          scripts are stored in this browser, filed into folders — one folder
+          at a time grounds generation, so you can keep several bodies of
+          material and switch between them. A small set of bundled placeholder
+          examples ships with the app; they are off unless you switch them on.
         </p>
       </header>
 
-      {!state.bundledEnabled && userExampleCount === 0 && (
+      {!state.bundledEnabled && activeFolderExamples.length === 0 && (
         <p className="example-warning" role="status">
-          You have no examples of your own yet, so generation has nothing to
-          ground itself in. Import a markdown or text file below, promote a
-          script you have written, or switch the bundled placeholder examples
-          on.
+          {userExamples.length === 0
+            ? 'You have no examples of your own yet, so generation has nothing to ground itself in. Import a markdown or text file below, promote a script you have written, or switch the bundled placeholder examples on.'
+            : `The folder generation is using, "${state.activeFolder}", is empty, so generation has nothing to ground itself in. Choose a folder that has examples in it, or switch the bundled placeholder examples on.`}
         </p>
       )}
 
@@ -347,10 +389,10 @@ export const ExamplesPage = () => {
           <span>Also use the bundled placeholder examples</span>
         </label>
         <p id="bundled-examples-help">
-          On means the bundled placeholder scripts are searched alongside your
-          own. They are short stubs, so leaving them off keeps generation
-          grounded only in material whose style you chose. Either way they stay
-          listed below.
+          On means the bundled placeholder scripts are searched alongside the
+          folder in use. They are short stubs, so leaving them off keeps
+          generation grounded only in material whose style you chose. Either
+          way they stay listed below.
         </p>
       </form>
 
@@ -365,7 +407,12 @@ export const ExamplesPage = () => {
           accept=".md,.markdown,.txt,.text,text/markdown,text/plain"
           multiple
           onChange={handleImport}
+          aria-describedby="example-import-files-help"
         />
+        <p id="example-import-files-help">
+          Files chosen this way join "{state.activeFolder}", the folder
+          generation is currently using.
+        </p>
 
         <label htmlFor="example-import-folder">Or import an entire folder</label>
         <input
@@ -379,7 +426,9 @@ export const ExamplesPage = () => {
         />
         <p id="example-import-folder-help">
           Every markdown and text file in the folder and its subfolders is
-          imported; anything else is skipped.
+          imported; anything else is skipped. Each script is filed under the
+          folder it sits in, so a folder of categorised subfolders arrives as
+          one corpus folder per subfolder.
         </p>
 
         <ImportProgressMeter files={state.importFiles} />
@@ -387,6 +436,23 @@ export const ExamplesPage = () => {
         {importSummary.finished && (
           <p className="example-import-result" role="status" aria-live="polite">
             {describeImportOutcome(importSummary)}
+          </p>
+        )}
+
+        {importSummary.finished && idleFolders.length > 0 && (
+          <p className="example-import-elsewhere" role="status" aria-live="polite">
+            {idleFolders.length === 1
+              ? `These went into "${idleFolders[0]}", which is not the folder generation is using.`
+              : `These went into folders other than the one generation is using: ${idleFolders.join(', ')}.`}
+            {idleFolders.map(folder => (
+              <button
+                key={folder}
+                type="button"
+                onClick={() => handleFolderActivated(folder)}
+              >
+                Use "{folder}" for generation
+              </button>
+            ))}
           </p>
         )}
 
@@ -398,53 +464,62 @@ export const ExamplesPage = () => {
         )}
       </form>
 
-      {state.examples.length === 0 ? (
-        <p>No examples yet. Import a markdown or text file to get started.</p>
+      <datalist id={FOLDER_SUGGESTIONS_ID}>
+        {folders.map(folder => (
+          <option key={folder} value={folder} />
+        ))}
+      </datalist>
+
+      {userExamples.length === 0 ? (
+        <p>No examples of your own yet. Import a markdown or text file to get started.</p>
       ) : (
-        <ul className="example-list">
-          {state.examples.map(example => (
-            <li
-              key={example.id}
-              data-excluded={example.source === 'bundled' && !state.bundledEnabled}
-            >
-              <div className="example-summary">
-                <h3>{example.title}</h3>
-                <p className="example-meta">
-                  {example.source === 'bundled'
-                    ? state.bundledEnabled
-                      ? 'Bundled · read-only'
-                      : 'Bundled · excluded from generation'
-                    : 'Yours'}
-                  {' · '}
-                  {countWords(example.content).toLocaleString('en-US')} words
-                  {' · '}
-                  {describeSelectionCount(selectionCounts[example.id] ?? 0)}
-                  {example.source === 'bundled' && example.tags.length > 0 && (
-                    <> · {example.tags.join(', ')}</>
-                  )}
-                </p>
-                {example.source === 'user' && (
-                  <UserExampleTagsForm
-                    key={`${example.id}_${example.tags.join(',')}`}
-                    example={example}
-                    onTagsSaved={handleTagsSaved}
-                  />
-                )}
-              </div>
-              {example.source === 'user' && (
-                <div className="example-actions">
-                  <button
-                    onClick={() => handleDelete(example)}
-                    aria-label={`Delete example ${example.title}`}
-                    type="button"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+        folders.map((folder, index) => (
+          <ExampleFolderSection
+            key={folder}
+            folder={folder}
+            headingId={`example-folder-${index}`}
+            examples={userExamples.filter(example => exampleFolder(example) === folder)}
+            active={folder === state.activeFolder}
+            selectionCounts={selectionCounts}
+            onActivated={handleFolderActivated}
+            onFolderDeleted={handleFolderDelete}
+            onExampleDeleted={handleDelete}
+            onDetailsSaved={handleDetailsSaved}
+          />
+        ))
+      )}
+
+      {bundledExamples.length > 0 && (
+        <section
+          className="example-folder"
+          aria-labelledby="bundled-examples-heading"
+          data-active={state.bundledEnabled}
+        >
+          <header>
+            <h3 id="bundled-examples-heading">Bundled placeholder examples</h3>
+            <p className="example-folder-meta">
+              {bundledExamples.length} examples · read-only ·{' '}
+              {state.bundledEnabled
+                ? 'searched alongside the folder in use'
+                : 'excluded from generation'}
+            </p>
+          </header>
+          <ul className="example-list">
+            {bundledExamples.map(example => (
+              <li key={example.id} data-excluded={!state.bundledEnabled}>
+                <div className="example-summary">
+                  <h4>{example.title}</h4>
+                  <p className="example-meta">
+                    {countWords(example.content).toLocaleString('en-US')} words
+                    {' · '}
+                    {describeSelectionCount(selectionCounts[example.id] ?? 0)}
+                    {example.tags.length > 0 && <> · {example.tags.join(', ')}</>}
+                  </p>
                 </div>
-              )}
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </section>
   )

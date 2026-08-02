@@ -1892,6 +1892,31 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--accent);
 }
 
+/* An import that landed outside the folder generation is using, with the
+   offer to switch to it */
+.example-import .example-import-elsewhere {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--accent);
+}
+
+.example-import-elsewhere button {
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease;
+}
+
+.example-import-elsewhere button:hover {
+  background-color: var(--accent-soft);
+}
+
 /* ------------------------------------------------------------------ */
 /* Examples page: import progress meter                                */
 /* ------------------------------------------------------------------ */
@@ -2006,6 +2031,89 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--danger);
 }
 
+/* One folder of examples, or the read-only bundled set. The folder that
+   grounds generation is outlined rather than badged. */
+.example-folder {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background-color: var(--surface);
+  padding: 0.875rem 1.125rem 0.25rem;
+  margin-bottom: 1.25rem;
+  transition: border-color 0.2s ease;
+}
+
+.example-folder[data-active="true"] {
+  border-color: var(--accent);
+}
+
+.example-folder > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.example-folder > header h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.example-folder-meta {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+/* The controls sit at the trailing edge, wrapping under the name on a
+   narrow screen rather than squeezing it */
+.example-folder > header label.radio-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-left: auto;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.example-folder[data-active="true"] > header label.radio-field {
+  color: var(--accent);
+}
+
+.example-folder > header label.radio-field input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+.example-folder-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.example-folder-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background-color: var(--danger-soft);
+}
+
 .example-list li {
   align-items: flex-start;
   padding: 1rem 0.25rem;
@@ -2013,6 +2121,11 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
 
 .example-list li:hover {
   background: none;
+}
+
+/* The card's own edge closes the list */
+.example-folder .example-list li:last-child {
+  border-bottom: none;
 }
 
 /* Bundled examples while the bundled corpus is switched off */
@@ -2025,8 +2138,11 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   min-width: 0;
 }
 
-.example-summary h3 {
-  white-space: normal;
+.example-summary h4 {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.3;
+  margin: 0 0 0.125rem;
 }
 
 .example-meta {
@@ -2035,16 +2151,22 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--ink-muted);
 }
 
-.example-tags-form {
+/* Tags and folder for one example. Overrides the card treatment `main form`
+   gives every form: this one sits inside a card already. */
+.example-details-form {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  margin-top: 0.625rem;
+  margin: 0.625rem 0 0;
+  border: none;
+  border-radius: 0;
+  background: none;
 }
 
-.example-tags-form input {
+.example-details-form input {
   flex: 1;
-  min-width: 0;
+  min-width: 7rem;
   padding: 0.375rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -2055,16 +2177,21 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   transition: border-color 0.15s ease;
 }
 
-.example-tags-form input::placeholder {
+/* The folder field holds one name, so it needs less room than the tags */
+.example-details-form input:nth-of-type(2) {
+  flex: 0 1 10rem;
+}
+
+.example-details-form input::placeholder {
   color: var(--ink-muted);
 }
 
-.example-tags-form input:focus {
+.example-details-form input:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.example-tags-form button {
+.example-details-form button {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -2080,7 +2207,7 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 
-.example-tags-form button:hover {
+.example-details-form button:hover {
   color: var(--accent);
   border-color: var(--accent);
 }

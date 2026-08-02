@@ -11,7 +11,14 @@ import {
   parseSelectionCounts,
   sanitizeSelectionCounts,
   incrementSelectionCounts,
-  mergeSelectionCounts
+  mergeSelectionCounts,
+  normalizeFolderName,
+  exampleFolder,
+  folderFromImportPath,
+  listExampleFolders,
+  resolveActiveFolder,
+  ACTIVE_EXAMPLE_FOLDER_KEY,
+  UNFILED_FOLDER
 } from '../exampleCorpus'
 import type { ExampleRecord } from '../../types/example'
 
@@ -176,6 +183,84 @@ describe('selection counts (story 8.11)', () => {
   })
 })
 
+describe('example folders', () => {
+  const example = (overrides: Partial<ExampleRecord>): ExampleRecord => ({
+    id: 'example_1',
+    title: 'Example',
+    tags: [],
+    content: 'Body.',
+    source: 'user',
+    ...overrides
+  })
+
+  it('normalizes a folder name to what is stored and compared', () => {
+    expect(normalizeFolderName('  Deep   Sleep  ')).toBe('Deep Sleep')
+    expect(normalizeFolderName('scripts/sleep')).toBe('scripts sleep')
+    expect(normalizeFolderName('   ')).toBe('')
+  })
+
+  it('caps a folder name rather than storing an essay', () => {
+    expect(normalizeFolderName('x'.repeat(200))).toHaveLength(64)
+  })
+
+  it('treats an example with no folder as unfiled', () => {
+    expect(exampleFolder(example({}))).toBe(UNFILED_FOLDER)
+    expect(exampleFolder(example({ folder: '  ' }))).toBe(UNFILED_FOLDER)
+    expect(exampleFolder(example({ folder: ' Sleep ' }))).toBe('Sleep')
+  })
+
+  it('files an imported file under the directory it sits in', () => {
+    expect(folderFromImportPath('Corpus/sleep/deep-rest.md')).toBe('sleep')
+    expect(folderFromImportPath('Sleep/deep-rest.md')).toBe('Sleep')
+  })
+
+  it('leaves a file chosen on its own unfiled', () => {
+    expect(folderFromImportPath('deep-rest.md')).toBe(UNFILED_FOLDER)
+  })
+
+  it('lists folders alphabetically with the unfiled catch-all last', () => {
+    const folders = listExampleFolders([
+      example({ id: 'a', folder: 'sleep' }),
+      example({ id: 'b' }),
+      example({ id: 'c', folder: 'Anxiety' }),
+      example({ id: 'd', folder: 'sleep' })
+    ])
+    expect(folders).toEqual(['Anxiety', 'sleep', UNFILED_FOLDER])
+  })
+
+  it('keeps a stored folder that still exists', () => {
+    expect(resolveActiveFolder(['Sleep', UNFILED_FOLDER], 'Sleep')).toBe('Sleep')
+  })
+
+  it('starts unfiled, so a corpus imported before folders existed still grounds generation', () => {
+    expect(resolveActiveFolder([UNFILED_FOLDER], null)).toBe(UNFILED_FOLDER)
+  })
+
+  it('falls back to a folder that exists when the stored one is deleted', () => {
+    expect(resolveActiveFolder(['Sleep', UNFILED_FOLDER], 'Anxiety')).toBe(UNFILED_FOLDER)
+    expect(resolveActiveFolder(['Sleep'], 'Anxiety')).toBe('Sleep')
+  })
+
+  it('resolves to unfiled when there are no examples at all', () => {
+    expect(resolveActiveFolder([], null)).toBe(UNFILED_FOLDER)
+    expect(resolveActiveFolder([], 'Sleep')).toBe(UNFILED_FOLDER)
+  })
+
+  it('round-trips a folder through serialization', () => {
+    const serialized = serializeExampleToMarkdown(
+      example({ folder: 'Deep Sleep', createdAt: 1 })
+    )
+    expect(parseExampleMarkdown(serialized, 'fallback').folder).toBe('Deep Sleep')
+  })
+
+  it('writes no folder key for an unfiled example, so old files are unchanged', () => {
+    expect(serializeExampleToMarkdown(example({ createdAt: 1 }))).not.toContain('folder')
+    expect(
+      serializeExampleToMarkdown(example({ folder: UNFILED_FOLDER, createdAt: 1 }))
+    ).not.toContain('folder')
+  })
+})
+
 describe('parseTags', () => {
   it('splits, trims, lowercases and drops empties', () => {
     expect(parseTags(' Sleep, CALM ,, rest ')).toEqual(['sleep', 'calm', 'rest'])
@@ -203,6 +288,70 @@ describe('isImportableExampleFile', () => {
   it('skips hidden files such as .DS_Store', () => {
     expect(isImportableExampleFile('scripts/.DS_Store')).toBe(false)
     expect(isImportableExampleFile('.hidden.md')).toBe(false)
+  })
+})
+
+describe('one folder at a time grounds generation', () => {
+  // Stored examples are read by enumerating the storage keys, so the stub
+  // exposes them as own enumerable properties the way localStorage does
+  const withStoredExamples = (entries: Record<string, string>) => {
+    const store = new Map(Object.entries(entries))
+    const storage: Record<string, unknown> = {}
+    Object.defineProperties(storage, {
+      getItem: { value: (key: string) => store.get(key) ?? null },
+      setItem: { value: (key: string, value: string) => store.set(key, value) },
+      removeItem: { value: (key: string) => store.delete(key) }
+    })
+    for (const [key, value] of store) {
+      Object.defineProperty(storage, key, { value, enumerable: true })
+    }
+    vi.stubGlobal('window', { localStorage: storage })
+  }
+
+  const stored = (title: string, folder?: string) =>
+    serializeExampleToMarkdown({
+      id: 'ignored',
+      title,
+      tags: [],
+      content: `${title} body.`,
+      source: 'user',
+      folder,
+      createdAt: 1
+    })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('retrieves only the active folder', () => {
+    withStoredExamples({
+      example_1: stored('Deep Rest', 'Sleep'),
+      example_2: stored('Calm Breath', 'Anxiety'),
+      [ACTIVE_EXAMPLE_FOLDER_KEY]: 'Sleep'
+    })
+
+    expect(getEnabledExamples().map(example => example.title)).toEqual(['Deep Rest'])
+  })
+
+  it('keeps grounding a corpus imported before folders existed', () => {
+    withStoredExamples({
+      example_1: stored('Legacy One'),
+      example_2: stored('Legacy Two')
+    })
+
+    expect(getEnabledExamples().map(example => example.title)).toEqual([
+      'Legacy One',
+      'Legacy Two'
+    ])
+  })
+
+  it('falls back to a folder that exists when the active one was deleted', () => {
+    withStoredExamples({
+      example_1: stored('Calm Breath', 'Anxiety'),
+      [ACTIVE_EXAMPLE_FOLDER_KEY]: 'Sleep'
+    })
+
+    expect(getEnabledExamples().map(example => example.title)).toEqual(['Calm Breath'])
   })
 })
 
