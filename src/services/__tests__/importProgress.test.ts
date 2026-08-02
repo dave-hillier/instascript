@@ -107,8 +107,16 @@ describe('summarizeImportProgress', () => {
       imported: 1,
       skipped: 1,
       failed: 1,
+      ignored: 0,
       finished: false
     })
+  })
+
+  it('counts the files being imported, not the rest of the folder', () => {
+    const summary = summarizeImportProgress(progress('done', 'reading'), 11)
+
+    expect(summary.total).toBe(2)
+    expect(summary.ignored).toBe(11)
   })
 
   it('is finished once nothing is still moving', () => {
@@ -119,14 +127,24 @@ describe('summarizeImportProgress', () => {
     expect(summarizeImportProgress([]).finished).toBe(false)
   })
 
+  it('is finished when a folder held nothing importable', () => {
+    expect(summarizeImportProgress([], 4).finished).toBe(true)
+  })
+
   it('does not count a saved file until the tidy pass has released it', () => {
     expect(summarizeImportProgress(progress('saved')).imported).toBe(0)
   })
 })
 
 describe('describeImportProgress', () => {
-  it('reads as files processed out of files selected', () => {
+  it('reads as files processed out of files being imported', () => {
     expect(describeImportProgress(summarizeImportProgress(progress('done', 'reading')))).toBe(
+      '1 of 2 files'
+    )
+  })
+
+  it('does not count the folder contents that were never candidates', () => {
+    expect(describeImportProgress(summarizeImportProgress(progress('done', 'reading'), 30))).toBe(
       '1 of 2 files'
     )
   })
@@ -146,6 +164,18 @@ describe('describeImportOutcome', () => {
   it('says plainly what was skipped and what could not be read', () => {
     expect(
       describeImportOutcome(summarizeImportProgress(progress('done', 'skipped', 'failed')))
-    ).toBe('Imported 1 example, skipped 1 unsupported or empty file, 1 could not be read.')
+    ).toBe('Imported 1 example, skipped 1 empty file, 1 could not be read.')
+  })
+
+  it('accounts afterwards for the files that never entered the queue', () => {
+    expect(describeImportOutcome(summarizeImportProgress(progress('done', 'done'), 3))).toBe(
+      'Imported 2 examples, ignored 3 files that are not markdown or text.'
+    )
+  })
+
+  it('says a folder held nothing importable rather than reporting an empty import', () => {
+    expect(describeImportOutcome(summarizeImportProgress([], 1))).toBe(
+      'Nothing to import: ignored 1 file that is not markdown or text.'
+    )
   })
 })
