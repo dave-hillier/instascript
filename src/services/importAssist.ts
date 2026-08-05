@@ -1,8 +1,10 @@
 // Story 5.7: the small-model jobs that run over a freshly imported example —
-// suggesting tags for an untagged import, and formatting a plain-text import
-// as markdown. Both are handed to the utility model rather than the
-// generation model: they are mechanical, they benefit from being fast, and
-// they should not cost script-writing money.
+// suggesting tags for an untagged import, formatting a plain-text import as
+// markdown, and (story 8.16, on request) rewriting a script that talks about
+// a third person, or addresses a title, so that it speaks to the listener.
+// All three are handed to the utility model rather than the generation model:
+// they are mechanical, they benefit from being fast, and they should not cost
+// script-writing money.
 //
 // The parsing and the safety checks here are pure, so a small model's
 // approximate obedience is corrected in code rather than trusted.
@@ -10,6 +12,7 @@
 import type { ExampleRecord } from '../types/example'
 import type { UtilityModelService } from './utilityModelService'
 import {
+  buildDirectAddressPrompt,
   buildExampleTaggingPrompt,
   buildImportFormattingPrompt,
   buildTaggingInput
@@ -107,31 +110,167 @@ export function isFaithfulFormatting(original: string, formatted: string): boole
   return ratio >= MIN_RETAINED_WORD_RATIO && ratio <= MAX_RETAINED_WORD_RATIO
 }
 
+// --- Direct address (story 8.16) -----------------------------------------
+// Material written for someone else — a script that narrates what "she"
+// feels, or that has the listener drop "for Mistress" — grounds generation in
+// a voice the user is not writing in. This pass puts it in the second person
+// and takes the titles of address out, leaving everything else alone.
+
+// Third-person narration. "they/them/their" are left out on purpose: a script
+// written in the second person uses them constantly ("let them go").
+const THIRD_PERSON = /\b(he|him|his|she|her|hers|himself|herself|the subject|the listener|the client)\b/gi
+
+// Titles of address, for the guide and for the listener alike
+const ADDRESS_TITLES = /\b(mistress|master|sir|ma'?am|madam|domme|goddess|daddy|mommy|owner|handler)\b/gi
+
+// A rewrite changes person and drops titles; it does not shorten or pad the
+// script. Anything outside this band is a model that summarised or embellished.
+const MIN_VOICED_WORD_RATIO = 0.75
+const MAX_VOICED_WORD_RATIO = 1.15
+
+const ANY_HEADING = /^\s{0,3}(#{1,6})\s+\S/
+
+// Pure: how much of the script is written about someone else, or spoken to a
+// title. Used both to decide whether the pass is worth a request and to check
+// afterwards that it actually did something.
+export function countAddressMarkers(content: string): number {
+  return (
+    (content.match(THIRD_PERSON)?.length ?? 0) +
+    (content.match(ADDRESS_TITLES)?.length ?? 0)
+  )
+}
+
+// Pure: whether an import would gain from the pass at all
+export function needsDirectAddress(content: string): boolean {
+  return countAddressMarkers(content) > 0
+}
+
+// Pure: the heading levels of a document, in order. The pass may reword a
+// heading that names a title of address, but it must not add, drop or
+// restructure headings.
+function headingShape(text: string): string {
+  return text
+    .split('\n')
+    .map(line => line.match(ANY_HEADING)?.[1] ?? '')
+    .filter(Boolean)
+    .join(',')
+}
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length
+}
+
+// Pure: whether a rewrite may replace the original. It has to have kept the
+// script's shape and length, and it has to have actually reduced the third
+// person and the titles — a model that returned the script unchanged, or
+// wrote commentary around it, fails here and the import keeps what it had.
+export function isFaithfulVoicing(original: string, voiced: string): boolean {
+  if (!voiced.trim()) return false
+  if (headingShape(voiced) !== headingShape(original)) return false
+
+  const originalWords = wordCount(original)
+  if (originalWords === 0) return false
+  const ratio = wordCount(voiced) / originalWords
+  if (ratio < MIN_VOICED_WORD_RATIO || ratio > MAX_VOICED_WORD_RATIO) return false
+
+  return countAddressMarkers(voiced) < countAddressMarkers(original)
+}
+
+// A rewrite reproduces the whole script, so the reply needs room for it.
+// Roughly two tokens a word, with headroom for a reasoning model's own
+// budget, and a ceiling so a huge import cannot ask for an absurd completion.
+const MIN_REWRITE_TOKENS = 4096
+const MAX_REWRITE_TOKENS = 32_000
+
+export function rewriteTokenBudget(content: string): number {
+  return Math.min(
+    MAX_REWRITE_TOKENS,
+    Math.max(MIN_REWRITE_TOKENS, Math.round(wordCount(content) * 2.5))
+  )
+}
+
+// Runs the pass over a script and returns the rewrite, or null when there was
+// nothing to do, the model could not be reached, or its reply failed the
+// checks above. Used by the import and by the same action on an example
+// already in the corpus.
+export async function rewriteForDirectAddress(
+  content: string,
+  service: UtilityModelService,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (!needsDirectAddress(content)) return null
+  try {
+    const reply = await service.complete({
+      job: 'voicing',
+      system: buildDirectAddressPrompt(),
+      user: content,
+      maxOutputTokens: rewriteTokenBudget(content),
+      signal
+    })
+    const voiced = stripCodeFence(reply)
+    return isFaithfulVoicing(content, voiced) ? voiced : null
+  } catch (error) {
+    console.warn('Could not rewrite the script into direct address:', error)
+    return null
+  }
+}
+
 export interface ImportEnhancement {
   tags?: string[]
   content?: string
+  // Which passes the content owes its state to, so the import can report what
+  // was done rather than only that something was
+  voiced?: boolean
+  formatted?: boolean
 }
 
-export type ImportAssistJob = 'formatting' | 'tagging'
+export type ImportAssistJob = 'formatting' | 'tagging' | 'voicing'
 
 export interface EnhanceImportOptions {
   signal?: AbortSignal
   // Called as each job starts, so the import meter can name the stage a file
   // is sitting in rather than showing an unexplained pause
   onJobStarted?: (job: ImportAssistJob) => void
+  // Whether the import asked for the direct-address rewrite. Off unless
+  // chosen: it is the one job that changes the script's words.
+  voicing?: boolean
+}
+
+// Which jobs an example still needs, so an import can skip the ones with
+// nothing to do without paying for a request to find out
+export function importAssistJobsFor(
+  example: ExampleRecord,
+  { voicing = false }: { voicing?: boolean } = {}
+): ImportAssistJob[] {
+  const jobs: ImportAssistJob[] = []
+  if (voicing && needsDirectAddress(example.content)) jobs.push('voicing')
+  if (needsMarkdownFormatting(example.content)) jobs.push('formatting')
+  if (example.tags.length === 0) jobs.push('tagging')
+  return jobs
 }
 
 // Runs the utility jobs an imported example needs. Each job is independent:
 // a failure or an unusable reply leaves that part of the example as imported
-// rather than failing the import.
+// rather than failing the import. The rewrite runs first, so the formatting
+// pass lays out the text that will actually be stored.
 export async function enhanceImportedExample(
   example: ExampleRecord,
   service: UtilityModelService,
   knownTags: string[],
-  { signal, onJobStarted }: EnhanceImportOptions = {}
+  { signal, onJobStarted, voicing = false }: EnhanceImportOptions = {}
 ): Promise<ImportEnhancement> {
   const enhancement: ImportEnhancement = {}
   let content = example.content
+
+  if (voicing && needsDirectAddress(content)) {
+    onJobStarted?.('voicing')
+    const voiced = await rewriteForDirectAddress(content, service, signal)
+    if (voiced) {
+      enhancement.content = voiced
+      enhancement.voiced = true
+      content = voiced
+    }
+  }
 
   if (needsMarkdownFormatting(content)) {
     onJobStarted?.('formatting')
@@ -140,11 +279,13 @@ export async function enhanceImportedExample(
         job: 'formatting',
         system: buildImportFormattingPrompt(example.title),
         user: content,
+        maxOutputTokens: rewriteTokenBudget(content),
         signal
       })
       const formatted = stripCodeFence(reply)
       if (isFaithfulFormatting(content, formatted)) {
         enhancement.content = formatted
+        enhancement.formatted = true
         content = formatted
       }
     } catch (error) {
@@ -174,16 +315,19 @@ export async function enhanceImportedExample(
 export interface ImportAssistOutcome {
   tagged: number
   formatted: number
+  voiced: number
 }
 
 // Pure: the status line for what the utility model did to this import
 export function describeImportAssist(
-  { tagged, formatted }: ImportAssistOutcome,
+  { tagged, formatted, voiced }: ImportAssistOutcome,
   model: string
 ): string {
-  if (tagged === 0 && formatted === 0) return ''
   const parts: string[] = []
-  if (tagged > 0) parts.push(`tagged ${tagged}`)
+  if (voiced > 0) parts.push(`rewrote ${voiced} into direct address`)
   if (formatted > 0) parts.push(`formatted ${formatted} as markdown`)
-  return `${model} ${parts.join(' and ')}.`
+  if (tagged > 0) parts.push(`tagged ${tagged}`)
+  if (parts.length === 0) return ''
+  const last = parts.pop() as string
+  return `${model} ${parts.length > 0 ? `${parts.join(', ')} and ` : ''}${last}.`
 }

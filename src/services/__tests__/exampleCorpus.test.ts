@@ -94,6 +94,35 @@ Content.`
     expect(parsed.createdAt).toBe(1234567890)
   })
 
+  it('round-trips the library script an example was saved from (story 8.16)', () => {
+    const record: ExampleRecord = {
+      id: 'example_from_script',
+      title: 'From the library',
+      tags: [],
+      content: 'Body text.',
+      source: 'user',
+      createdAt: 1,
+      sourceScriptId: 'script_1_abc'
+    }
+
+    const parsed = parseExampleMarkdown(serializeExampleToMarkdown(record), 'fallback')
+    expect(parsed.sourceScriptId).toBe('script_1_abc')
+  })
+
+  it('omits the source script key for an imported example', () => {
+    const serialized = serializeExampleToMarkdown({
+      id: 'example_imported',
+      title: 'Imported',
+      tags: [],
+      content: 'Body text.',
+      source: 'user',
+      createdAt: 1
+    })
+
+    expect(serialized).not.toContain('sourceScriptId')
+    expect(parseExampleMarkdown(serialized, 'fallback').sourceScriptId).toBeUndefined()
+  })
+
   it('round-trips a stored embedding through serialization', () => {
     const record: ExampleRecord = {
       id: 'example_embedded',

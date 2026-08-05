@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import {
   MAX_SUGGESTED_TAGS,
+  countAddressMarkers,
   describeImportAssist,
   enhanceImportedExample,
+  importAssistJobsFor,
   isFaithfulFormatting,
+  isFaithfulVoicing,
+  needsDirectAddress,
   needsMarkdownFormatting,
   parseSuggestedTags,
+  rewriteForDirectAddress,
+  rewriteTokenBudget,
   stripCodeFence
 } from '../importAssist'
 import type { ExampleRecord } from '../../types/example'
@@ -204,14 +210,157 @@ describe('enhanceImportedExample', () => {
   })
 })
 
+// A script written about someone else, spoken to a title
+const THIRD_PERSON_SCRIPT = [
+  '## Descent',
+  'She feels her eyelids grow heavy, and she lets herself sink.',
+  'Deeper now, dropping for Mistress, because her Master asked it of her.'
+].join('\n')
+
+const VOICED_SCRIPT = [
+  '## Descent',
+  'You feel your eyelids grow heavy, and you let yourself sink.',
+  'Deeper now, dropping for me, because I asked it of you.'
+].join('\n')
+
+describe('countAddressMarkers', () => {
+  it('counts third-person narration and titles of address', () => {
+    expect(countAddressMarkers(THIRD_PERSON_SCRIPT)).toBeGreaterThan(5)
+  })
+
+  it('leaves a script that already speaks to the listener alone', () => {
+    expect(countAddressMarkers(VOICED_SCRIPT)).toBe(0)
+    expect(needsDirectAddress(VOICED_SCRIPT)).toBe(false)
+  })
+
+  it('does not count the plural pronouns a second-person script uses', () => {
+    expect(countAddressMarkers('Let your thoughts come, and let them go.')).toBe(0)
+  })
+})
+
+describe('isFaithfulVoicing', () => {
+  it('accepts a rewrite that changed the person and kept the script', () => {
+    expect(isFaithfulVoicing(THIRD_PERSON_SCRIPT, VOICED_SCRIPT)).toBe(true)
+  })
+
+  it('rejects a reply that changed nothing', () => {
+    expect(isFaithfulVoicing(THIRD_PERSON_SCRIPT, THIRD_PERSON_SCRIPT)).toBe(false)
+  })
+
+  it('rejects a summary', () => {
+    expect(isFaithfulVoicing(THIRD_PERSON_SCRIPT, '## Descent\nYou sink.')).toBe(false)
+  })
+
+  it('rejects a rewrite that restructured the headings', () => {
+    const restructured = VOICED_SCRIPT.replace('## Descent', '## Descent\n\n## Deeper')
+    expect(isFaithfulVoicing(THIRD_PERSON_SCRIPT, restructured)).toBe(false)
+  })
+
+  it('rejects an empty reply', () => {
+    expect(isFaithfulVoicing(THIRD_PERSON_SCRIPT, '   ')).toBe(false)
+  })
+})
+
+describe('rewriteForDirectAddress', () => {
+  it('asks the utility model and returns a faithful rewrite', async () => {
+    const service = new FakeUtilityService({ voicing: VOICED_SCRIPT })
+
+    expect(await rewriteForDirectAddress(THIRD_PERSON_SCRIPT, service)).toBe(VOICED_SCRIPT)
+    expect(service.requests[0].job).toBe('voicing')
+  })
+
+  it('asks for room to reproduce the whole script', async () => {
+    const long = `${THIRD_PERSON_SCRIPT}\n${'she drifts down and down. '.repeat(3000)}`
+    const service = new FakeUtilityService({ voicing: '' })
+
+    await rewriteForDirectAddress(long, service)
+
+    expect(service.requests[0].maxOutputTokens).toBe(rewriteTokenBudget(long))
+    expect(service.requests[0].maxOutputTokens).toBeGreaterThan(4096)
+  })
+
+  it('keeps the script when the reply cannot be trusted', async () => {
+    const service = new FakeUtilityService({ voicing: 'Sure! Here is a shorter version.' })
+
+    expect(await rewriteForDirectAddress(THIRD_PERSON_SCRIPT, service)).toBeNull()
+  })
+
+  it('costs nothing when the script already speaks to the listener', async () => {
+    const service = new FakeUtilityService({ voicing: VOICED_SCRIPT })
+
+    expect(await rewriteForDirectAddress(VOICED_SCRIPT, service)).toBeNull()
+    expect(service.requests).toEqual([])
+  })
+
+  it('keeps the script when the request fails', async () => {
+    const service = new FakeUtilityService({ voicing: new Error('offline') })
+
+    expect(await rewriteForDirectAddress(THIRD_PERSON_SCRIPT, service)).toBeNull()
+  })
+})
+
+describe('the direct-address pass inside an import', () => {
+  it('runs only when the import asked for it', async () => {
+    const service = new FakeUtilityService({ voicing: VOICED_SCRIPT, tagging: 'sleep' })
+    const imported = example({ content: THIRD_PERSON_SCRIPT })
+
+    const untouched = await enhanceImportedExample(imported, service, [])
+    expect(untouched.content).toBeUndefined()
+    expect(untouched.voiced).toBeUndefined()
+
+    const rewritten = await enhanceImportedExample(imported, service, [], { voicing: true })
+    expect(rewritten.content).toBe(VOICED_SCRIPT)
+    expect(rewritten.voiced).toBe(true)
+  })
+
+  it('rewrites before formatting, so the layout is of the text that is stored', async () => {
+    const plainThirdPerson = `She settles back. ${'She lets each breath carry her further down. '.repeat(20)}`
+    const voiced = `You settle back. ${'You let each breath carry you further down. '.repeat(20)}`
+    const service = new FakeUtilityService({
+      voicing: voiced,
+      formatting: `# Deep Rest\n\n## Settling\n${voiced}`,
+      tagging: 'sleep'
+    })
+    const jobs: string[] = []
+
+    const enhancement = await enhanceImportedExample(
+      example({ content: plainThirdPerson }),
+      service,
+      [],
+      { voicing: true, onJobStarted: job => jobs.push(job) }
+    )
+
+    expect(jobs).toEqual(['voicing', 'formatting', 'tagging'])
+    // The formatting request saw the rewritten text, not the import
+    expect(service.requests[1].user).toBe(voiced.trim())
+    expect(enhancement.content).toContain('## Settling')
+    expect(enhancement.voiced).toBe(true)
+    expect(enhancement.formatted).toBe(true)
+  })
+
+  it('lists the jobs an example needs before any request is made', () => {
+    const plain = example({ content: THIRD_PERSON_SCRIPT, tags: ['sleep'] })
+
+    expect(importAssistJobsFor(plain)).toEqual([])
+    expect(importAssistJobsFor(plain, { voicing: true })).toEqual(['voicing'])
+    expect(importAssistJobsFor(example(), { voicing: true })).toEqual(['formatting', 'tagging'])
+  })
+})
+
 describe('describeImportAssist', () => {
   it('names the model and what it did', () => {
-    expect(describeImportAssist({ tagged: 2, formatted: 1 }, 'gpt-5-nano')).toBe(
-      'gpt-5-nano tagged 2 and formatted 1 as markdown.'
+    expect(describeImportAssist({ tagged: 2, formatted: 1, voiced: 0 }, 'gpt-5-nano')).toBe(
+      'gpt-5-nano formatted 1 as markdown and tagged 2.'
+    )
+  })
+
+  it('reads as a list once all three passes have done something', () => {
+    expect(describeImportAssist({ tagged: 2, formatted: 1, voiced: 3 }, 'gpt-5-nano')).toBe(
+      'gpt-5-nano rewrote 3 into direct address, formatted 1 as markdown and tagged 2.'
     )
   })
 
   it('says nothing when nothing was applied', () => {
-    expect(describeImportAssist({ tagged: 0, formatted: 0 }, 'gpt-5-nano')).toBe('')
+    expect(describeImportAssist({ tagged: 0, formatted: 0, voiced: 0 }, 'gpt-5-nano')).toBe('')
   })
 })

@@ -263,6 +263,20 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     return conversation
   }, [])
 
+  // A conversation that arrives already written: an example opened as a
+  // script (story 8.16) reconstructs the outline and section generations, so
+  // like a duplicate it is saved here rather than by a generation run
+  const adoptConversation = useCallback((
+    scriptId: string,
+    generations: Generation[]
+  ): RawConversation => {
+    const conversation = { ...createRawConversation(scriptId), generations }
+
+    dispatch({ type: 'CREATE_CONVERSATION', conversation })
+    saveStoredConversation(conversation)
+    return conversation
+  }, [])
+
   const contextValue: ConversationContextType = {
     state,
     isLoaded,
@@ -270,6 +284,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     getConversationByScriptId,
     createConversation,
     duplicateConversation,
+    adoptConversation,
     generateScript,
     regenerateSection,
     refineScript,

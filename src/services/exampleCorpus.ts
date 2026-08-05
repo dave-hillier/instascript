@@ -15,6 +15,7 @@ interface ParsedExampleFile {
   folder?: string
   createdAt?: number
   embedding?: number[]
+  sourceScriptId?: string
 }
 
 // Parses a markdown example file: optional YAML front matter (title, tags),
@@ -26,6 +27,7 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
   let folder: string | undefined
   let createdAt: number | undefined
   let embedding: number[] | undefined
+  let sourceScriptId: string | undefined
   let content = raw
 
   const frontMatterMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
@@ -41,6 +43,9 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
         }
         if (typeof parsed.folder === 'string') folder = normalizeFolderName(parsed.folder) || undefined
         if (typeof parsed.createdAt === 'number') createdAt = parsed.createdAt
+        if (typeof parsed.sourceScriptId === 'string' && parsed.sourceScriptId.trim()) {
+          sourceScriptId = parsed.sourceScriptId.trim()
+        }
         if (
           Array.isArray(parsed.embedding) &&
           parsed.embedding.length > 0 &&
@@ -60,7 +65,7 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
     title = heading ? heading[1].trim() : fallbackTitle
   }
 
-  return { title, tags, folder, content: content.trim(), createdAt, embedding }
+  return { title, tags, folder, content: content.trim(), createdAt, embedding, sourceScriptId }
 }
 
 export function serializeExampleToMarkdown(example: ExampleRecord): string {
@@ -74,6 +79,11 @@ export function serializeExampleToMarkdown(example: ExampleRecord): string {
   const folder = example.folder ? normalizeFolderName(example.folder) : ''
   if (folder && folder !== UNFILED_FOLDER) {
     frontMatter.folder = folder
+  }
+  // Only examples saved from a library script carry this, so everything
+  // imported from a file round-trips exactly as it did before
+  if (example.sourceScriptId) {
+    frontMatter.sourceScriptId = example.sourceScriptId
   }
   if (example.embedding && example.embedding.length > 0) {
     // Rounded to 5 decimals: enough precision for cosine similarity, keeps
@@ -304,7 +314,8 @@ export function getUserExamples(): ExampleRecord[] {
         source: 'user',
         folder: parsed.folder,
         createdAt: parsed.createdAt,
-        embedding: parsed.embedding
+        embedding: parsed.embedding,
+        sourceScriptId: parsed.sourceScriptId
       })
     }
     return examples.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
@@ -391,7 +402,8 @@ function createUserExample(
   title: string,
   tags: string[],
   content: string,
-  folder: string = UNFILED_FOLDER
+  folder: string = UNFILED_FOLDER,
+  sourceScriptId?: string
 ): ExampleRecord {
   const filed = normalizeFolderName(folder) || UNFILED_FOLDER
   const example: ExampleRecord = {
@@ -401,7 +413,8 @@ function createUserExample(
     content,
     source: 'user',
     folder: filed === UNFILED_FOLDER ? undefined : filed,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    sourceScriptId
   }
   saveUserExample(example)
   declareFolder(filed)
@@ -461,15 +474,54 @@ export function importExampleFile(
   return createUserExample(parsed.title, parsed.tags, parsed.content, folder)
 }
 
-// Promotes a completed script's consolidated content to a user example. It
-// lands in the active folder, so the script it came from can inform the next
-// generation without the user filing it first.
-export function promoteScriptToExample(
-  title: string,
-  content: string,
-  tags: string[] = []
-): ExampleRecord {
-  return createUserExample(title, tags, content, getActiveExampleFolder())
+// Saving a library script into the corpus (the other half of opening an
+// example as a script). Without a folder it lands in the active one, so the
+// script can inform the next generation without being filed first.
+export interface ScriptPromotion {
+  title: string
+  content: string
+  tags?: string[]
+  folder?: string
+  // The script this came from, kept so the corpus can say it already holds
+  // this script and so a later save updates that example instead of adding
+  // a second copy of it
+  scriptId?: string
+}
+
+export function promoteScriptToExample({
+  title,
+  content,
+  tags = [],
+  folder,
+  scriptId
+}: ScriptPromotion): ExampleRecord {
+  const existing = scriptId ? findExampleForScript(scriptId) : undefined
+  if (existing) {
+    // The script has moved on since it was saved: the example held for it is
+    // brought up to date rather than joined by a stale twin. It keeps the
+    // folder it was filed into, which may not be the active one any more.
+    const updated: ExampleRecord = {
+      ...existing,
+      title,
+      content,
+      tags: tags.length > 0 ? tags : existing.tags
+    }
+    saveUserExample(updated)
+    if (content !== existing.content) void attachEmbedding(updated)
+    return updated
+  }
+  return createUserExample(
+    title,
+    tags,
+    content,
+    folder ?? getActiveExampleFolder(),
+    scriptId
+  )
+}
+
+// The example held for a library script, if the corpus has one
+export function findExampleForScript(scriptId: string): ExampleRecord | undefined {
+  return getUserExamples().find(example => example.sourceScriptId === scriptId)
 }
 
 // --- Example selection counts (story 8.11) -------------------------------

@@ -1,5 +1,5 @@
 import { createContext } from 'react'
-import type { RawConversation, GenerationRequest, SectionRegenerationRequest, ScriptRefinementRequest, SectionEditRequest } from '../types/conversation'
+import type { RawConversation, Generation, GenerationRequest, SectionRegenerationRequest, ScriptRefinementRequest, SectionEditRequest } from '../types/conversation'
 import type { RawConversationAction, RawConversationState } from '../reducers/rawConversationReducer'
 
 export type ConversationContextType = {
@@ -10,6 +10,10 @@ export type ConversationContextType = {
   getConversationByScriptId: (scriptId: string) => RawConversation | undefined
   createConversation: (scriptId: string) => RawConversation
   duplicateConversation: (sourceScriptId: string, newScriptId: string) => RawConversation
+  // Creates a conversation that is already written — a corpus example opened
+  // as a script (story 8.16) arrives as its outline and sections rather than
+  // being generated
+  adoptConversation: (scriptId: string, generations: Generation[]) => RawConversation
   generateScript: (request: GenerationRequest) => Promise<void>
   regenerateSection: (request: SectionRegenerationRequest) => Promise<void>
   refineScript: (request: ScriptRefinementRequest) => Promise<void>

@@ -328,6 +328,20 @@ Acceptance criteria:
 - The pass can be switched off, keeping imports entirely local
 - Utility requests appear in the debug transcripts with their own labels
 
+### 5.8 Put imported material into my own voice [Implemented]
+As a user importing scripts written for someone else, I want the third person and the titles of address taken out on the way in — "she drops for Mistress" becoming "you drop for me" — so that my corpus teaches generation the voice I actually write in rather than the one my source material was written in.
+
+Notes: a third utility job (story 5.7's model, not the generation model), chosen on the import form rather than in settings because it is a property of the import, and off unless asked: it is the only pass that changes what a script says. It runs before the markdown pass, so the layout is of the text that ends up stored. The check afterwards is the same idea as the formatting one but the opposite shape — a rewrite may change words, so it is accepted only if it kept the script's headings and length and actually reduced the third-person and honorific markers the pass exists to remove. Detection and verification are pure: plural pronouns are deliberately not counted as third person, since a script written in the second person uses them constantly. The same action is available per example, since most material was imported before the option existed.
+
+Acceptance criteria:
+- The import form offers the rewrite, off by default, and the choice persists
+- An import that already speaks to the listener costs no request
+- The rewrite runs before the markdown pass, so both apply to one import cleanly
+- A rewrite that summarised, padded or restructured the script is discarded and the import keeps the words it arrived with
+- The import meter names the rewrite as its own stage, and the closing summary says how many were rewritten
+- An example already in the corpus can be rewritten from its own row, and says so when no provider is configured
+- The whole reply is asked for with room to hold the script, so a long import is not truncated
+
 ## Epic 7: Data Portability
 
 ### 7.1 Persist everything across sessions [Implemented]
@@ -517,6 +531,20 @@ Acceptance criteria:
 - A whole folder can be deleted with its examples in one action, with confirmation
 - Deleting the folder in use falls back to a folder that exists
 - An import that lands outside the folder in use says so and offers to switch to it
+
+### 8.16 Move material between my library and my corpus [Implemented]
+As a user whose examples and scripts are the same kind of writing, I want to open any example as a script and save any script as an example, so that material I have collected can be reworked, performed and exported, and material I have written can ground what comes next — without leaving the app to shuffle files.
+
+Notes: closes a loop that previously ran one way from a single button on a finished script. A script's text lives in its conversation rather than in the script record, so opening an example as a script is a reconstruction: the example is split at its `## ` headings into the section generations the script page consolidates, preceded by a synthesised outline generation whose entries are read back from the sections themselves — which is what gives regeneration a brief to work from. Every word survives that split: prose above the first heading becomes its own section, an example with no headings becomes one section rather than a script with none, and a repeated section title is numbered so consolidation-by-title cannot silently merge two sections into one. The adopted script is a copy from that moment on; it claims no provider or model, since nothing generated it, and its target length is derived from its own word count so a later review judges it against itself. Both directions are reachable from the examples page, which is where the corpus is managed, and the script page keeps its own Save as example. Provenance is recorded at both ends (`sourceExampleId` on the script, `sourceScriptId` on the example), which is what lets a second save update the example already held for a script instead of quietly making a stale twin of it.
+
+Acceptance criteria:
+- Any user example can be opened as a script from its row, landing on the script page with its sections editable, regenerable, reviewable, performable and exportable
+- The conversion loses nothing: unstructured examples, prose before the first heading, and repeated section titles all survive
+- The adopted script records which example it came from, and is a copy — editing it never writes back to the example
+- Any library script can be saved into the corpus from the examples page, into a chosen folder, with the scripts already saved marked as such
+- Saving a script that is already in the corpus updates that example in the folder it was filed into, rather than adding a second copy
+- The script page's own Save as example does the same, and says which folder the script sits in — including across a reload
+- Examples that came from the library say so in their row
 
 ## Epic 9: Visual Design
 

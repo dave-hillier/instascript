@@ -11,6 +11,8 @@ export type ImportStage =
   | 'reading'
   // Parsed and stored as an example; the tidy pass may still touch it
   | 'saved'
+  // The utility model is putting the script into direct address
+  | 'voicing'
   // The utility model is laying the script out as markdown
   | 'formatting'
   // The utility model is suggesting tags
@@ -38,8 +40,9 @@ export interface ImportFileProgress {
 const STAGE_FRACTION: Record<ImportStage, number> = {
   queued: 0,
   reading: 0.3,
-  saved: 0.55,
-  formatting: 0.75,
+  saved: 0.5,
+  voicing: 0.65,
+  formatting: 0.8,
   tagging: 0.9,
   done: 1,
   skipped: 1,
@@ -50,6 +53,7 @@ const STAGE_LABEL: Record<ImportStage, string> = {
   queued: 'Queued',
   reading: 'Reading file',
   saved: 'Saved to corpus',
+  voicing: 'Rewriting into direct address',
   formatting: 'Formatting as markdown',
   tagging: 'Suggesting tags',
   done: 'Imported',
