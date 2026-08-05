@@ -91,7 +91,12 @@ const validateScript = (value: unknown, index: number): Script => {
     initialPrompt: typeof value.initialPrompt === 'string' ? value.initialPrompt : undefined,
     targetMinutes: typeof value.targetMinutes === 'number' ? value.targetMinutes : undefined,
     provider: typeof value.provider === 'string' ? value.provider : undefined,
-    model: typeof value.model === 'string' ? value.model : undefined
+    model: typeof value.model === 'string' ? value.model : undefined,
+    // The corpus example the script was opened from, if any (story 8.16).
+    // The example itself is not part of a library export, so this may point
+    // at nothing in the browser the export lands in — it is provenance, and
+    // nothing reads it as a promise that the example is there.
+    sourceExampleId: typeof value.sourceExampleId === 'string' ? value.sourceExampleId : undefined
   }
 }
 

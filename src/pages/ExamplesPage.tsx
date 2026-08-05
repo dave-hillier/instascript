@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState } from 'react'
-import { FolderPlus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { BookmarkPlus, FolderPlus } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import {
   applyExampleEnhancement,
@@ -18,6 +19,7 @@ import {
   listExampleFolders,
   deleteUserExample,
   moveExampleToFolder,
+  promoteScriptToExample,
   renameExampleFolder,
   resolveActiveFolder,
   setActiveExampleFolder,
@@ -28,9 +30,18 @@ import {
 import {
   describeImportAssist,
   enhanceImportedExample,
-  needsMarkdownFormatting,
+  importAssistJobsFor,
+  rewriteForDirectAddress,
   type ImportAssistOutcome
 } from '../services/importAssist'
+import { adoptExampleAsScript } from '../services/exampleToScript'
+import {
+  describePromotableScript,
+  listPromotableScripts,
+  type PromotableScript
+} from '../services/scriptToExample'
+import { useAppContext } from '../hooks/useAppContext'
+import { useConversationContext } from '../hooks/useConversationContext'
 import {
   advanceImportFile,
   createImportProgress,
@@ -43,7 +54,11 @@ import { ImportProgressMeter } from '../components/ImportProgressMeter'
 import { ExampleFolderSection } from '../components/ExampleFolderSection'
 import { describeSelectionCount } from '../utils/exampleDisplay'
 import { createUtilityService } from '../services/serviceFactory'
-import { isImportAssistEnabled } from '../services/config'
+import {
+  isImportAssistEnabled,
+  isImportVoicingEnabled,
+  setImportVoicingEnabled
+} from '../services/config'
 import { countWords } from '../utils/scriptMetrics'
 
 // A file that made it into the corpus, kept paired with its meter row so the
@@ -59,6 +74,20 @@ type ImportedFile = {
 type AssistState =
   | { status: 'idle' }
   | { status: 'finished'; outcome: ImportAssistOutcome; model: string }
+
+// The outcome of saving a library script into the corpus, so the page can
+// say where it went — and whether it replaced the copy already held for that
+// script rather than adding a second one
+type PromotionState =
+  | { status: 'idle' }
+  | { status: 'saved'; title: string; folder: string; replaced: boolean }
+
+// The on-demand direct-address rewrite of one example already in the corpus:
+// which one is running, and what came of the last one
+type RewriteState = {
+  runningId: string | null
+  note: string | null
+}
 
 type ExamplesState = {
   examples: ExampleRecord[]
@@ -84,7 +113,13 @@ type ExamplesState = {
   // How many files of the most recent selection were not example files at
   // all. They get no row, so this is the one count the rows cannot derive.
   importIgnored: number
+  // Whether an import also rewrites third person and titles of address into
+  // direct address. A stored setting, chosen here because it is a property of
+  // the import rather than of the app.
+  importVoicing: boolean
   assist: AssistState
+  promotion: PromotionState
+  rewrite: RewriteState
 }
 
 type ExamplesAction =
@@ -107,6 +142,10 @@ type ExamplesAction =
   | { type: 'BUNDLED_EXAMPLES_TOGGLED'; enabled: boolean }
   | { type: 'EXAMPLE_ASSISTED'; example: ExampleRecord | null }
   | { type: 'IMPORT_ASSIST_FINISHED'; outcome: ImportAssistOutcome; model: string }
+  | { type: 'IMPORT_VOICING_TOGGLED'; enabled: boolean }
+  | { type: 'SCRIPT_SAVED_AS_EXAMPLE'; example: ExampleRecord; replaced: boolean }
+  | { type: 'EXAMPLE_REWRITE_STARTED'; id: string }
+  | { type: 'EXAMPLE_REWRITE_FINISHED'; example: ExampleRecord | null; note: string }
 
 const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
   examples.filter(example => example.source === 'user')
@@ -177,6 +216,41 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
         ...state,
         assist: { status: 'finished', outcome: action.outcome, model: action.model }
       }
+    case 'IMPORT_VOICING_TOGGLED':
+      return { ...state, importVoicing: action.enabled }
+    case 'EXAMPLE_REWRITE_STARTED':
+      return { ...state, rewrite: { runningId: action.id, note: null } }
+    case 'EXAMPLE_REWRITE_FINISHED': {
+      const rewritten = action.example
+      return {
+        ...state,
+        examples: rewritten
+          ? state.examples.map(example =>
+              example.id === rewritten.id ? rewritten : example
+            )
+          : state.examples,
+        rewrite: { runningId: null, note: action.note }
+      }
+    }
+    case 'SCRIPT_SAVED_AS_EXAMPLE': {
+      const saved = action.example
+      const examples = action.replaced
+        ? state.examples.map(example => (example.id === saved.id ? saved : example))
+        : [...state.examples, saved]
+      return {
+        ...withCorpus(
+          state,
+          examples,
+          declaredWith(state.declaredFolders, exampleFolder(saved))
+        ),
+        promotion: {
+          status: 'saved',
+          title: saved.title,
+          folder: exampleFolder(saved),
+          replaced: action.replaced
+        }
+      }
+    }
     case 'EXAMPLES_IMPORTED': {
       const arrivedIn = [...new Set(action.examples.map(exampleFolder))]
       return {
@@ -297,7 +371,99 @@ const NewFolderForm = ({
   )
 }
 
+// The corpus's other source of material: the scripts already in the library.
+// A script and an example are the same text at two points in one loop, so
+// saving one into the corpus is a first-class way of filling it rather than
+// something only reachable from the script that happens to be open.
+const LibraryPromotionForm = ({
+  scripts,
+  folders,
+  defaultFolder,
+  onPromote
+}: {
+  scripts: PromotableScript[]
+  folders: string[]
+  defaultFolder: string
+  onPromote: (entry: PromotableScript, folder: string) => void
+}) => {
+  const [scriptId, setScriptId] = useState('')
+  const [folder, setFolder] = useState(defaultFolder)
+  const selected = scripts.find(entry => entry.script.id === scriptId) ?? scripts[0]
+
+  if (scripts.length === 0) {
+    return (
+      <section className="example-from-library" aria-labelledby="from-library-heading">
+        <h3 id="from-library-heading">From your script library</h3>
+        <p>
+          Nothing in your library to save yet. A script you have generated —
+          or one you opened from an example and reworked — can be saved back
+          here as an example.
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <form
+      className="example-from-library"
+      aria-labelledby="from-library-heading"
+      onSubmit={event => {
+        event.preventDefault()
+        if (selected) onPromote(selected, folder)
+      }}
+    >
+      <h3 id="from-library-heading">From your script library</h3>
+      <p>
+        A script you have written can ground the next generation. Saving a
+        script you already saved brings its example up to date rather than
+        adding a second copy.
+      </p>
+
+      <label htmlFor="promote-script">Script</label>
+      <select
+        id="promote-script"
+        value={selected?.script.id ?? ''}
+        onChange={event => setScriptId(event.target.value)}
+      >
+        {scripts.map(entry => (
+          <option key={entry.script.id} value={entry.script.id}>
+            {describePromotableScript(entry)}
+          </option>
+        ))}
+      </select>
+
+      <label htmlFor="promote-folder">Folder</label>
+      <select
+        id="promote-folder"
+        value={folder}
+        onChange={event => setFolder(event.target.value)}
+        disabled={!!selected?.savedExampleId}
+        aria-describedby="promote-folder-help"
+      >
+        {folders.map(name => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <p id="promote-folder-help">
+        {selected?.savedExampleId
+          ? `Already saved in "${selected.savedFolder ?? UNFILED_FOLDER}". Saving again updates it there; move it from its own row to file it elsewhere.`
+          : 'Where the example is filed. Files it into the folder generation is using unless you choose another.'}
+      </p>
+
+      <button type="submit">
+        <BookmarkPlus size={14} />
+        {selected?.savedExampleId ? 'Update the saved example' : 'Save as example'}
+      </button>
+    </form>
+  )
+}
+
 export const ExamplesPage = () => {
+  const navigate = useNavigate()
+  const { state: appState, dispatch: appDispatch } = useAppContext()
+  const { state: conversationState, adoptConversation } = useConversationContext()
   const [state, dispatch] = useReducer(
     examplesReducer,
     undefined,
@@ -311,7 +477,10 @@ export const ExamplesPage = () => {
       importedFolders: [],
       importFiles: [],
       importIgnored: 0,
-      assist: { status: 'idle' }
+      importVoicing: isImportVoicingEnabled(),
+      assist: { status: 'idle' },
+      promotion: { status: 'idle' },
+      rewrite: { runningId: null, note: null }
     })
   )
   const importSummary = summarizeImportProgress(state.importFiles, state.importIgnored)
@@ -330,6 +499,13 @@ export const ExamplesPage = () => {
   // Where the last import landed, when that is not where generation is
   // looking — otherwise the import appears to have done nothing
   const idleFolders = state.importedFolders.filter(folder => folder !== state.activeFolder)
+  // The library scripts worth offering to the corpus, and which of them it
+  // already holds an example for
+  const promotableScripts = listPromotableScripts(
+    appState.scripts,
+    conversationState.conversations,
+    userExamples
+  )
 
   // The active folder is a stored setting; the reducer resolves it, and this
   // writes each resolution back, including the one that follows deleting the
@@ -407,7 +583,7 @@ export const ExamplesPage = () => {
     const pending = isImportAssistEnabled()
       ? imported.filter(
           ({ example }) =>
-            example.tags.length === 0 || needsMarkdownFormatting(example.content)
+            importAssistJobsFor(example, { voicing: state.importVoicing }).length > 0
         )
       : []
 
@@ -425,6 +601,7 @@ export const ExamplesPage = () => {
 
     let tagged = 0
     let formatted = 0
+    let voiced = 0
     // Sequential: a folder import can be dozens of files, and a queue of
     // parallel requests to a rate-limited key fails more of them than it
     // finishes sooner
@@ -432,6 +609,7 @@ export const ExamplesPage = () => {
       // The job names double as the meter's stages, so a file sitting on a
       // slow request says which request it is waiting on
       const enhancement = await enhanceImportedExample(example, service, knownTags, {
+        voicing: state.importVoicing,
         onJobStarted: job =>
           dispatch({ type: 'IMPORT_FILE_STAGED', id: fileId, stage: job })
       })
@@ -441,7 +619,8 @@ export const ExamplesPage = () => {
           : null
       if (updated) {
         if (enhancement.tags) tagged += 1
-        if (enhancement.content) formatted += 1
+        if (enhancement.formatted) formatted += 1
+        if (enhancement.voiced) voiced += 1
       }
       dispatch({ type: 'EXAMPLE_ASSISTED', example: updated })
       dispatch({ type: 'IMPORT_FILE_STAGED', id: fileId, stage: 'done' })
@@ -449,9 +628,77 @@ export const ExamplesPage = () => {
 
     dispatch({
       type: 'IMPORT_ASSIST_FINISHED',
-      outcome: { tagged, formatted },
+      outcome: { tagged, formatted, voiced },
       model: service.model
     })
+  }
+
+  // The same rewrite the import offers, run on an example already in the
+  // corpus — most material was imported before the option existed, and it is
+  // worth being able to fix in place rather than only on the way in
+  const handleRewriteExample = async (example: ExampleRecord) => {
+    dispatch({ type: 'EXAMPLE_REWRITE_STARTED', id: example.id })
+    const service = createUtilityService()
+    if (!service.isLive) {
+      dispatch({
+        type: 'EXAMPLE_REWRITE_FINISHED',
+        example: null,
+        note: 'The rewrite needs a configured provider — the mock cannot rewrite a script.'
+      })
+      return
+    }
+
+    const voiced = await rewriteForDirectAddress(example.content, service)
+    if (!voiced) {
+      dispatch({
+        type: 'EXAMPLE_REWRITE_FINISHED',
+        example: null,
+        note: `${service.model} did not return a usable rewrite of "${example.title}", so it is unchanged.`
+      })
+      return
+    }
+
+    const updated = applyExampleEnhancement(example.id, { content: voiced })
+    dispatch({
+      type: 'EXAMPLE_REWRITE_FINISHED',
+      example: updated,
+      note: updated
+        ? `${service.model} rewrote "${updated.title}" into direct address.`
+        : `"${example.title}" is no longer in the corpus.`
+    })
+  }
+
+  // Corpus to library: the example is reconstructed as a script — an outline
+  // and its sections — so everything the script page does works on it. The
+  // script is a copy from here on; editing it never writes back.
+  const handleOpenAsScript = (example: ExampleRecord) => {
+    const scriptId = `script_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`
+    const { script, generations } = adoptExampleAsScript(example, scriptId)
+    const conversation = adoptConversation(scriptId, generations)
+    appDispatch({ type: 'ADD_SCRIPT', script: { ...script, conversationId: conversation.id } })
+    navigate(`/script/${scriptId}`)
+  }
+
+  // Library to corpus: the script as it currently stands, consolidated from
+  // its conversation, saved as an example
+  const handlePromoteScript = (entry: PromotableScript, folder: string) => {
+    const example = promoteScriptToExample({
+      title: entry.script.title,
+      content: entry.content,
+      tags: entry.script.tags ?? [],
+      folder,
+      scriptId: entry.script.id
+    })
+    dispatch({
+      type: 'SCRIPT_SAVED_AS_EXAMPLE',
+      example,
+      replaced: !!entry.savedExampleId
+    })
+  }
+
+  const handleVoicingToggle = (enabled: boolean) => {
+    setImportVoicingEnabled(enabled)
+    dispatch({ type: 'IMPORT_VOICING_TOGGLED', enabled })
   }
 
   const handleBundledToggle = (enabled: boolean) => {
@@ -509,11 +756,18 @@ export const ExamplesPage = () => {
       <header>
         <h2>Example corpus</h2>
         <p>
-          Generation is grounded in these scripts. Your imports and promoted
-          scripts are stored in this browser, filed into folders — one folder
-          at a time grounds generation, so you can keep several bodies of
-          material and switch between them. A small set of bundled placeholder
-          examples ships with the app; they are off unless you switch them on.
+          Generation is grounded in these scripts. Your imports and the scripts
+          you save from the library are stored in this browser, filed into
+          folders — one folder at a time grounds generation, so you can keep
+          several bodies of material and switch between them. A small set of
+          bundled placeholder examples ships with the app; they are off unless
+          you switch them on.
+        </p>
+        <p>
+          An example and a script are the same text at two points in one loop:
+          any example here can be opened as a script to rework, perform or
+          export, and any script in your library can be saved back here as
+          material for the next generation.
         </p>
       </header>
 
@@ -597,6 +851,26 @@ export const ExamplesPage = () => {
           imported; anything else is ignored.
         </p>
 
+        <label className="checkbox-field" htmlFor="import-voicing">
+          <input
+            type="checkbox"
+            id="import-voicing"
+            checked={state.importVoicing}
+            onChange={event => handleVoicingToggle(event.target.checked)}
+            aria-describedby="import-voicing-help"
+          />
+          <span>Rewrite into direct address</span>
+        </label>
+        <p id="import-voicing-help">
+          Material written about someone else, or spoken to a title, teaches
+          generation a voice you are not writing in. With this on, the small
+          utility model puts each import into the second person and takes the
+          titles of address out — "drop for Mistress" becomes "drop for me".
+          A rewrite that lost or padded the script is discarded, and the
+          import keeps the words it arrived with. Off unless you ask: it is
+          the one pass that changes what the script says.
+        </p>
+
         <ImportProgressMeter files={state.importFiles} />
 
         {importSummary.finished && (
@@ -630,6 +904,28 @@ export const ExamplesPage = () => {
         )}
       </form>
 
+      <LibraryPromotionForm
+        key={`promote-${state.examples.length}-${state.activeFolder}`}
+        scripts={promotableScripts}
+        folders={folderOptions}
+        defaultFolder={state.activeFolder}
+        onPromote={handlePromoteScript}
+      />
+
+      {state.promotion.status === 'saved' && (
+        <p className="example-promotion-result" role="status" aria-live="polite">
+          {state.promotion.replaced
+            ? `Updated the example held for "${state.promotion.title}" in "${state.promotion.folder}".`
+            : `Saved "${state.promotion.title}" into "${state.promotion.folder}".`}
+        </p>
+      )}
+
+      {state.rewrite.note && (
+        <p className="example-rewrite-result" role="status" aria-live="polite">
+          {state.rewrite.note}
+        </p>
+      )}
+
       <NewFolderForm onFolderCreated={handleFolderCreated} />
 
       {folders.length === 0 ? (
@@ -644,11 +940,16 @@ export const ExamplesPage = () => {
             folders={folderOptions}
             active={folder === state.activeFolder}
             selectionCounts={selectionCounts}
+            rewritingExampleId={state.rewrite.runningId}
             onActivated={handleFolderActivated}
             onFolderRenamed={handleFolderRenamed}
             onFolderDeleted={handleFolderDelete}
             onExampleDeleted={handleDelete}
             onDetailsSaved={handleDetailsSaved}
+            onOpenAsScript={handleOpenAsScript}
+            onRewriteExample={example => {
+              void handleRewriteExample(example)
+            }}
           />
         ))
       )}

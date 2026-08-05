@@ -97,6 +97,18 @@ export function setImportAssistEnabled(enabled: boolean): void {
   writeSetting('importAssist', enabled)
 }
 
+// Whether an import also asks the utility model to rewrite third-person
+// narration and titles of address into direct address (story 8.16). Off by
+// default and chosen on the import form: unlike tagging and markdown
+// formatting it changes the script's words, so it is never assumed.
+export function isImportVoicingEnabled(): boolean {
+  return readSetting<boolean>('importVoicing', false) === true
+}
+
+export function setImportVoicingEnabled(enabled: boolean): void {
+  writeSetting('importVoicing', enabled)
+}
+
 // Which engine reads the script aloud in performance mode (story 4.5):
 // the browser's built-in speech synthesis, or an OpenRouter text-to-speech
 // model. The browser engine stays the default — it is free and works offline.

@@ -32,7 +32,8 @@ interface ScriptDocumentProps {
   showScriptActions: boolean
   onReviewScript: () => void
   onPromoteToExample: () => void
-  promotedToExamples: boolean
+  // The corpus folder this script is saved into, or null when it is not
+  promotedFolder: string | null
   reviewError?: string | null
 }
 
@@ -58,7 +59,7 @@ export const ScriptDocument = ({
   showScriptActions,
   onReviewScript,
   onPromoteToExample,
-  promotedToExamples,
+  promotedFolder,
   reviewError
 }: ScriptDocumentProps) => (
   <section className="document-pane" aria-label="Script">
@@ -210,18 +211,26 @@ export const ScriptDocument = ({
               <ScanSearch size={16} />
               Review script
             </button>
-            {promotedToExamples ? (
-              <p className="example-promoted" role="status">Saved to your example corpus</p>
-            ) : (
-              <button
-                onClick={onPromoteToExample}
-                aria-label="Save this script as an example"
-                type="button"
-              >
-                <BookmarkPlus size={16} />
-                Save as example
-              </button>
+            {/* A saved script keeps the action: the script moves on after it
+                was saved, and saving again updates the example held for it
+                rather than adding a second copy */}
+            {promotedFolder && (
+              <p className="example-promoted" role="status">
+                In your corpus, filed under "{promotedFolder}"
+              </p>
             )}
+            <button
+              onClick={onPromoteToExample}
+              aria-label={
+                promotedFolder
+                  ? 'Update the example saved for this script'
+                  : 'Save this script as an example'
+              }
+              type="button"
+            >
+              <BookmarkPlus size={16} />
+              {promotedFolder ? 'Update example' : 'Save as example'}
+            </button>
           </div>
         )}
       </footer>

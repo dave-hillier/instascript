@@ -12,7 +12,12 @@ import { ScriptDocument } from '../components/ScriptDocument'
 import { buildThread } from '../services/conversationThread'
 import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { buildProgressRows, type ProgressPlan } from '../utils/scriptProgress'
-import { getAllExamples, promoteScriptToExample } from '../services/exampleCorpus'
+import {
+  exampleFolder,
+  findExampleForScript,
+  getAllExamples,
+  promoteScriptToExample
+} from '../services/exampleCorpus'
 import { formatReviewSummary, reviewReportDescribesStructure } from '../services/critiquePass'
 import { SECTION_TARGET_WORDS } from '../services/sectionQuality'
 import type { Script } from '../types/script'
@@ -279,7 +284,13 @@ export const ScriptPage = ({
   const [refineError, setRefineError] = useState<string | null>(null)
   // Why the last on-demand style review failed, shown beside its button
   const [reviewError, setReviewError] = useState<string | null>(null)
-  const [promotedToExamples, setPromotedToExamples] = useState(false)
+  // The corpus folder this script is saved into, if it is. Read from the
+  // corpus rather than remembered, so a script saved in an earlier session
+  // still says so.
+  const [promotedFolder, setPromotedFolder] = useState<string | null>(() => {
+    const saved = id ? findExampleForScript(id) : undefined
+    return saved ? exampleFolder(saved) : null
+  })
 
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
@@ -417,14 +428,17 @@ export const ScriptPage = ({
     title: exampleTitleById.get(exampleId) ?? exampleId
   }))
 
+  // Library to corpus (story 8.16). A script already saved is updated in the
+  // folder it was filed into rather than joined by a stale copy of itself.
   const handlePromoteToExample = () => {
     if (!script || !document.fullContent) return
-    promoteScriptToExample(
-      document.title ?? script.title,
-      document.fullContent,
-      script.tags ?? []
-    )
-    setPromotedToExamples(true)
+    const example = promoteScriptToExample({
+      title: document.title ?? script.title,
+      content: document.fullContent,
+      tags: script.tags ?? [],
+      scriptId: script.id
+    })
+    setPromotedFolder(exampleFolder(example))
   }
 
   // An on-demand cohesion and length review of the finished script (story
@@ -575,7 +589,7 @@ export const ScriptPage = ({
         showScriptActions={script.status === 'complete' && !!document.fullContent}
         onReviewScript={handleReviewScript}
         onPromoteToExample={handlePromoteToExample}
-        promotedToExamples={promotedToExamples}
+        promotedFolder={promotedFolder}
         reviewError={reviewError}
       />
 

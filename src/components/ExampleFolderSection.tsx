@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Check, FolderOpen, Pencil, Trash2, X } from 'lucide-react'
+import { Check, FileText, FolderOpen, Pencil, Trash2, Wand2, X } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import { exampleFolder, parseTags, UNFILED_FOLDER } from '../services/exampleCorpus'
+import { needsDirectAddress } from '../services/importAssist'
 import { countWords } from '../utils/scriptMetrics'
 import { describeSelectionCount } from '../utils/exampleDisplay'
 
@@ -140,11 +141,15 @@ interface ExampleFolderSectionProps {
   folders: string[]
   active: boolean
   selectionCounts: Record<string, number>
+  // The example being rewritten into direct address right now, if any
+  rewritingExampleId: string | null
   onActivated: (folder: string) => void
   onFolderRenamed: (from: string, to: string) => void
   onFolderDeleted: (folder: string) => void
   onExampleDeleted: (example: ExampleRecord) => void
   onDetailsSaved: (id: string, details: { tags: string[]; folder: string }) => void
+  onOpenAsScript: (example: ExampleRecord) => void
+  onRewriteExample: (example: ExampleRecord) => void
 }
 
 // One folder of user examples: which folder is grounding generation is a
@@ -157,11 +162,14 @@ export const ExampleFolderSection = ({
   folders,
   active,
   selectionCounts,
+  rewritingExampleId,
   onActivated,
   onFolderRenamed,
   onFolderDeleted,
   onExampleDeleted,
-  onDetailsSaved
+  onDetailsSaved,
+  onOpenAsScript,
+  onRewriteExample
 }: ExampleFolderSectionProps) => {
   const words = examples.reduce((total, example) => total + countWords(example.content), 0)
 
@@ -218,6 +226,7 @@ export const ExampleFolderSection = ({
                   {countWords(example.content).toLocaleString('en-US')} words
                   {' · '}
                   {describeSelectionCount(selectionCounts[example.id] ?? 0)}
+                  {example.sourceScriptId && ' · from your library'}
                 </p>
                 <UserExampleDetailsForm
                   key={`${example.id}_${example.tags.join(',')}_${exampleFolder(example)}`}
@@ -227,6 +236,28 @@ export const ExampleFolderSection = ({
                 />
               </div>
               <div className="example-actions">
+                {/* Offered only where there is something to rewrite: an
+                    example that already speaks to the listener has nothing
+                    for the pass to do */}
+                {needsDirectAddress(example.content) && (
+                  <button
+                    onClick={() => onRewriteExample(example)}
+                    disabled={rewritingExampleId !== null}
+                    aria-label={`Rewrite ${example.title} into direct address`}
+                    type="button"
+                  >
+                    <Wand2 size={16} />
+                    {rewritingExampleId === example.id ? 'Rewriting…' : 'Direct address'}
+                  </button>
+                )}
+                <button
+                  onClick={() => onOpenAsScript(example)}
+                  aria-label={`Open ${example.title} as a script`}
+                  type="button"
+                >
+                  <FileText size={16} />
+                  Open as script
+                </button>
                 <button
                   onClick={() => onExampleDeleted(example)}
                   aria-label={`Delete example ${example.title}`}

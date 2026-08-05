@@ -5,7 +5,7 @@
 // hypnosis system prompt or the example corpus, and the model behind it is
 // the small cheap one chosen in settings.
 
-export type UtilityJob = 'tagging' | 'formatting'
+export type UtilityJob = 'tagging' | 'formatting' | 'voicing'
 
 export interface UtilityCompletionRequest {
   job: UtilityJob
@@ -30,5 +30,6 @@ export interface UtilityModelService {
 // What each job is called in the debug transcript
 export const UTILITY_JOB_LABELS: Record<UtilityJob, string> = {
   tagging: 'Tagging',
-  formatting: 'Markdown formatting'
+  formatting: 'Markdown formatting',
+  voicing: 'Direct address'
 }

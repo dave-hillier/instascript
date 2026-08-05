@@ -9,6 +9,7 @@ import scriptReviewPrompt from '../prompts/script-review.txt?raw'
 import briefQuestionsPrompt from '../prompts/brief-questions.txt?raw'
 import exampleTaggingPrompt from '../prompts/example-tagging.txt?raw'
 import importFormattingPrompt from '../prompts/import-formatting.txt?raw'
+import directAddressPrompt from '../prompts/direct-address.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -271,6 +272,12 @@ export function buildTaggingInput(title: string, content: string): string {
 // the caller verifies before storing the result
 export function buildImportFormattingPrompt(title: string): string {
   return importFormattingPrompt.replace('{title}', () => title)
+}
+
+// Person and titles of address only: the script's material must survive the
+// pass, which the caller verifies before storing the result
+export function buildDirectAddressPrompt(): string {
+  return directAddressPrompt
 }
 
 export function getScriptRefinementPrompt(instruction: string, structure?: ScriptFsTree): string {

@@ -14,4 +14,8 @@ export interface Script {
   targetMinutes?: number
   provider?: string
   model?: string
+  // The corpus example this script was opened from, when it came from one.
+  // The script is a copy from that moment on — editing it never writes back
+  // to the example — but the link says where it came from.
+  sourceExampleId?: string
 }
