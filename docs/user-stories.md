@@ -546,6 +546,22 @@ Acceptance criteria:
 - The script page's own Save as example does the same, and says which folder the script sits in — including across a reload
 - Examples that came from the library say so in their row
 
+### 8.17 A standard vocabulary for tagging [Implemented]
+As a user with a corpus of scripts, I want the properties every script has an answer to — how explicit it is, who it is written for, and whether it installs anything that outlasts the session — tagged the same way every time, so that my library can be grouped and searched on them instead of on whatever wording I happened to use that day.
+
+Notes: free-form tags stay, and stay the right shape for subject matter; what they are bad at is the handful of properties asked of *every* script, which arrive as "nsfw" on one, "erotic" on the next and "explicit content" on a third. Those become facets with fixed values in `standardTags.ts`: **Explicitness** (non-explicit / suggestive / explicit) and **Written for** (female subject / male subject / any subject) hold one value each, **Contains** (triggers / post-hypnotic / amnesia / aftercare) holds any number. The vocabulary is deliberately short — a facet nobody can decide the value of is a facet nobody applies — and everything else stays free text.
+
+The module is pure and is the single definition: the corpus canonicalises through it, the tagging prompt is generated from it, and the corpus view offers it as controls rather than as words to spell. Canonicalisation carries a synonym table, so a corpus tagged before the vocabulary existed converges on it as its examples are read and re-saved rather than needing a migration, and the same table absorbs whatever the utility model reaches for. Standard tags sort ahead of topic tags, and a script tagged with two values of a one-value facet keeps the first rather than keeping both and being trusted for neither.
+
+Acceptance criteria:
+- A fixed vocabulary covers explicitness, who the script addresses, and whether it installs triggers, post-hypnotic suggestions, amnesia or aftercare
+- Each example's row picks those values from controls — a select per one-value facet, checkboxes for the rest — with free topic tags alongside in the text field they always had
+- Tags typed, imported or suggested another way ("nsfw", "for her", "post hypnotic suggestion") are stored as the standard tag, whichever route into the corpus they took
+- A facet that holds one value holds one: the first survives, the contradiction does not
+- The utility model's tagging prompt states the vocabulary with what decides each value, and asks for topic tags on top of it
+- Standard tags lead the tag list, so they read the same way on every example
+- Retrieval needs no special case: standard tags are tags, and score in the same weighted field as the rest
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]

@@ -2423,7 +2423,7 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   background: none;
 }
 
-.example-details-form input {
+.example-details-form input[type="text"] {
   flex: 1;
   min-width: 7rem;
   padding: 0.375rem 0.75rem;
@@ -2454,11 +2454,54 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   border-color: var(--accent);
 }
 
-.example-details-form input::placeholder {
+.example-details-form input[type="text"]::placeholder {
   color: var(--ink-muted);
 }
 
-.example-details-form input:focus {
+/* The standard tag vocabulary (story 8.17). A facet with one value is a
+   select, sized to its own content so a row of them reads as labels rather
+   than as form fields; the facet that takes several is a set of checkboxes. */
+.example-details-form select.standard-tag-facet {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.example-details-form div[role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3125rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.example-details-form div[role="group"] > span:first-child {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.example-details-form div[role="group"] label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.example-details-form div[role="group"] label:has(:checked) {
+  color: var(--accent);
+}
+
+.example-details-form div[role="group"] input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
+
+.example-details-form input[type="text"]:focus {
   outline: none;
   border-color: var(--accent);
 }

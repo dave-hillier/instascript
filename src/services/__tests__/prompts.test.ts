@@ -14,7 +14,8 @@ import {
   buildGenerationSystemPrompt,
   withGenerationSystemPrompt,
   buildStructureBlock,
-  withStructureBlock
+  withStructureBlock,
+  buildExampleTaggingPrompt
 } from '../prompts'
 import { buildScriptFs, renderScriptFsTree } from '../scriptFs'
 import { buildLengthPlan } from '../scriptLength'
@@ -658,5 +659,27 @@ describe('withStructureBlock', () => {
 
     expect(result).toHaveLength(2)
     expect(result[1]).toEqual({ role: 'user', content: buildStructureBlock(tree) })
+  })
+})
+
+describe('buildExampleTaggingPrompt (story 8.17)', () => {
+  it('states the standard vocabulary with what decides each label', () => {
+    const prompt = buildExampleTaggingPrompt([])
+
+    expect(prompt).toContain('non-explicit')
+    expect(prompt).toContain('female subject')
+    expect(prompt).toContain('post-hypnotic')
+    expect(prompt).not.toContain('{standardLabels}')
+  })
+
+  it('offers the corpus topic tags, leaving the standard ones to the block above', () => {
+    const prompt = buildExampleTaggingPrompt(['explicit', 'sleep', 'triggers', 'jealousy'])
+
+    expect(prompt).toContain('sleep, jealousy')
+    expect(prompt).not.toContain('explicit, sleep')
+  })
+
+  it('says so plainly when the corpus has no topic tags yet', () => {
+    expect(buildExampleTaggingPrompt(['explicit'])).toContain('(none yet)')
   })
 })

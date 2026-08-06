@@ -352,6 +352,15 @@ describe('parseTags', () => {
   it('returns an empty list for blank input', () => {
     expect(parseTags('  ')).toEqual([])
   })
+
+  it('collapses typed standard tags onto the vocabulary, leading (story 8.17)', () => {
+    expect(parseTags('sleep, NSFW, for her, post hypnotic')).toEqual([
+      'explicit',
+      'female subject',
+      'post-hypnotic',
+      'sleep'
+    ])
+  })
 })
 
 describe('isImportableExampleFile', () => {

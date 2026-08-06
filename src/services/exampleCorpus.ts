@@ -1,6 +1,7 @@
 import YAML from 'yaml'
 import type { ExampleRecord } from '../types/example'
 import { BUNDLED_EXAMPLE_SCRIPTS } from '../data/bundledExampleScripts'
+import { canonicalizeTags } from './standardTags'
 
 // User-imported examples live in localStorage under example_* keys as YAML
 // front matter + markdown, matching the script storage format. Bundled and
@@ -37,7 +38,7 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
       if (parsed && typeof parsed === 'object') {
         if (typeof parsed.title === 'string') title = parsed.title
         if (Array.isArray(parsed.tags)) {
-          tags = parsed.tags.map(String).map(tag => tag.trim()).filter(Boolean)
+          tags = canonicalizeTags(parsed.tags.map(String))
         } else if (typeof parsed.tags === 'string') {
           tags = parseTags(parsed.tags)
         }
@@ -96,12 +97,11 @@ export function serializeExampleToMarkdown(example: ExampleRecord): string {
   return `---\n${serialized}\n---\n${example.content}\n`
 }
 
-// Splits a comma-separated tag string into clean tags
+// Splits a comma-separated tag string into clean tags. Everything typed or
+// imported comes through here, so a standard tag written another way — "nsfw",
+// "for her", "post hypnotic" — lands as the standard one (story 8.17).
 export function parseTags(value: string): string[] {
-  return value
-    .split(',')
-    .map(tag => tag.trim().toLowerCase())
-    .filter(Boolean)
+  return canonicalizeTags(value.split(','))
 }
 
 // --- Folders --------------------------------------------------------------
@@ -371,8 +371,15 @@ export function getEnabledExamples(): ExampleRecord[] {
   return [...BUNDLED_EXAMPLE_SCRIPTS, ...user]
 }
 
-function saveUserExample(example: ExampleRecord): void {
-  window.localStorage.setItem(example.id, serializeExampleToMarkdown(example))
+// Canonicalising here rather than at each call site means every route into
+// the corpus — import, promotion from the library, re-tagging, what the
+// utility model suggested — stores one spelling of a standard tag. The stored
+// record is returned so callers hand back what was written rather than what
+// they asked to write.
+function saveUserExample(example: ExampleRecord): ExampleRecord {
+  const stored: ExampleRecord = { ...example, tags: canonicalizeTags(example.tags) }
+  window.localStorage.setItem(stored.id, serializeExampleToMarkdown(stored))
+  return stored
 }
 
 // Computes and stores the example's embedding. Fire-and-forget from the sync
@@ -416,10 +423,10 @@ function createUserExample(
     createdAt: Date.now(),
     sourceScriptId
   }
-  saveUserExample(example)
+  const stored = saveUserExample(example)
   declareFolder(filed)
-  void attachEmbedding(example)
-  return example
+  void attachEmbedding(stored)
+  return stored
 }
 
 // Extensions accepted when importing examples. Plain text is treated the
@@ -506,9 +513,9 @@ export function promoteScriptToExample({
       content,
       tags: tags.length > 0 ? tags : existing.tags
     }
-    saveUserExample(updated)
-    if (content !== existing.content) void attachEmbedding(updated)
-    return updated
+    const stored = saveUserExample(updated)
+    if (content !== existing.content) void attachEmbedding(stored)
+    return stored
   }
   return createUserExample(
     title,
@@ -697,13 +704,13 @@ export function applyExampleEnhancement(
     tags: enhancement.tags ?? example.tags,
     content: enhancement.content ?? example.content
   }
-  saveUserExample(updated)
+  const stored = saveUserExample(updated)
 
   if (enhancement.content && enhancement.content !== example.content) {
-    void attachEmbedding(updated)
+    void attachEmbedding(stored)
   }
 
-  return updated
+  return stored
 }
 
 // Every tag in use across the corpus, most-used first — the vocabulary the

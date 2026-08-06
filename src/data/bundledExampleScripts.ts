@@ -3,11 +3,15 @@ import type { ExampleRecord } from '../types/example'
 // Sample scripts shipped with the app, off by default: they are short
 // demonstrations of the format rather than material worth imitating, so
 // grounding a generation in them is opt-in (see exampleCorpus.ts).
+//
+// Their tags demonstrate the standard vocabulary (story 8.17) alongside the
+// free topic tags: every one of them is non-explicit, addresses anyone, and
+// closes with a suggestion meant to last past the session.
 export const BUNDLED_EXAMPLE_SCRIPTS: ExampleRecord[] = [
   {
     id: 'confidence-building.md',
     title: 'Confidence Building Script',
-    tags: ['confidence', 'self-improvement'],
+    tags: ['non-explicit', 'any subject', 'post-hypnotic', 'confidence', 'self-improvement'],
     source: 'bundled',
     content: `# Confidence Building Script
 
@@ -32,7 +36,7 @@ When you're ready, gently return to full awareness, carrying this confidence wit
   {
     id: 'deep-sleep.md',
     title: 'Deep Relaxation for Sleep',
-    tags: ['sleep', 'relaxation'],
+    tags: ['non-explicit', 'any subject', 'post-hypnotic', 'sleep', 'relaxation'],
     source: 'bundled',
     content: `# Deep Relaxation for Sleep
 
@@ -57,7 +61,7 @@ Tonight you sleep deeply and wake feeling refreshed and energized.`
   {
     id: 'stress-relief.md',
     title: 'Stress Relief and Calm',
-    tags: ['relaxation', 'stress', 'calm'],
+    tags: ['non-explicit', 'any subject', 'post-hypnotic', 'relaxation', 'stress', 'calm'],
     source: 'bundled',
     content: `# Stress Relief and Calm
 
@@ -82,7 +86,7 @@ This sense of calm stays with you throughout your day.`
   {
     id: 'public-speaking.md',
     title: 'Public Speaking Confidence',
-    tags: ['confidence', 'speaking'],
+    tags: ['non-explicit', 'any subject', 'post-hypnotic', 'confidence', 'speaking'],
     source: 'bundled',
     content: `# Public Speaking Confidence
 
@@ -107,7 +111,7 @@ You look forward to sharing your voice and message with others.`
   {
     id: 'pain-management.md',
     title: 'Pain Management and Comfort',
-    tags: ['healing', 'comfort'],
+    tags: ['non-explicit', 'any subject', 'post-hypnotic', 'healing', 'comfort'],
     source: 'bundled',
     content: `# Pain Management and Comfort
 

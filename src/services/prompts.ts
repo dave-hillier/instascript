@@ -19,6 +19,7 @@ import type { LengthPlan } from './scriptLength'
 import type { DocumentSection } from './conversationDocument'
 import type { ScriptFsTree } from './scriptFs'
 import { exampleLabel, mountExamples, renderScriptFsTree } from './scriptFs'
+import { describeStandardTagVocabulary, isStandardTag } from './standardTags'
 
 /**
  * Pure functions for prompt generation
@@ -257,11 +258,18 @@ export function buildBriefQuestionsPrompt(brief: string): string {
 // no gain in the tags.
 export const TAGGING_EXCERPT_WORDS = 600
 
-// The tags already in use are offered to the model so a growing corpus
-// converges on one vocabulary instead of accumulating near-duplicates
+// Two vocabularies are offered. The standard labels (story 8.17) are fixed and
+// stated with what decides each one, so every script comes back described the
+// same way; the corpus's existing topic tags are offered underneath so a
+// growing corpus converges instead of accumulating near-duplicates. Standard
+// tags are left out of that second list — they are already stated above, and
+// repeating them would just spend tokens saying the same thing twice.
 export function buildExampleTaggingPrompt(knownTags: string[]): string {
-  const known = knownTags.length > 0 ? knownTags.join(', ') : '(none yet)'
-  return exampleTaggingPrompt.replace('{knownTags}', () => known)
+  const topics = knownTags.filter(tag => !isStandardTag(tag))
+  const known = topics.length > 0 ? topics.join(', ') : '(none yet)'
+  return exampleTaggingPrompt
+    .replace('{standardLabels}', () => describeStandardTagVocabulary())
+    .replace('{knownTags}', () => known)
 }
 
 export function buildTaggingInput(title: string, content: string): string {

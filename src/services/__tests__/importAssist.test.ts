@@ -69,6 +69,15 @@ describe('parseSuggestedTags', () => {
     expect(parseSuggestedTags(reply)).toEqual(['sleep'])
   })
 
+  it('collapses standard labels onto the vocabulary and puts them first', () => {
+    expect(parseSuggestedTags('sleep, nsfw, for her, trigger words')).toEqual([
+      'explicit',
+      'female subject',
+      'triggers',
+      'sleep'
+    ])
+  })
+
   it('caps how many tags one suggestion can add', () => {
     const reply = Array.from({ length: 12 }, (_, index) => `tag${index}`).join(', ')
     expect(parseSuggestedTags(reply)).toHaveLength(MAX_SUGGESTED_TAGS)
