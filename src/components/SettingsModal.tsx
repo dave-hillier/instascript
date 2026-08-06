@@ -175,6 +175,8 @@ export type SettingsFormValues = {
   importAssist: boolean
   reviewPass: boolean
   debugTranscripts: boolean
+  styleInstructions: string
+  importInstructions: string
 }
 
 type SettingsModalProps = {
@@ -190,6 +192,8 @@ type SettingsModalProps = {
   importAssist: boolean
   reviewPass: boolean
   debugTranscripts: boolean
+  styleInstructions: string
+  importInstructions: string
   onSave: (settings: SettingsFormValues) => void
   onDownloadTranscripts: (format: 'json' | 'text') => void
   onClearTranscripts: () => void
@@ -219,6 +223,8 @@ export const SettingsModal = ({
   importAssist,
   reviewPass,
   debugTranscripts,
+  styleInstructions,
+  importInstructions,
   onSave,
   onDownloadTranscripts,
   onClearTranscripts,
@@ -243,6 +249,8 @@ export const SettingsModal = ({
   const [tempImportAssist, setTempImportAssist] = useState(importAssist)
   const [tempReviewPass, setTempReviewPass] = useState(reviewPass)
   const [tempDebugTranscripts, setTempDebugTranscripts] = useState(debugTranscripts)
+  const [tempStyleInstructions, setTempStyleInstructions] = useState(styleInstructions)
+  const [tempImportInstructions, setTempImportInstructions] = useState(importInstructions)
   const transcripts = useSyncExternalStore(subscribeToTranscripts, getTranscripts)
   const [connectionTest, connectionTestDispatch] = useReducer(connectionTestReducer, { status: 'idle' })
   const [libraryTransfer, libraryTransferDispatch] = useReducer(libraryTransferReducer, { status: 'idle' })
@@ -264,6 +272,8 @@ export const SettingsModal = ({
       setTempImportAssist(importAssist)
       setTempReviewPass(reviewPass)
       setTempDebugTranscripts(debugTranscripts)
+      setTempStyleInstructions(styleInstructions)
+      setTempImportInstructions(importInstructions)
       connectionTestDispatch({ type: 'TEST_RESET' })
       libraryTransferDispatch({ type: 'TRANSFER_RESET' })
     }
@@ -276,7 +286,9 @@ export const SettingsModal = ({
     utilityModel,
     importAssist,
     reviewPass,
-    debugTranscripts
+    debugTranscripts,
+    styleInstructions,
+    importInstructions
   ])
 
   // Open/close modal based on isOpen prop
@@ -318,7 +330,11 @@ export const SettingsModal = ({
       utilityModel: tempUtilityModel.trim() || getDefaultModel(tempApiProvider, 'utility'),
       importAssist: tempImportAssist,
       reviewPass: tempReviewPass,
-      debugTranscripts: tempDebugTranscripts
+      debugTranscripts: tempDebugTranscripts,
+      // Trimmed here as well as on the way into storage, so a field holding
+      // only whitespace is the same as an unset one and appends nothing
+      styleInstructions: tempStyleInstructions.trim(),
+      importInstructions: tempImportInstructions.trim()
     })
     onClose()
   }
@@ -611,6 +627,44 @@ export const SettingsModal = ({
             outline against your brief before any section is written, and one
             reviews the finished script against the style rules, rewriting up
             to two violating sections — adds cost and latency
+          </p>
+        </fieldset>
+
+        <fieldset>
+          <legend className="sr-only">Standing Instructions</legend>
+
+          <label htmlFor="style-instructions">Overall style</label>
+          <textarea
+            id="style-instructions"
+            rows={4}
+            value={tempStyleInstructions}
+            onChange={(e) => setTempStyleInstructions(e.target.value)}
+            placeholder="e.g. British spelling. Keep the imagery to water and weather. Never use countdowns"
+            aria-describedby="style-instructions-help"
+          />
+          <p id="style-instructions-help">
+            Added to every request that writes prose — the outline, each
+            section, section rewrites, whole-script refinements and the review
+            pass — on top of the app's own style rules, and taking precedence
+            over them where the two differ. Left empty, the prompts go out
+            exactly as they ship
+          </p>
+
+          <label htmlFor="import-instructions">Imported material</label>
+          <textarea
+            id="import-instructions"
+            rows={4}
+            value={tempImportInstructions}
+            onChange={(e) => setTempImportInstructions(e.target.value)}
+            placeholder="e.g. Split long inductions into their own sections. Tag by the trigger the script installs"
+            aria-describedby="import-instructions-help"
+          />
+          <p id="import-instructions-help">
+            Added to the utility-model jobs that run over an imported example:
+            laying plain text out as markdown, suggesting tags, and the
+            direct-address rewrite. The checks on those jobs are unchanged, so
+            an instruction that would have the model reword a script still ends
+            with the import kept as it arrived
           </p>
         </fieldset>
 

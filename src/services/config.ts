@@ -109,12 +109,39 @@ export function setImportVoicingEnabled(enabled: boolean): void {
   writeSetting('importVoicing', enabled)
 }
 
+// Standing instructions (story 5.9). Free text the user writes once in
+// settings and every run of the job it names carries: the style every script
+// should be written in, and how imported material should be post-processed.
+// Both are empty by default, so a user who sets nothing sends exactly the
+// prompts the app ships with.
+export type InstructionJob = 'style' | 'import'
+
+const INSTRUCTION_KEYS: Record<InstructionJob, string> = {
+  style: 'instructions.style',
+  import: 'instructions.import'
+}
+
+// Trimmed on the way out as well as in, so instructions saved by an older
+// build — or edited by hand — cannot append trailing whitespace to a prompt
+export function getJobInstructions(job: InstructionJob): string {
+  const stored = readSetting<string>(INSTRUCTION_KEYS[job], '')
+  return typeof stored === 'string' ? stored.trim() : ''
+}
+
+export function setJobInstructions(job: InstructionJob, instructions: string): void {
+  writeSetting(INSTRUCTION_KEYS[job], instructions.trim())
+}
+
 // Which engine reads the script aloud in performance mode (story 4.5):
 // the browser's built-in speech synthesis, or an OpenRouter text-to-speech
 // model. The browser engine stays the default — it is free and works offline.
 export type ReadAloudEngine = 'browser' | 'openrouter'
 
 function readSetting<T>(key: string, fallback: T): T {
+  // Prompt assembly reads settings, and prompts are also built outside a
+  // browser — in tests, and in any non-DOM context — where there is no
+  // storage to read and nothing worth warning about
+  if (typeof window === 'undefined') return fallback
   try {
     const item = window.localStorage.getItem(key)
     return item ? (JSON.parse(item) as T) : fallback
@@ -125,6 +152,7 @@ function readSetting<T>(key: string, fallback: T): T {
 }
 
 function writeSetting(key: string, value: unknown): void {
+  if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(key, JSON.stringify(value))
   } catch (error) {

@@ -14,6 +14,8 @@ Providers: OpenAI, OpenRouter (any model id), or a mock provider for development
 
 Two models are configured, not one: the **generation** model writes the scripts, and a small, cheap **utility** model handles the short jobs around them — suggesting tags for an imported example and laying an unstructured plain-text import out as markdown. Both run after the import is saved and verify the model's reply before storing it, so a formatting pass that reworded the script is discarded and the import kept as it was. The pass can be switched off in settings to keep imports entirely local.
 
+Standing instructions live in settings, so a preference is stated once rather than in every brief: one field for the **overall style** every script is written in, which rides the system prompt every writing request shares and the style rules the review pass judges against, and one for **imported material**, which rides the utility model's import passes. Either left empty sends the prompts exactly as they ship, and the import checks still discard a pass that reworded a script.
+
 ## Development
 
 - `yarn dev` — start the development server
