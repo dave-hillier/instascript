@@ -19,12 +19,74 @@ import type { LengthPlan } from './scriptLength'
 import type { DocumentSection } from './conversationDocument'
 import type { ScriptFsTree } from './scriptFs'
 import { exampleLabel, mountExamples, renderScriptFsTree } from './scriptFs'
+import { getJobInstructions } from './config'
 
 /**
- * Pure functions for prompt generation
+ * Prompt generation. Pure apart from the standing instructions below, which
+ * are read from settings as each prompt is built.
  */
 
 const CONTINUITY_EXCERPT_WORDS = 75
+
+// --- Standing instructions (story 5.9) -----------------------------------
+// The one thing here that is not derived from its arguments: two free-text
+// settings the user writes once and every request for the job they name
+// carries. They are appended as a block at the very end of the prompt they
+// apply to — last position, where an instruction carries most weight, and
+// after every placeholder has already been substituted, so a brace-shaped
+// phrase in the user's own words is never mistaken for a placeholder.
+//
+// An unset field appends nothing at all, so the prompts stay byte-identical
+// to the ones the app ships with — including the cached system-prompt prefix
+// (docs/prompt-caching.md), which changes only when the setting changes.
+
+const STANDING_INSTRUCTIONS_HEADING = '## Standing instructions'
+
+const STYLE_INSTRUCTIONS_PREAMBLE =
+  'These are the user\'s standing instructions for every script written for ' +
+  'them. Follow them throughout. Where they differ from the general guidance ' +
+  'above, follow these; they do not change the output format asked for.'
+
+const IMPORT_INSTRUCTIONS_PREAMBLE =
+  'These are the user\'s standing instructions for material coming into their ' +
+  'library. Follow them where they do not conflict with the rules above; where ' +
+  'they do, the rules above win.'
+
+// Pure: the prompt with an instruction block appended, or the prompt exactly
+// as it was when there is nothing to say
+export function appendStandingInstructions(
+  prompt: string,
+  instructions: string,
+  preamble: string
+): string {
+  const trimmed = instructions.trim()
+  if (!trimmed) return prompt
+  return `${prompt}\n\n${STANDING_INSTRUCTIONS_HEADING}\n\n${preamble}\n\n${trimmed}`
+}
+
+// The style instructions reach generation through the system prompt, so every
+// request that writes prose carries them, and through the critique that
+// judges the result — the pass has to hold the script to the same standing
+// instructions it was written against.
+function withStyleInstructions(prompt: string): string {
+  return appendStandingInstructions(
+    prompt,
+    getJobInstructions('style'),
+    STYLE_INSTRUCTIONS_PREAMBLE
+  )
+}
+
+// The import instructions reach each of the utility jobs that run over an
+// imported example. The faithfulness checks in importAssist are unchanged:
+// an instruction that talks a small model into rewriting a script still ends
+// with the rewrite discarded and the import kept as it arrived.
+function withImportInstructions(prompt: string): string {
+  return appendStandingInstructions(
+    prompt,
+    getJobInstructions('import'),
+    IMPORT_INSTRUCTIONS_PREAMBLE
+  )
+}
 
 // The requested length reaches the model through the three prompts that decide
 // how much script gets written: the system prompt states the whole-script aim,
@@ -41,7 +103,7 @@ function applyLengthPlan(template: string, plan: LengthPlan): string {
 }
 
 export function getSystemPrompt(plan: LengthPlan = buildLengthPlan()): string {
-  return applyLengthPlan(hypnosisSystemPrompt, plan)
+  return withStyleInstructions(applyLengthPlan(hypnosisSystemPrompt, plan))
 }
 
 export function getOutlineGenerationPrompt(plan: LengthPlan = buildLengthPlan()): string {
@@ -195,8 +257,8 @@ export function getStyleRules(): string {
 // line-oriented verdict per section
 export function buildStyleCritiquePrompt(script: string): string {
   return styleCritiquePrompt
-    .replace('{styleRules}', getStyleRules())
-    .replace('{script}', script)
+    .replace('{styleRules}', () => withStyleInstructions(getStyleRules()))
+    .replace('{script}', () => script)
 }
 
 // The critique request for the outline-critique step (story 8.9): the user's
@@ -261,7 +323,7 @@ export const TAGGING_EXCERPT_WORDS = 600
 // converges on one vocabulary instead of accumulating near-duplicates
 export function buildExampleTaggingPrompt(knownTags: string[]): string {
   const known = knownTags.length > 0 ? knownTags.join(', ') : '(none yet)'
-  return exampleTaggingPrompt.replace('{knownTags}', () => known)
+  return withImportInstructions(exampleTaggingPrompt.replace('{knownTags}', () => known))
 }
 
 export function buildTaggingInput(title: string, content: string): string {
@@ -271,13 +333,13 @@ export function buildTaggingInput(title: string, content: string): string {
 // Typesetting only: the script's words must survive the pass untouched, which
 // the caller verifies before storing the result
 export function buildImportFormattingPrompt(title: string): string {
-  return importFormattingPrompt.replace('{title}', () => title)
+  return withImportInstructions(importFormattingPrompt.replace('{title}', () => title))
 }
 
 // Person and titles of address only: the script's material must survive the
 // pass, which the caller verifies before storing the result
 export function buildDirectAddressPrompt(): string {
-  return directAddressPrompt
+  return withImportInstructions(directAddressPrompt)
 }
 
 export function getScriptRefinementPrompt(instruction: string, structure?: ScriptFsTree): string {

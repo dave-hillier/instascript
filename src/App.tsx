@@ -15,6 +15,8 @@ import {
   setUtilityModel,
   isImportAssistEnabled,
   setImportAssistEnabled,
+  getJobInstructions,
+  setJobInstructions,
   type APIProvider
 } from './services/config'
 import { configChanged } from './services/configStore'
@@ -177,6 +179,15 @@ function AppContent() {
   const [utilityModel, setUtilityModelState] = useState<string>(getUtilityModel)
   const [importAssist, setImportAssist] = useState<boolean>(isImportAssistEnabled)
 
+  // Standing instructions the user writes once and every run of the job they
+  // name carries (story 5.9)
+  const [styleInstructions, setStyleInstructions] = useState<string>(
+    () => getJobInstructions('style')
+  )
+  const [importInstructions, setImportInstructions] = useState<string>(
+    () => getJobInstructions('import')
+  )
+
   // Opt-in style-review pass after each full generation (story 8.5)
   const [reviewPass, setReviewPass] = useState<boolean>(() => {
     try {
@@ -287,6 +298,17 @@ function AppContent() {
     setImportAssistEnabled(importAssist)
   }, [importAssist])
 
+  // Save the standing instructions when they change. Prompt assembly reads
+  // them from storage as each request is built, so a saved instruction
+  // applies to the next request without anything else being told about it.
+  useEffect(() => {
+    setJobInstructions('style', styleInstructions)
+  }, [styleInstructions])
+
+  useEffect(() => {
+    setJobInstructions('import', importInstructions)
+  }, [importInstructions])
+
   // Save review pass preference when it changes
   useEffect(() => {
     try {
@@ -388,6 +410,8 @@ function AppContent() {
     setImportAssist(settings.importAssist)
     setReviewPass(settings.reviewPass)
     setDebugTranscripts(settings.debugTranscripts)
+    setStyleInstructions(settings.styleInstructions)
+    setImportInstructions(settings.importInstructions)
   }
 
   const handleDownloadTranscripts = (format: 'json' | 'text') => {
@@ -708,6 +732,8 @@ function AppContent() {
         importAssist={importAssist}
         reviewPass={reviewPass}
         debugTranscripts={debugTranscripts}
+        styleInstructions={styleInstructions}
+        importInstructions={importInstructions}
         onSave={handleSaveSettings}
         onDownloadTranscripts={handleDownloadTranscripts}
         onClearTranscripts={clearTranscripts}
