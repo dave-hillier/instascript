@@ -10,6 +10,7 @@ import briefQuestionsPrompt from '../prompts/brief-questions.txt?raw'
 import exampleTaggingPrompt from '../prompts/example-tagging.txt?raw'
 import importFormattingPrompt from '../prompts/import-formatting.txt?raw'
 import directAddressPrompt from '../prompts/direct-address.txt?raw'
+import transcriptSplitPrompt from '../prompts/transcript-split.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -350,6 +351,13 @@ export function buildImportFormattingPrompt(title: string): string {
 // pass, which the caller verifies before storing the result
 export function buildDirectAddressPrompt(): string {
   return withImportInstructions(directAddressPrompt)
+}
+
+// Splitting a session transcript into sections: structure and specs are the
+// model's to decide, the spoken words are not. The caller verifies the words
+// survived before storing the result.
+export function buildTranscriptSplitPrompt(title: string): string {
+  return transcriptSplitPrompt.replace('{title}', () => title)
 }
 
 export function getScriptRefinementPrompt(instruction: string, structure?: ScriptFsTree): string {

@@ -13,6 +13,8 @@ export type ImportStage =
   | 'saved'
   // The utility model is putting the script into direct address
   | 'voicing'
+  // The utility model is splitting a transcript into section files
+  | 'splitting'
   // The utility model is laying the script out as markdown
   | 'formatting'
   // The utility model is suggesting tags
@@ -41,7 +43,11 @@ const STAGE_FRACTION: Record<ImportStage, number> = {
   queued: 0,
   reading: 0.3,
   saved: 0.5,
+  // Voicing and splitting are the same slot in two alternative pipelines —
+  // a plain file is put into direct address, a transcript is split — so they
+  // fill the bar to the same point rather than one following the other
   voicing: 0.65,
+  splitting: 0.65,
   formatting: 0.8,
   tagging: 0.9,
   done: 1,
@@ -54,6 +60,7 @@ const STAGE_LABEL: Record<ImportStage, string> = {
   reading: 'Reading file',
   saved: 'Saved to corpus',
   voicing: 'Rewriting into direct address',
+  splitting: 'Splitting into sections',
   formatting: 'Formatting as markdown',
   tagging: 'Suggesting tags',
   done: 'Imported',

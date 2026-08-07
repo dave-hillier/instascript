@@ -1,5 +1,5 @@
 import YAML from 'yaml'
-import type { ExampleRecord } from '../types/example'
+import type { ExampleRecord, ExampleSectionSpec } from '../types/example'
 import { BUNDLED_EXAMPLE_SCRIPTS } from '../data/bundledExampleScripts'
 import { canonicalizeTags } from './standardTags'
 
@@ -17,6 +17,23 @@ interface ParsedExampleFile {
   createdAt?: number
   embedding?: number[]
   sourceScriptId?: string
+  sections?: ExampleSectionSpec[]
+}
+
+// Pure: the section specs from front matter, keeping only entries that carry
+// both halves. A hand-edited or truncated list leaves the example unsectioned
+// rather than half-sectioned.
+export function parseSectionSpecs(value: unknown): ExampleSectionSpec[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const specs: ExampleSectionSpec[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const { title, prompt } = entry as Record<string, unknown>
+    if (typeof title !== 'string' || typeof prompt !== 'string') continue
+    if (title.trim() === '' || prompt.trim() === '') continue
+    specs.push({ title: title.trim(), prompt: prompt.trim() })
+  }
+  return specs.length > 0 ? specs : undefined
 }
 
 // Parses a markdown example file: optional YAML front matter (title, tags),
@@ -29,6 +46,7 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
   let createdAt: number | undefined
   let embedding: number[] | undefined
   let sourceScriptId: string | undefined
+  let sections: ExampleSectionSpec[] | undefined
   let content = raw
 
   const frontMatterMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
@@ -54,6 +72,7 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
         ) {
           embedding = parsed.embedding as number[]
         }
+        sections = parseSectionSpecs(parsed.sections)
         content = frontMatterMatch[2].trim()
       }
     } catch {
@@ -66,7 +85,16 @@ export function parseExampleMarkdown(raw: string, fallbackTitle: string): Parsed
     title = heading ? heading[1].trim() : fallbackTitle
   }
 
-  return { title, tags, folder, content: content.trim(), createdAt, embedding, sourceScriptId }
+  return {
+    title,
+    tags,
+    folder,
+    content: content.trim(),
+    createdAt,
+    embedding,
+    sourceScriptId,
+    sections
+  }
 }
 
 export function serializeExampleToMarkdown(example: ExampleRecord): string {
@@ -85,6 +113,10 @@ export function serializeExampleToMarkdown(example: ExampleRecord): string {
   // imported from a file round-trips exactly as it did before
   if (example.sourceScriptId) {
     frontMatter.sourceScriptId = example.sourceScriptId
+  }
+  // Only examples split out of a transcript carry section specs
+  if (example.sections && example.sections.length > 0) {
+    frontMatter.sections = example.sections.map(({ title, prompt }) => ({ title, prompt }))
   }
   if (example.embedding && example.embedding.length > 0) {
     // Rounded to 5 decimals: enough precision for cosine similarity, keeps
@@ -315,7 +347,8 @@ export function getUserExamples(): ExampleRecord[] {
         folder: parsed.folder,
         createdAt: parsed.createdAt,
         embedding: parsed.embedding,
-        sourceScriptId: parsed.sourceScriptId
+        sourceScriptId: parsed.sourceScriptId,
+        sections: parsed.sections
       })
     }
     return examples.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
@@ -711,6 +744,29 @@ export function applyExampleEnhancement(
   }
 
   return stored
+}
+
+// Replaces a transcript import with its split: the sectioned markdown as the
+// body, the per-section specs as metadata, and the title the split settled on.
+// The body has changed, so the embedding computed from the raw transcript is
+// recomputed the same way an import does.
+export function applyTranscriptSplit(
+  id: string,
+  split: { title: string; content: string; sections: ExampleSectionSpec[] }
+): ExampleRecord | null {
+  const example = getUserExamples().find(candidate => candidate.id === id)
+  if (!example) return null
+
+  const updated: ExampleRecord = {
+    ...example,
+    title: split.title.trim() || example.title,
+    content: split.content,
+    sections: split.sections
+  }
+  saveUserExample(updated)
+  void attachEmbedding(updated)
+
+  return updated
 }
 
 // Every tag in use across the corpus, most-used first — the vocabulary the

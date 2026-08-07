@@ -4,6 +4,7 @@ import { BookmarkPlus, FolderPlus } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import {
   applyExampleEnhancement,
+  applyTranscriptSplit,
   areBundledExamplesEnabled,
   backfillMissingEmbeddings,
   createExampleFolder,
@@ -50,6 +51,13 @@ import {
   type ImportFileProgress,
   type ImportStage
 } from '../services/importProgress'
+import {
+  describeTranscriptImport,
+  renderSplitContent,
+  splitSpecs,
+  splitTranscript,
+  type TranscriptImportOutcome
+} from '../services/transcriptImport'
 import { ImportProgressMeter } from '../components/ImportProgressMeter'
 import { ExampleFolderSection } from '../components/ExampleFolderSection'
 import { describeSelectionCount } from '../utils/exampleDisplay'
@@ -89,6 +97,14 @@ type RewriteState = {
   note: string | null
 }
 
+// What the utility model made of a transcript import. Like the tidy pass, the
+// per-file stages are on the meter, so only the closing summary is held here —
+// plus the one state the meter cannot express, a provider that is not there.
+type SplitState =
+  | { status: 'idle' }
+  | { status: 'unavailable' }
+  | { status: 'finished'; outcome: TranscriptImportOutcome; model: string }
+
 type ExamplesState = {
   examples: ExampleRecord[]
   importCount: number
@@ -120,6 +136,7 @@ type ExamplesState = {
   assist: AssistState
   promotion: PromotionState
   rewrite: RewriteState
+  split: SplitState
 }
 
 type ExamplesAction =
@@ -146,6 +163,8 @@ type ExamplesAction =
   | { type: 'SCRIPT_SAVED_AS_EXAMPLE'; example: ExampleRecord; replaced: boolean }
   | { type: 'EXAMPLE_REWRITE_STARTED'; id: string }
   | { type: 'EXAMPLE_REWRITE_FINISHED'; example: ExampleRecord | null; note: string }
+  | { type: 'TRANSCRIPT_SPLIT_UNAVAILABLE' }
+  | { type: 'TRANSCRIPT_SPLIT_FINISHED'; outcome: TranscriptImportOutcome; model: string }
 
 const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
   examples.filter(example => example.source === 'user')
@@ -191,7 +210,15 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
         importFiles: action.files,
         importIgnored: action.ignored,
         importedFolders: [],
-        assist: { status: 'idle' }
+        assist: { status: 'idle' },
+        split: { status: 'idle' }
+      }
+    case 'TRANSCRIPT_SPLIT_UNAVAILABLE':
+      return { ...state, split: { status: 'unavailable' } }
+    case 'TRANSCRIPT_SPLIT_FINISHED':
+      return {
+        ...state,
+        split: { status: 'finished', outcome: action.outcome, model: action.model }
       }
     case 'IMPORT_FILE_STAGED':
       return {
@@ -480,7 +507,8 @@ export const ExamplesPage = () => {
       importVoicing: isImportVoicingEnabled(),
       assist: { status: 'idle' },
       promotion: { status: 'idle' },
-      rewrite: { runningId: null, note: null }
+      rewrite: { runningId: null, note: null },
+      split: { status: 'idle' }
     })
   )
   const importSummary = summarizeImportProgress(state.importFiles, state.importIgnored)
@@ -523,7 +551,18 @@ export const ExamplesPage = () => {
   // Handles both single files and whole folders: a folder selection arrives
   // as its flattened contents, so anything that is not a markdown or text
   // file is dropped rather than imported as gibberish.
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = (event: React.ChangeEvent<HTMLInputElement>) =>
+    runImport(event, 'script')
+
+  // Transcripts take the same route into the corpus — read, saved, then handed
+  // to the utility model — with one extra pass in front of the tidy jobs
+  const handleTranscriptImport = (event: React.ChangeEvent<HTMLInputElement>) =>
+    runImport(event, 'transcript')
+
+  const runImport = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+    kind: 'script' | 'transcript'
+  ) => {
     const selected = Array.from(event.target.files ?? [])
     if (selected.length === 0) return
 
@@ -572,7 +611,67 @@ export const ExamplesPage = () => {
     }
     // Bumping importCount remounts the file inputs, clearing their selection
     dispatch({ type: 'EXAMPLES_IMPORTED', examples: imported.map(entry => entry.example) })
-    void runImportAssist(imported)
+    void runPostImport(imported, kind)
+  }
+
+  // The passes that run after the files are safely in the corpus. A transcript
+  // is split first, so the tidy pass that follows sees the sectioned script
+  // rather than the raw recording.
+  const runPostImport = async (imported: ImportedFile[], kind: 'script' | 'transcript') => {
+    const ready = kind === 'transcript' ? await runTranscriptSplit(imported) : imported
+    await runImportAssist(ready)
+  }
+
+  // The transcript pass: the utility model finds where each session turns and
+  // returns it as sections, each with a spec and the words spoken in it. A
+  // transcript it cannot split stays in the corpus as it was imported.
+  const runTranscriptSplit = async (imported: ImportedFile[]): Promise<ImportedFile[]> => {
+    if (imported.length === 0 || !isImportAssistEnabled()) return imported
+
+    const service = createUtilityService()
+    if (!service.isLive) {
+      dispatch({ type: 'TRANSCRIPT_SPLIT_UNAVAILABLE' })
+      return imported
+    }
+
+    let split = 0
+    let kept = 0
+    const result: ImportedFile[] = []
+    // Sequential for the same reason the tidy pass is: a split repeats the
+    // whole transcript back, so these are the longest requests the app makes
+    for (const entry of imported) {
+      const { fileId, example } = entry
+      dispatch({ type: 'IMPORT_FILE_STAGED', id: fileId, stage: 'splitting' })
+
+      const parsed = await splitTranscript(example.title, example.content, service)
+      if (!parsed) {
+        kept += 1
+        result.push(entry)
+        continue
+      }
+
+      const updated = applyTranscriptSplit(example.id, {
+        title: parsed.title,
+        content: renderSplitContent(parsed),
+        sections: splitSpecs(parsed)
+      })
+      if (!updated) {
+        kept += 1
+        result.push(entry)
+        continue
+      }
+
+      split += 1
+      dispatch({ type: 'EXAMPLE_ASSISTED', example: updated })
+      result.push({ fileId, example: updated })
+    }
+
+    dispatch({
+      type: 'TRANSCRIPT_SPLIT_FINISHED',
+      outcome: { split, kept },
+      model: service.model
+    })
+    return result
   }
 
   // Story 5.7: the small utility model tidies what was just imported —
@@ -871,6 +970,26 @@ export const ExamplesPage = () => {
           the one pass that changes what the script says.
         </p>
 
+        <label htmlFor="example-import-transcript">
+          Or import session transcripts
+        </label>
+        <input
+          key={`transcript-${state.importCount}`}
+          id="example-import-transcript"
+          type="file"
+          accept=".md,.markdown,.txt,.text,text/markdown,text/plain"
+          multiple
+          onChange={handleTranscriptImport}
+          aria-describedby="example-import-transcript-help"
+        />
+        <p id="example-import-transcript-help">
+          A transcript of a session you recorded. The utility model splits it
+          into the same section files a generated script has — each with what
+          that stage of the session is for and the words spoken in it — and
+          drops speaker labels, timestamps and the client&rsquo;s replies. The
+          words themselves are kept as transcribed.
+        </p>
+
         <ImportProgressMeter files={state.importFiles} />
 
         {importSummary.finished && (
@@ -893,6 +1012,15 @@ export const ExamplesPage = () => {
                 Use "{folder}" for generation
               </button>
             ))}
+          </p>
+        )}
+
+        {state.split.status !== 'idle' && (
+          <p className="example-split-result" role="status" aria-live="polite">
+            {state.split.status === 'unavailable'
+              ? 'Splitting a transcript needs a configured provider. The transcripts were imported as they are.'
+              : describeTranscriptImport(state.split.outcome, state.split.model) ||
+                'The utility model could not find sections in these transcripts.'}
           </p>
         )}
 
