@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { Check } from 'lucide-react'
 import { STANDARD_TAG_FACETS, facetForTag } from '../services/standardTags'
 
 interface StandardTagFieldsProps {
@@ -16,7 +17,7 @@ interface StandardTagFieldsProps {
 // The fixed part of the tag vocabulary (story 8.17), as controls rather than
 // text: a facet with one value is a select, so it can be set, changed and
 // cleared without a spelling to get wrong, and a facet that takes several is
-// checkboxes. Free-form topic tags stay a text field alongside these.
+// a row of chips. Free-form topic tags stay a text field alongside these.
 export const StandardTagFields = ({
   idPrefix,
   tags,
@@ -50,9 +51,14 @@ export const StandardTagFields = ({
         )
       }
 
-      // A group rather than a fieldset: the checkboxes sit inline among the
+      // A group rather than a fieldset: the chips sit inline among the
       // selects, and a legend cannot be laid out inline without fighting the
-      // way browsers render it over the fieldset's border
+      // way browsers render it over the fieldset's border.
+      //
+      // Each value is a chip rather than a checkbox: the tags this facet
+      // carries are what the row already shows as pills elsewhere, so picking
+      // them looks like what is picked, and the ones that are on read at a
+      // glance instead of asking the eye to find four small ticks.
       const labelId = `${idPrefix}_${facet.id}_label`
       return (
         <div
@@ -62,16 +68,22 @@ export const StandardTagFields = ({
           aria-labelledby={labelId}
         >
           <span id={labelId}>{facet.label}</span>
-          {facet.options.map(option => (
-            <label key={option.tag} title={option.help}>
-              <input
-                type="checkbox"
-                checked={tags.includes(option.tag)}
-                onChange={() => onFeatureToggled(option.tag)}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
+          {facet.options.map(option => {
+            const chosen = tags.includes(option.tag)
+            return (
+              <button
+                key={option.tag}
+                type="button"
+                className="chip"
+                title={option.help}
+                aria-pressed={chosen}
+                onClick={() => onFeatureToggled(option.tag)}
+              >
+                {chosen && <Check size={12} aria-hidden="true" />}
+                {option.label}
+              </button>
+            )
+          })}
         </div>
       )
     })}
