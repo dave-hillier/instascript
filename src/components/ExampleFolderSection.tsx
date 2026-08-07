@@ -1,8 +1,15 @@
-import { useState } from 'react'
+import { useReducer, useState } from 'react'
 import { Check, FileText, FolderOpen, Pencil, Trash2, Wand2, X } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import { exampleFolder, parseTags, UNFILED_FOLDER } from '../services/exampleCorpus'
 import { needsDirectAddress } from '../services/importAssist'
+import {
+  canonicalizeTags,
+  customTagsIn,
+  facetForTag,
+  standardTagsIn
+} from '../services/standardTags'
+import { StandardTagFields } from './StandardTagFields'
 import { countWords } from '../utils/scriptMetrics'
 import { describeSelectionCount } from '../utils/exampleDisplay'
 
@@ -12,21 +19,72 @@ interface UserExampleDetailsFormProps {
   onDetailsSaved: (id: string, details: { tags: string[]; folder: string }) => void
 }
 
-// Tags and folder for one example, saved together: both are how the example
-// is filed, and one Save keeps the row from sprouting two buttons. The
-// folder is chosen from the folders that exist rather than typed, so a
-// mistyped name cannot quietly strand an example in a folder of its own.
+interface DetailsState {
+  // The standard vocabulary's tags, held apart from the free ones so the
+  // controls and the text field never fight over the same tag
+  standard: string[]
+  topicText: string
+  folder: string
+}
+
+type DetailsEvent =
+  | { type: 'FACET_CHOSEN'; facetId: string; tag: string }
+  | { type: 'FEATURE_TOGGLED'; tag: string }
+  | { type: 'TOPIC_TAGS_EDITED'; text: string }
+  | { type: 'FOLDER_CHOSEN'; folder: string }
+
+function detailsReducer(state: DetailsState, event: DetailsEvent): DetailsState {
+  switch (event.type) {
+    case 'FACET_CHOSEN': {
+      // A facet holds one value at a time, so choosing replaces rather than
+      // adds, and choosing the empty option leaves the facet unsaid
+      const others = state.standard.filter(tag => facetForTag(tag)?.id !== event.facetId)
+      return { ...state, standard: event.tag ? [...others, event.tag] : others }
+    }
+    case 'FEATURE_TOGGLED':
+      return {
+        ...state,
+        standard: state.standard.includes(event.tag)
+          ? state.standard.filter(tag => tag !== event.tag)
+          : [...state.standard, event.tag]
+      }
+    case 'TOPIC_TAGS_EDITED':
+      return { ...state, topicText: event.text }
+    case 'FOLDER_CHOSEN':
+      return { ...state, folder: event.folder }
+  }
+}
+
+function initialDetails(example: ExampleRecord): DetailsState {
+  return {
+    standard: standardTagsIn(example.tags),
+    topicText: customTagsIn(example.tags).join(', '),
+    folder: exampleFolder(example)
+  }
+}
+
+// Tags and folder for one example, saved together: all of them are how the
+// example is filed, and one Save keeps the row from sprouting three buttons.
+// Tags come in two kinds — the standard vocabulary (story 8.17) as controls,
+// so the properties every script has an answer to are picked rather than
+// spelled, and free topic tags as text. The folder is chosen from the folders
+// that exist rather than typed, so a mistyped name cannot quietly strand an
+// example in a folder of its own.
 const UserExampleDetailsForm = ({
   example,
   folders,
   onDetailsSaved
 }: UserExampleDetailsFormProps) => {
-  const [tagText, setTagText] = useState(example.tags.join(', '))
-  const [folder, setFolder] = useState(exampleFolder(example))
+  const [details, dispatch] = useReducer(detailsReducer, example, initialDetails)
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
-    onDetailsSaved(example.id, { tags: parseTags(tagText), folder })
+    onDetailsSaved(example.id, {
+      // Standard tags lead; a standard tag typed into the topic field is
+      // recognised as one rather than kept as a second spelling
+      tags: canonicalizeTags([...details.standard, ...parseTags(details.topicText)]),
+      folder: details.folder
+    })
   }
 
   return (
@@ -35,23 +93,29 @@ const UserExampleDetailsForm = ({
       aria-label={`Edit tags and folder for ${example.title}`}
       onSubmit={handleSubmit}
     >
+      <StandardTagFields
+        idPrefix={example.id}
+        tags={details.standard}
+        onFacetChosen={(facetId, tag) => dispatch({ type: 'FACET_CHOSEN', facetId, tag })}
+        onFeatureToggled={tag => dispatch({ type: 'FEATURE_TOGGLED', tag })}
+      />
       <label className="sr-only" htmlFor={`${example.id}_tags`}>
-        Tags for {example.title}, comma separated
+        Topic tags for {example.title}, comma separated
       </label>
       <input
         id={`${example.id}_tags`}
         type="text"
-        value={tagText}
-        onChange={event => setTagText(event.target.value)}
-        placeholder="tags, comma separated"
+        value={details.topicText}
+        onChange={event => dispatch({ type: 'TOPIC_TAGS_EDITED', text: event.target.value })}
+        placeholder="topic tags, comma separated"
       />
       <label className="sr-only" htmlFor={`${example.id}_folder`}>
         Folder for {example.title}
       </label>
       <select
         id={`${example.id}_folder`}
-        value={folder}
-        onChange={event => setFolder(event.target.value)}
+        value={details.folder}
+        onChange={event => dispatch({ type: 'FOLDER_CHOSEN', folder: event.target.value })}
       >
         {folders.map(name => (
           <option key={name} value={name}>

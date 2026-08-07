@@ -17,8 +17,11 @@ import {
   buildImportFormattingPrompt,
   buildTaggingInput
 } from './prompts'
+import { canonicalizeTags } from './standardTags'
 
-export const MAX_SUGGESTED_TAGS = 6
+// Room for the standard labels a script carries (story 8.17) plus the two to
+// four topic tags the prompt asks for on top of them
+export const MAX_SUGGESTED_TAGS = 9
 
 // Tags are short labels; anything longer is the model explaining itself
 const MAX_TAG_LENGTH = 40
@@ -38,7 +41,10 @@ const HEADING_LINE = /^\s{0,3}#{1,6}\s+\S/
 
 // Pure: the tags from a model reply. Accepts the comma-separated single line
 // the prompt asks for, and tolerates the bulleted list, numbered list or
-// "Tags: ..." preamble a smaller model sometimes returns instead.
+// "Tags: ..." preamble a smaller model sometimes returns instead. A standard
+// label the model wrote its own way ("nsfw", "for her") is collapsed onto the
+// standard tag, and the standard ones lead — the cap should never fall on a
+// label the vocabulary asked for while a loose topic tag survives.
 export function parseSuggestedTags(text: string): string[] {
   const tags: string[] = []
   const seen = new Set<string>()
@@ -63,10 +69,13 @@ export function parseSuggestedTags(text: string): string[] {
 
     seen.add(tag)
     tags.push(tag)
-    if (tags.length === MAX_SUGGESTED_TAGS) break
+    // Read a little past the cap before applying it: synonyms collapse onto
+    // one another, so the tags worth keeping are only known after
+    // canonicalisation
+    if (tags.length === MAX_SUGGESTED_TAGS * 3) break
   }
 
-  return tags
+  return canonicalizeTags(tags).slice(0, MAX_SUGGESTED_TAGS)
 }
 
 // Pure: whether an import would gain from a markdown pass. Anything that
