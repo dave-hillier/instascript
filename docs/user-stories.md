@@ -342,6 +342,20 @@ Acceptance criteria:
 - An example already in the corpus can be rewritten from its own row, and says so when no provider is configured
 - The whole reply is asked for with room to hold the script, so a long import is not truncated
 
+### 5.9 Set standing instructions for the jobs [Implemented]
+As a user with my own preferences about how scripts read and how imported material should arrive, I want to write those instructions once in settings, so that every generation and every import follows them without my restating them in each brief.
+
+Notes: two free-text settings, one per job the instruction can meaningfully attach to. **Overall style** rides the generation system prompt, which is the one message every request that writes prose shares — the outline, each section, section rewrites, whole-script refinements — and is also appended to the style rules the review pass judges against, so the critique holds the script to the same standing instructions it was written against. **Imported material** rides the three utility-model import jobs (markdown formatting, tagging, direct address). Each block is appended last, after every placeholder in the template has been substituted, so brace-shaped text and regex replacement patterns in the user's own words go through verbatim. An unset field appends nothing at all, leaving the prompts byte-identical to the ones the app ships with — including the cached system-prompt prefix, which changes only when the setting does. The import jobs' faithfulness checks are unchanged and still have the last word, so an instruction that talks a small model into rewriting a script ends with the rewrite discarded and the import kept as it arrived.
+
+Acceptance criteria:
+- Settings offers a free-text field per job, persisted in localStorage like the rest
+- The style instructions reach every request that writes prose, and the style-review critique
+- The import instructions reach the markdown, tagging and direct-address passes
+- Neither job's instructions appear in the other's prompts
+- An empty or whitespace-only field changes no prompt
+- Instructions take effect on the next request, without a reload
+- The import safety checks still discard a pass that lost or reworded the script
+
 ## Epic 7: Data Portability
 
 ### 7.1 Persist everything across sessions [Implemented]

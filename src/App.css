@@ -1121,7 +1121,8 @@ dialog label {
 }
 
 dialog input,
-dialog select {
+dialog select,
+dialog textarea {
   width: 100%;
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--line);
@@ -1134,10 +1135,24 @@ dialog select {
   margin-bottom: 0.75rem;
 }
 
+/* Standing instructions: a few lines by default, grown by the user rather
+   than by what they have typed, so the panel's layout stays predictable */
+dialog textarea {
+  display: block;
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.5;
+}
+
 dialog input:focus,
-dialog select:focus {
+dialog select:focus,
+dialog textarea:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+dialog textarea::placeholder {
+  color: var(--ink-muted);
 }
 
 dialog form p {
