@@ -1,5 +1,5 @@
 import { useEffect, useReducer } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Check, Sparkles } from 'lucide-react'
 import { briefingReducer, initialBriefingState } from '../reducers/briefingReducer'
 import {
   buildBriefedPrompt,
@@ -45,10 +45,13 @@ function typedAnswer(answer: BriefAnswer): string {
   return answer.kind === 'custom' ? answer.value : ''
 }
 
-// A question taking any number of answers: checkboxes, and nothing ticked
-// means the writer decides, so it needs no "decide for me" of its own. One
-// taking a single answer keeps the radio group, where "something else" and
-// "decide for me" are choices in the same list.
+// A question taking any number of answers: chips, and none of them on means
+// the writer decides, so it needs no "decide for me" of its own. Chips rather
+// than checkboxes because the answers to such a question are a set being
+// built up — what is on shows as a filled row that can be read at a glance,
+// and turning one off is the same click as turning it on. One taking a single
+// answer keeps the radio group, where "something else" and "decide for me"
+// are choices in the same list: those are one-of-many, not a set.
 const QuestionFieldset = ({
   question,
   answer,
@@ -64,23 +67,37 @@ const QuestionFieldset = ({
       <legend>{question.question}</legend>
       {multiSelect && <p>Choose as many as fit — or none, and the writer decides.</p>}
 
-      {question.options.map(option => (
-        <label key={option.label}>
-          <input
-            type={multiSelect ? 'checkbox' : 'radio'}
-            name={question.id}
-            value={option.label}
-            checked={isChosen(answer, option.label)}
-            onChange={() =>
-              multiSelect ? onOptionToggled(option.label) : onOptionChosen(option.label)
-            }
-          />
-          <span>
-            {option.label}
-            {option.detail && <small>{option.detail}</small>}
-          </span>
-        </label>
-      ))}
+      {question.options.map(option =>
+        multiSelect ? (
+          <button
+            key={option.label}
+            type="button"
+            className="chip"
+            aria-pressed={isChosen(answer, option.label)}
+            onClick={() => onOptionToggled(option.label)}
+          >
+            {isChosen(answer, option.label) && <Check size={14} aria-hidden="true" />}
+            <span>
+              {option.label}
+              {option.detail && <small>{option.detail}</small>}
+            </span>
+          </button>
+        ) : (
+          <label key={option.label}>
+            <input
+              type="radio"
+              name={question.id}
+              value={option.label}
+              checked={isChosen(answer, option.label)}
+              onChange={() => onOptionChosen(option.label)}
+            />
+            <span>
+              {option.label}
+              {option.detail && <small>{option.detail}</small>}
+            </span>
+          </label>
+        )
+      )}
 
       {!multiSelect && (
         <label>
