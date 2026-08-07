@@ -10,41 +10,17 @@ import {
 } from '../services/speechAudioCache'
 import { formatBytes } from '../utils/formatBytes'
 import { getDefaultModel, type APIProvider } from '../services/config'
+import {
+  OPENAI_MODELS,
+  OPENROUTER_MODELS,
+  OPENAI_UTILITY_MODELS,
+  OPENROUTER_UTILITY_MODELS,
+  type ModelOption
+} from '../services/modelPresets'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
 
 type Theme = 'light' | 'dark' | 'system'
-
-type ModelOption = { value: string; label: string }
-
-const OPENAI_MODELS: ModelOption[] = [
-  { value: 'gpt-5', label: 'GPT-5' },
-  { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
-  { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
-]
-
-const OPENROUTER_MODELS: ModelOption[] = [
-  { value: 'x-ai/grok-4.5', label: 'Grok 4.5' },
-  { value: 'x-ai/grok-4.3', label: 'Grok 4.3' },
-  { value: 'x-ai/grok-4.20', label: 'Grok 4.20' },
-  { value: 'x-ai/grok-3', label: 'Grok 3' },
-  { value: 'x-ai/grok-3-mini', label: 'Grok 3 Mini' },
-]
-
-// The utility role runs short background jobs, so its presets lead with the
-// small fast models rather than the ones chosen for writing quality
-const OPENAI_UTILITY_MODELS: ModelOption[] = [
-  { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
-  { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
-  { value: 'gpt-5', label: 'GPT-5' },
-]
-
-const OPENROUTER_UTILITY_MODELS: ModelOption[] = [
-  { value: 'x-ai/grok-3-mini', label: 'Grok 3 Mini' },
-  { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano' },
-  { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini' },
-  { value: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
-]
 
 const CUSTOM_MODEL = 'custom'
 
@@ -85,7 +61,7 @@ const ModelField = ({ id, label, help, options, allowCustom, value, onChange }: 
           <input
             type="text"
             id={`${id}-custom`}
-            placeholder="e.g. x-ai/grok-4, anthropic/claude-sonnet-4"
+            placeholder="e.g. x-ai/grok-4.3, anthropic/claude-sonnet-4"
             value={value}
             onChange={event => onChange(event.target.value)}
             aria-describedby={`${id}-custom-help`}

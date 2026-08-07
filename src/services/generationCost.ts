@@ -38,11 +38,17 @@ export interface ModelPricing {
 }
 
 // Published list prices (USD per million tokens) for the preset models
-// offered in settings. Unknown models simply have no entry.
+// offered in settings. Unknown models simply have no entry. The Grok 3 pair is
+// retired and no longer offered, but conversations generated on them are still
+// in libraries and would otherwise lose their cost line.
 export const MODEL_PRICING: Record<string, ModelPricing> = {
   'gpt-5': { inputPerMillion: 1.25, outputPerMillion: 10 },
   'gpt-5-mini': { inputPerMillion: 0.25, outputPerMillion: 2 },
   'gpt-5-nano': { inputPerMillion: 0.05, outputPerMillion: 0.4 },
+  'openai/gpt-5': { inputPerMillion: 1.25, outputPerMillion: 10 },
+  'openai/gpt-5-mini': { inputPerMillion: 0.25, outputPerMillion: 2 },
+  'openai/gpt-5-nano': { inputPerMillion: 0.05, outputPerMillion: 0.4 },
+  'google/gemini-2.5-flash-lite': { inputPerMillion: 0.1, outputPerMillion: 0.4 },
   'x-ai/grok-4.5': { inputPerMillion: 2, outputPerMillion: 6 },
   'x-ai/grok-4.3': { inputPerMillion: 1.25, outputPerMillion: 2.5 },
   'x-ai/grok-4.20': { inputPerMillion: 1.25, outputPerMillion: 2.5 },

@@ -5,6 +5,12 @@ import {
   formatCostUsd,
   MODEL_PRICING
 } from '../generationCost'
+import {
+  OPENAI_MODELS,
+  OPENROUTER_MODELS,
+  OPENAI_UTILITY_MODELS,
+  OPENROUTER_UTILITY_MODELS
+} from '../modelPresets'
 import type { RawConversation } from '../../types/conversation'
 
 const makeConversation = (): RawConversation => ({
@@ -72,9 +78,17 @@ describe('estimateCostUsd', () => {
     ).toBeNull()
   })
 
+  // Derived from the preset lists rather than restated, so a model added to
+  // settings without a price fails here instead of silently showing no cost
   it('covers every preset model in settings', () => {
-    for (const model of ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'x-ai/grok-3', 'x-ai/grok-3-mini']) {
-      expect(MODEL_PRICING[model]).toBeDefined()
+    const presets = [
+      ...OPENAI_MODELS,
+      ...OPENROUTER_MODELS,
+      ...OPENAI_UTILITY_MODELS,
+      ...OPENROUTER_UTILITY_MODELS
+    ]
+    for (const preset of presets) {
+      expect(MODEL_PRICING[preset.value], preset.value).toBeDefined()
     }
   })
 })

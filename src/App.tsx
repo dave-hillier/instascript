@@ -11,6 +11,7 @@ import { HomePage } from './pages/HomePage'
 import { ScriptPage } from './pages/ScriptPage'
 import { ExamplesPage } from './pages/ExamplesPage'
 import {
+  getModel,
   getUtilityModel,
   setUtilityModel,
   isImportAssistEnabled,
@@ -166,14 +167,10 @@ function AppContent() {
     }
   })
 
-  const [model, setModel] = useState<string>(() => {
-    try {
-      const item = window.localStorage.getItem('model')
-      return item ? JSON.parse(item) : 'gpt-5'
-    } catch {
-      return 'gpt-5'
-    }
-  })
+  // Read through the config getter rather than storage directly, so a model
+  // the provider has since retired is remapped here too and the effect below
+  // writes the successor back
+  const [model, setModel] = useState<string>(getModel)
   // The small model used for background jobs, and whether imports may call it
   // (story 5.7)
   const [utilityModel, setUtilityModelState] = useState<string>(getUtilityModel)
