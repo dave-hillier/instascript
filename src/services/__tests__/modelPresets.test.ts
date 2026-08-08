@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DEFAULT_MODELS, getModel, getUtilityModel } from '../config'
+import { MODEL_PRICING } from '../generationCost'
 import {
   OPENAI_MODELS,
   OPENROUTER_MODELS,
@@ -81,4 +82,35 @@ describe('model presets', () => {
       expect(RETIRED_MODELS[DEFAULT_MODELS.openrouter[role]]).toBeUndefined()
     }
   })
+})
+
+// The utility role exists to keep the small jobs cheap, so the preference is
+// expressed in the order of its lists: whichever model sits first is what the
+// dropdown opens on and what the provider defaults to. These hold that order
+// to the published prices, so a model added in the wrong place is caught here
+// rather than by a bill.
+describe('utility presets, cheapest first', () => {
+  const utilityLists = {
+    openai: OPENAI_UTILITY_MODELS,
+    openrouter: OPENROUTER_UTILITY_MODELS
+  }
+
+  for (const [provider, models] of Object.entries(utilityLists)) {
+    it(`orders the ${provider} list by ascending price`, () => {
+      for (let i = 1; i < models.length; i++) {
+        const previous = MODEL_PRICING[models[i - 1].value]
+        const current = MODEL_PRICING[models[i].value]
+        const label = `${models[i - 1].value} before ${models[i].value}`
+
+        expect(previous.inputPerMillion, label).toBeLessThanOrEqual(current.inputPerMillion)
+        if (previous.inputPerMillion === current.inputPerMillion) {
+          expect(previous.outputPerMillion, label).toBeLessThanOrEqual(current.outputPerMillion)
+        }
+      }
+    })
+
+    it(`defaults ${provider} to the head of its utility list`, () => {
+      expect(DEFAULT_MODELS[provider as 'openai' | 'openrouter'].utility).toBe(models[0].value)
+    })
+  }
 })

@@ -49,6 +49,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'openai/gpt-5-mini': { inputPerMillion: 0.25, outputPerMillion: 2 },
   'openai/gpt-5-nano': { inputPerMillion: 0.05, outputPerMillion: 0.4 },
   'google/gemini-2.5-flash-lite': { inputPerMillion: 0.1, outputPerMillion: 0.4 },
+  'x-ai/grok-build-0.1': { inputPerMillion: 1, outputPerMillion: 2 },
   'x-ai/grok-4.5': { inputPerMillion: 2, outputPerMillion: 6 },
   'x-ai/grok-4.3': { inputPerMillion: 1.25, outputPerMillion: 2.5 },
   'x-ai/grok-4.20': { inputPerMillion: 1.25, outputPerMillion: 2.5 },
