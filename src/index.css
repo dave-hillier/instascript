@@ -2,6 +2,9 @@
   --font-ui: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-display: "Cormorant Garamond", Georgia, serif;
   --font-reading: "Spectral", Georgia, serif;
+  /* Paths, counts and file sizes — anywhere the app is naming or measuring
+     a file rather than talking to you */
+  --font-path: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   font-family: var(--font-ui);
   line-height: 1.5;

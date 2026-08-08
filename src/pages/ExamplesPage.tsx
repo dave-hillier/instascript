@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BookmarkPlus, FolderPlus } from 'lucide-react'
+import { BookmarkPlus } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import {
   applyExampleEnhancement,
@@ -68,15 +68,17 @@ import {
   type TranscriptImportOutcome
 } from '../services/transcriptImport'
 import { ImportProgressMeter } from '../components/ImportProgressMeter'
-import { ExampleFolderSection } from '../components/ExampleFolderSection'
-import { describeSelectionCount } from '../utils/exampleDisplay'
+import { ExampleFolderRail } from '../components/ExampleFolderRail'
+import {
+  BundledFolderView,
+  ExampleFolderView
+} from '../components/ExampleFolderView'
 import { createUtilityService } from '../services/serviceFactory'
 import {
   isImportAssistEnabled,
   isImportVoicingEnabled,
   setImportVoicingEnabled
 } from '../services/config'
-import { countWords } from '../utils/scriptMetrics'
 
 // A file that made it into the corpus, kept paired with its meter row so the
 // tidy pass can report which file each of its jobs is running for
@@ -125,8 +127,15 @@ type CleanupState = {
   note: string | null
 }
 
+// Which folder the listing is showing. Browsing a folder is not choosing it:
+// the folder generation draws on is `activeFolder`, and this is only where
+// the eye is — including on the bundled set, which is browsed but never
+// filed into.
+type ExamplesView = { kind: 'folder'; folder: string } | { kind: 'bundled' }
+
 type ExamplesState = {
   examples: ExampleRecord[]
+  view: ExamplesView
   importCount: number
   bundledEnabled: boolean
   // The one folder retrieval draws on. Held in state and persisted on
@@ -173,6 +182,8 @@ type ExamplesAction =
   | { type: 'EXAMPLE_DELETED'; id: string }
   | { type: 'EXAMPLE_DETAILS_CHANGED'; id: string; tags: string[]; folder: string }
   | { type: 'FOLDER_ACTIVATED'; folder: string }
+  | { type: 'FOLDER_VIEWED'; folder: string }
+  | { type: 'BUNDLED_VIEWED' }
   | { type: 'FOLDER_CREATED'; folder: string }
   | { type: 'FOLDER_RENAMED'; from: string; to: string }
   | { type: 'FOLDER_DELETED'; folder: string }
@@ -215,11 +226,19 @@ const withCorpus = (
   declaredFolders: string[] = state.declaredFolders
 ): ExamplesState => {
   const folders = listExampleFolders(userExamplesOf(examples), declaredFolders)
+  const activeFolder = resolveActiveFolder(folders, state.activeFolder)
   return {
     ...state,
     examples,
     declaredFolders,
-    activeFolder: resolveActiveFolder(folders, state.activeFolder),
+    activeFolder,
+    // The listing follows the same rule: a folder that is gone falls back to
+    // the one grounding generation rather than showing an empty listing for
+    // a folder that no longer exists
+    view:
+      state.view.kind === 'folder' && !folders.includes(state.view.folder)
+        ? { kind: 'folder', folder: activeFolder }
+        : state.view,
     importDestination: folders.includes(state.importDestination)
       ? state.importDestination
       : ''
@@ -359,17 +378,28 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
         state.declaredFolders.filter(folder => folder !== action.folder)
       )
     case 'FOLDER_CREATED':
-      return withCorpus(state, state.examples, [
-        ...state.declaredFolders.filter(folder => folder !== action.folder),
-        action.folder
-      ])
+      // A folder is made to put something in, so the listing opens it
+      return withCorpus(
+        { ...state, view: { kind: 'folder', folder: action.folder } },
+        state.examples,
+        [
+          ...state.declaredFolders.filter(folder => folder !== action.folder),
+          action.folder
+        ]
+      )
     case 'FOLDER_RENAMED': {
       // The active folder follows its own rename, so generation keeps
       // drawing on the material it was drawing on
       const renamed =
         state.activeFolder === action.from ? action.to : state.activeFolder
+      // The listing follows a rename too, so the folder stays open under its
+      // new name rather than falling back to another folder
+      const viewed: ExamplesView =
+        state.view.kind === 'folder' && state.view.folder === action.from
+          ? { kind: 'folder', folder: action.to }
+          : state.view
       return withCorpus(
-        { ...state, activeFolder: renamed },
+        { ...state, activeFolder: renamed, view: viewed },
         state.examples.map(example =>
           example.source === 'user' && exampleFolder(example) === action.from
             ? { ...example, folder: action.to }
@@ -385,6 +415,10 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
     }
     case 'FOLDER_ACTIVATED':
       return { ...state, activeFolder: action.folder }
+    case 'FOLDER_VIEWED':
+      return { ...state, view: { kind: 'folder', folder: action.folder } }
+    case 'BUNDLED_VIEWED':
+      return { ...state, view: { kind: 'bundled' } }
     case 'IMPORT_DESTINATION_CHANGED':
       return { ...state, importDestination: action.folder }
     case 'EXAMPLE_DETAILS_CHANGED': {
@@ -406,43 +440,6 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
     default:
       return state
   }
-}
-
-// Makes an empty folder, ready to be imported into or filed into. Folders
-// are otherwise implied by the examples in them, which leaves no way to set
-// one up before there is anything to put in it.
-const NewFolderForm = ({
-  onFolderCreated
-}: {
-  onFolderCreated: (name: string) => void
-}) => {
-  const [name, setName] = useState('')
-
-  return (
-    <form
-      className="example-new-folder"
-      aria-label="Create a folder"
-      onSubmit={event => {
-        event.preventDefault()
-        if (!name.trim()) return
-        onFolderCreated(name)
-        setName('')
-      }}
-    >
-      <label htmlFor="new-folder-name">New folder</label>
-      <input
-        id="new-folder-name"
-        type="text"
-        value={name}
-        onChange={event => setName(event.target.value)}
-        placeholder="Folder name"
-      />
-      <button type="submit">
-        <FolderPlus size={14} />
-        Create folder
-      </button>
-    </form>
-  )
 }
 
 // The corpus's other source of material: the scripts already in the library.
@@ -543,6 +540,9 @@ export const ExamplesPage = () => {
     undefined,
     (): ExamplesState => ({
       examples: getAllExamples(),
+      // The listing opens on the folder grounding generation: it is the one
+      // the rest of the app is using, so it is the one worth seeing first
+      view: { kind: 'folder', folder: getActiveExampleFolder() },
       importCount: 0,
       bundledEnabled: areBundledExamplesEnabled(),
       activeFolder: getActiveExampleFolder(),
@@ -572,6 +572,22 @@ export const ExamplesPage = () => {
   const activeFolderExamples = userExamples.filter(
     example => exampleFolder(example) === state.activeFolder
   )
+  // The folder the listing is showing, null while the bundled set is. A
+  // stored folder that has since gone falls back to the one grounding
+  // generation, the same way the reducer resolves it.
+  const viewedFolder =
+    state.view.kind === 'bundled'
+      ? null
+      : folders.includes(state.view.folder)
+        ? state.view.folder
+        : folders.includes(state.activeFolder)
+          ? state.activeFolder
+          : (folders[0] ?? null)
+  const railFolders = folders.map(folder => ({
+    name: folder,
+    count: userExamples.filter(example => exampleFolder(example) === folder).length,
+    grounding: folder === state.activeFolder
+  }))
   // Where the last import landed, when that is not where generation is
   // looking — otherwise the import appears to have done nothing
   const idleFolders = state.importedFolders.filter(folder => folder !== state.activeFolder)
@@ -948,49 +964,96 @@ export const ExamplesPage = () => {
       <header>
         <h2>Example corpus</h2>
         <p>
-          Generation is grounded in these scripts. Your imports and the scripts
-          you save from the library are stored in this browser, filed into
-          folders — one folder at a time grounds generation, so you can keep
-          several bodies of material and switch between them. A small set of
-          bundled placeholder examples ships with the app; they are off unless
-          you switch them on.
-        </p>
-        <p>
-          An example and a script are the same text at two points in one loop:
-          any example here can be opened as a script to rework, perform or
-          export, and any script in your library can be saved back here as
-          material for the next generation.
+          Generation is grounded in one folder of these scripts at a time.
+          Everything here is kept in this browser: the files you import, and
+          the scripts you save back from your library. Any example opens as a
+          script to rework, perform or export.
         </p>
       </header>
 
       {!state.bundledEnabled && activeFolderExamples.length === 0 && (
         <p className="example-warning" role="status">
           {userExamples.length === 0
-            ? 'You have no examples of your own yet, so generation has nothing to ground itself in. Import a markdown or text file below, promote a script you have written, or switch the bundled placeholder examples on.'
-            : `The folder generation is using, "${state.activeFolder}", is empty, so generation has nothing to ground itself in. Choose a folder that has examples in it, or switch the bundled placeholder examples on.`}
+            ? 'Nothing of your own here yet, so generation has nothing to ground itself in. Add material below, or search the bundled placeholder set instead.'
+            : `"${state.activeFolder}" is grounding generation and it is empty. Ground generation in a folder that has files in it, or search the bundled placeholder set alongside it.`}
         </p>
       )}
 
-      <form className="example-settings" aria-label="Corpus settings">
-        <label className="checkbox-field" htmlFor="bundled-examples">
-          <input
-            type="checkbox"
-            id="bundled-examples"
-            checked={state.bundledEnabled}
-            onChange={event => handleBundledToggle(event.target.checked)}
-            aria-describedby="bundled-examples-help"
-          />
-          <span>Also use the bundled placeholder examples</span>
-        </label>
-        <p id="bundled-examples-help">
-          On means the bundled placeholder scripts are searched alongside the
-          folder in use. They are short stubs, so leaving them off keeps
-          generation grounded only in material whose style you chose. Either
-          way they stay listed below.
-        </p>
-      </form>
+      <div className="example-browser">
+        <ExampleFolderRail
+          folders={railFolders}
+          bundled={
+            bundledExamples.length > 0
+              ? { count: bundledExamples.length, enabled: state.bundledEnabled }
+              : null
+          }
+          viewing={state.view.kind === 'bundled' ? null : viewedFolder}
+          onFolderViewed={folder => dispatch({ type: 'FOLDER_VIEWED', folder })}
+          onBundledViewed={() => dispatch({ type: 'BUNDLED_VIEWED' })}
+          onFolderCreated={handleFolderCreated}
+        />
 
-      <form className="example-import" aria-label="Import example scripts">
+        {state.view.kind === 'bundled' ? (
+          <BundledFolderView
+            examples={bundledExamples}
+            headingId="bundled-examples-heading"
+            enabled={state.bundledEnabled}
+            selectionCounts={selectionCounts}
+            onEnabledChanged={handleBundledToggle}
+          />
+        ) : viewedFolder ? (
+          <ExampleFolderView
+            key={viewedFolder}
+            folder={viewedFolder}
+            headingId="example-folder-heading"
+            examples={userExamples.filter(
+              example => exampleFolder(example) === viewedFolder
+            )}
+            folders={folderOptions}
+            active={viewedFolder === state.activeFolder}
+            selectionCounts={selectionCounts}
+            rewritingExampleId={state.rewrite.runningId}
+            cleanupFiles={
+              state.cleanup.folder === viewedFolder ? state.cleanup.files : []
+            }
+            cleanupNote={
+              state.cleanup.folder === viewedFolder ? state.cleanup.note : null
+            }
+            cleanupRunning={state.cleanup.running}
+            onActivated={handleFolderActivated}
+            onFolderRenamed={handleFolderRenamed}
+            onFolderDeleted={handleFolderDelete}
+            onExampleDeleted={handleDelete}
+            onDetailsSaved={handleDetailsSaved}
+            onOpenAsScript={handleOpenAsScript}
+            onRewriteExample={example => {
+              void handleRewriteExample(example)
+            }}
+            onCleanUpFolder={(name, untidy) => {
+              void handleCleanUp(name, untidy)
+            }}
+            onCleanUpExample={(name, example) => {
+              void handleCleanUp(name, [example])
+            }}
+          />
+        ) : (
+          <p className="example-nothing-yet">
+            No folders of your own yet. Add a markdown or text file below and
+            the folder it lands in appears here.
+          </p>
+        )}
+      </div>
+
+      {state.rewrite.note && (
+        <p className="example-rewrite-result" role="status" aria-live="polite">
+          {state.rewrite.note}
+        </p>
+      )}
+
+      <details className="example-drawer">
+        <summary>Add material</summary>
+
+        <form className="example-import" aria-label="Import example scripts">
         <label htmlFor="example-import-destination">Import into</label>
         <select
           id="example-import-destination"
@@ -1055,12 +1118,11 @@ export const ExamplesPage = () => {
         </label>
         <p id="import-voicing-help">
           Material written about someone else, or spoken to a title, teaches
-          generation a voice you are not writing in. With this on, the small
-          utility model puts each import into the second person and takes the
-          titles of address out — "drop for Mistress" becomes "drop for me".
-          A rewrite that lost or padded the script is discarded, and the
-          import keeps the words it arrived with. Off unless you ask: it is
-          the one pass that changes what the script says.
+          generation a voice you are not writing in. With this on, the utility
+          model puts each import into the second person and drops the titles
+          of address — "drop for Mistress" becomes "drop for me". A rewrite
+          that lost or padded the script is discarded. Off unless you ask: it
+          is the one pass that changes what the script says.
         </p>
 
         <label htmlFor="example-import-transcript">
@@ -1076,11 +1138,10 @@ export const ExamplesPage = () => {
           aria-describedby="example-import-transcript-help"
         />
         <p id="example-import-transcript-help">
-          A transcript of a session you recorded. The utility model splits it
-          into the same section files a generated script has — each with what
-          that stage of the session is for and the words spoken in it — and
-          drops speaker labels, timestamps and the client&rsquo;s replies. The
-          words themselves are kept as transcribed.
+          A recording of a session you ran. The utility model splits it into
+          the same section files a generated script has, and drops speaker
+          labels, timestamps and the client&rsquo;s replies. The words are
+          kept as transcribed.
         </p>
 
         <ImportProgressMeter files={state.importFiles} />
@@ -1123,99 +1184,24 @@ export const ExamplesPage = () => {
               'The utility model found nothing to add to these imports.'}
           </p>
         )}
-      </form>
+        </form>
 
-      <LibraryPromotionForm
-        key={`promote-${state.examples.length}-${state.activeFolder}`}
-        scripts={promotableScripts}
-        folders={folderOptions}
-        defaultFolder={state.activeFolder}
-        onPromote={handlePromoteScript}
-      />
+        <LibraryPromotionForm
+          key={`promote-${state.examples.length}-${state.activeFolder}`}
+          scripts={promotableScripts}
+          folders={folderOptions}
+          defaultFolder={state.activeFolder}
+          onPromote={handlePromoteScript}
+        />
 
-      {state.promotion.status === 'saved' && (
-        <p className="example-promotion-result" role="status" aria-live="polite">
-          {state.promotion.replaced
-            ? `Updated the example held for "${state.promotion.title}" in "${state.promotion.folder}".`
-            : `Saved "${state.promotion.title}" into "${state.promotion.folder}".`}
-        </p>
-      )}
-
-      {state.rewrite.note && (
-        <p className="example-rewrite-result" role="status" aria-live="polite">
-          {state.rewrite.note}
-        </p>
-      )}
-
-      <NewFolderForm onFolderCreated={handleFolderCreated} />
-
-      {folders.length === 0 ? (
-        <p>No examples of your own yet. Import a markdown or text file to get started.</p>
-      ) : (
-        folders.map((folder, index) => (
-          <ExampleFolderSection
-            key={folder}
-            folder={folder}
-            headingId={`example-folder-${index}`}
-            examples={userExamples.filter(example => exampleFolder(example) === folder)}
-            folders={folderOptions}
-            active={folder === state.activeFolder}
-            selectionCounts={selectionCounts}
-            rewritingExampleId={state.rewrite.runningId}
-            cleanupFiles={state.cleanup.folder === folder ? state.cleanup.files : []}
-            cleanupNote={state.cleanup.folder === folder ? state.cleanup.note : null}
-            cleanupRunning={state.cleanup.running}
-            onActivated={handleFolderActivated}
-            onFolderRenamed={handleFolderRenamed}
-            onFolderDeleted={handleFolderDelete}
-            onExampleDeleted={handleDelete}
-            onDetailsSaved={handleDetailsSaved}
-            onOpenAsScript={handleOpenAsScript}
-            onRewriteExample={example => {
-              void handleRewriteExample(example)
-            }}
-            onCleanUpFolder={(name, untidy) => {
-              void handleCleanUp(name, untidy)
-            }}
-            onCleanUpExample={(name, example) => {
-              void handleCleanUp(name, [example])
-            }}
-          />
-        ))
-      )}
-
-      {bundledExamples.length > 0 && (
-        <section
-          className="example-folder"
-          aria-labelledby="bundled-examples-heading"
-          data-active={state.bundledEnabled}
-        >
-          <header>
-            <h3 id="bundled-examples-heading">Bundled placeholder examples</h3>
-            <p className="example-folder-meta">
-              {bundledExamples.length} examples · read-only ·{' '}
-              {state.bundledEnabled
-                ? 'searched alongside the folder in use'
-                : 'excluded from generation'}
-            </p>
-          </header>
-          <ul className="example-list">
-            {bundledExamples.map(example => (
-              <li key={example.id} data-excluded={!state.bundledEnabled}>
-                <div className="example-summary">
-                  <h4>{example.title}</h4>
-                  <p className="example-meta">
-                    {countWords(example.content).toLocaleString('en-US')} words
-                    {' · '}
-                    {describeSelectionCount(selectionCounts[example.id] ?? 0)}
-                    {example.tags.length > 0 && <> · {example.tags.join(', ')}</>}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+        {state.promotion.status === 'saved' && (
+          <p className="example-promotion-result" role="status" aria-live="polite">
+            {state.promotion.replaced
+              ? `Updated the example held for "${state.promotion.title}" in "${state.promotion.folder}".`
+              : `Saved "${state.promotion.title}" into "${state.promotion.folder}".`}
+          </p>
+        )}
+      </details>
     </section>
   )
 }
