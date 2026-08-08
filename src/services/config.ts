@@ -1,3 +1,5 @@
+import { resolveRetiredModel } from './modelPresets'
+
 export type APIProvider = 'openai' | 'openrouter' | 'mock'
 
 // Not every request deserves the same model. Writing a script is the job the
@@ -50,10 +52,12 @@ export function getApiProvider(): APIProvider {
 
 // The model each role falls back to per provider. The utility defaults are
 // the cheapest capable model on each provider, since the utility role only
-// ever handles short, well-specified jobs.
+// ever handles short, well-specified jobs. OpenRouter's utility default is not
+// a Grok: xAI retired the small Grok 3 tier, and its cheapest current model
+// costs several times what the small models of other vendors do.
 export const DEFAULT_MODELS: Record<APIProvider, Record<ModelRole, string>> = {
   openai: { generation: 'gpt-5', utility: 'gpt-5-nano' },
-  openrouter: { generation: 'x-ai/grok-4.5', utility: 'x-ai/grok-3-mini' },
+  openrouter: { generation: 'x-ai/grok-4.5', utility: 'openai/gpt-5-nano' },
   mock: { generation: 'gpt-5', utility: 'gpt-5-nano' }
 }
 
@@ -61,10 +65,12 @@ export function getDefaultModel(provider: APIProvider, role: ModelRole): string 
   return DEFAULT_MODELS[provider][role]
 }
 
+// Both model getters remap a retired model id to its successor, so a setting
+// saved before the provider withdrew the model still names something callable
 export function getModel(): string {
   try {
     const item = window.localStorage.getItem('model')
-    return item ? JSON.parse(item) : 'gpt-5'
+    return item ? resolveRetiredModel(JSON.parse(item)) : 'gpt-5'
   } catch (error) {
     console.warn('Error loading model from localStorage:', error)
     return 'gpt-5'
@@ -74,7 +80,9 @@ export function getModel(): string {
 export function getUtilityModel(): string {
   const fallback = getDefaultModel(getApiProvider(), 'utility')
   const stored = readSetting<string>('utilityModel', fallback)
-  return typeof stored === 'string' && stored.trim() ? stored.trim() : fallback
+  return typeof stored === 'string' && stored.trim()
+    ? resolveRetiredModel(stored.trim())
+    : fallback
 }
 
 export function setUtilityModel(model: string): void {

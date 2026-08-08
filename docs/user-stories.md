@@ -318,7 +318,7 @@ Acceptance criteria:
 ### 5.7 Use a small model for the jobs that do not need a big one [Implemented]
 As a user paying per token, I want the background jobs around a script — tagging an imported example, tidying a plain-text import into markdown — handled by a small cheap model rather than the one I chose for writing, so that they are faster and cost a fraction of a generation.
 
-Notes: implemented as model *roles*. `generation` keeps the existing model setting; `utility` is a second setting with its own per-provider default (gpt-5-nano / grok-3-mini) and the same custom-model-id escape hatch on OpenRouter. Utility requests are non-streaming, carry neither the hypnosis system prompt nor the example corpus, and ask OpenAI's gpt-5 family for minimal reasoning effort. Both jobs verify the reply in code before storing it — tags are parsed and capped, and a formatting result that lost or invented prose is discarded in favour of the import as it arrived.
+Notes: implemented as model *roles*. `generation` keeps the existing model setting; `utility` is a second setting with its own per-provider default (gpt-5-nano on either provider — xAI retired the small Grok 3 tier, so the cheap end of the OpenRouter list is other vendors') and the same custom-model-id escape hatch on OpenRouter. Utility requests are non-streaming, carry neither the hypnosis system prompt nor the example corpus, and ask OpenAI's gpt-5 family for minimal reasoning effort. Both jobs verify the reply in code before storing it — tags are parsed and capped, and a formatting result that lost or invented prose is discarded in favour of the import as it arrived.
 
 Acceptance criteria:
 - Settings offers a utility model alongside the generation model, per provider, persisted like the rest
