@@ -15,6 +15,11 @@ export type ImportStage =
   | 'voicing'
   // The utility model is splitting a transcript into section files
   | 'splitting'
+  // The utility model is naming a script still titled after its file
+  | 'retitling'
+  // The utility model is dividing a script already in the corpus into
+  // sections, the same shape a transcript is split into
+  | 'sectioning'
   // The utility model is laying the script out as markdown
   | 'formatting'
   // The utility model is suggesting tags
@@ -48,6 +53,10 @@ const STAGE_FRACTION: Record<ImportStage, number> = {
   // fill the bar to the same point rather than one following the other
   voicing: 0.65,
   splitting: 0.65,
+  // The clean-up pass (story 8.19) runs its own three stages over an example
+  // already in the corpus, so it starts where an import has already got to
+  retitling: 0.35,
+  sectioning: 0.65,
   formatting: 0.8,
   tagging: 0.9,
   done: 1,
@@ -61,6 +70,8 @@ const STAGE_LABEL: Record<ImportStage, string> = {
   saved: 'Saved to corpus',
   voicing: 'Rewriting into direct address',
   splitting: 'Splitting into sections',
+  retitling: 'Choosing a title',
+  sectioning: 'Dividing into sections',
   formatting: 'Formatting as markdown',
   tagging: 'Suggesting tags',
   done: 'Imported',
@@ -79,9 +90,12 @@ export function importStageFraction(stage: ImportStage): number {
   return STAGE_FRACTION[stage]
 }
 
-// Pure: what this file is doing right now, for the meter row
-export function describeImportStage(stage: ImportStage): string {
-  return STAGE_LABEL[stage]
+// Pure: what this file is doing right now, for the meter row. Only the
+// terminal label varies: an import ends with a file imported, while the
+// clean-up pass (story 8.19) ends with an example already in the corpus
+// tidied, and nothing was imported at all.
+export function describeImportStage(stage: ImportStage, doneLabel = STAGE_LABEL.done): string {
+  return stage === 'done' ? doneLabel : STAGE_LABEL[stage]
 }
 
 // Pure: the queue a file selection starts as. Paths arrive from the file
@@ -164,9 +178,50 @@ export function summarizeImportProgress(
   return summary
 }
 
-// Pure: the progress line above the rows, while files are still moving
-export function describeImportProgress(summary: ImportProgressSummary): string {
-  return `${summary.settled} of ${summary.total} ${summary.total === 1 ? 'file' : 'files'}`
+// What the rows are counted in: files for an import, examples for the
+// clean-up pass that reuses the meter
+export interface ProgressNoun {
+  one: string
+  many: string
+}
+
+// What the meter says it is a meter of. The rows and the stages are the same
+// either way — a file being imported and an example being cleaned up both sit
+// on the same utility-model requests — so only the wording changes.
+export interface ProgressMeterLabels {
+  region: string
+  busy: string
+  finished: string
+  // The terminal row label: what a row that got all the way through is
+  done: string
+  track: string
+  noun: ProgressNoun
+}
+
+export const IMPORT_PROGRESS_LABELS: ProgressMeterLabels = {
+  region: 'Import progress',
+  busy: 'Importing',
+  finished: 'Import complete',
+  done: 'Imported',
+  track: 'Files processed',
+  noun: { one: 'file', many: 'files' }
+}
+
+export const CLEANUP_PROGRESS_LABELS: ProgressMeterLabels = {
+  region: 'Clean-up progress',
+  busy: 'Cleaning up',
+  finished: 'Clean-up complete',
+  done: 'Cleaned up',
+  track: 'Examples processed',
+  noun: { one: 'example', many: 'examples' }
+}
+
+// Pure: the progress line above the rows, while the rows are still moving
+export function describeImportProgress(
+  summary: ImportProgressSummary,
+  noun: ProgressNoun = IMPORT_PROGRESS_LABELS.noun
+): string {
+  return `${summary.settled} of ${summary.total} ${summary.total === 1 ? noun.one : noun.many}`
 }
 
 // Pure: how a finished import reads back. Folder imports routinely pass files

@@ -11,6 +11,8 @@ import exampleTaggingPrompt from '../prompts/example-tagging.txt?raw'
 import importFormattingPrompt from '../prompts/import-formatting.txt?raw'
 import directAddressPrompt from '../prompts/direct-address.txt?raw'
 import transcriptSplitPrompt from '../prompts/transcript-split.txt?raw'
+import exampleSectioningPrompt from '../prompts/example-sectioning.txt?raw'
+import exampleTitlePrompt from '../prompts/example-title.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -358,6 +360,19 @@ export function buildDirectAddressPrompt(): string {
 // survived before storing the result.
 export function buildTranscriptSplitPrompt(title: string): string {
   return transcriptSplitPrompt.replace('{title}', () => title)
+}
+
+// Dividing a script already in the corpus into sections: the headings and the
+// specs are the model's to decide, the script's words are not. The caller
+// verifies the words survived before storing the result.
+export function buildExampleSectioningPrompt(title: string): string {
+  return withImportInstructions(exampleSectioningPrompt.replace('{title}', () => title))
+}
+
+// Naming a script whose title is still the name of the file it arrived in.
+// Nothing but the title is asked for, so nothing but the title can change.
+export function buildExampleTitlePrompt(title: string): string {
+  return withImportInstructions(exampleTitlePrompt.replace('{title}', () => title))
 }
 
 export function getScriptRefinementPrompt(instruction: string, structure?: ScriptFsTree): string {

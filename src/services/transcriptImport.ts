@@ -90,20 +90,32 @@ export function parseTranscriptSplit(text: string): TranscriptSplit | null {
   return { title, sections }
 }
 
+// Pure: whether a split found real stages and gave each one a spec and a
+// body. Shared with the clean-up pass (story 8.19), which asks the same shape
+// of a script already in the corpus and so wants the same structural checks —
+// only how many of the words are allowed to go differs between them.
+export function isWellFormedSplit({ sections }: TranscriptSplit): boolean {
+  if (sections.length < MIN_SECTIONS || sections.length > MAX_SECTIONS) return false
+  if (sections.some(section => section.title === '' || section.prompt === '')) return false
+  return sections.every(section => countWords(section.content) >= MIN_SECTION_WORDS)
+}
+
+// Pure: how many words a split holds across its sections, headings and specs
+// aside — those are the split's own, not the material's
+export function splitWordCount({ sections }: TranscriptSplit): number {
+  return sections.reduce((total, section) => total + countWords(section.content), 0)
+}
+
 // Pure: whether a split may replace the imported transcript. It must have
 // found real stages, given each one a spec and a body, and kept the session's
 // words rather than summarising them.
 export function isUsableSplit(transcript: string, split: TranscriptSplit): boolean {
-  const { sections } = split
-  if (sections.length < MIN_SECTIONS || sections.length > MAX_SECTIONS) return false
-  if (sections.some(section => section.title === '' || section.prompt === '')) return false
-  if (sections.some(section => countWords(section.content) < MIN_SECTION_WORDS)) return false
+  if (!isWellFormedSplit(split)) return false
 
   const transcriptWords = countWords(transcript)
   if (transcriptWords === 0) return false
 
-  const splitWords = sections.reduce((total, section) => total + countWords(section.content), 0)
-  const ratio = splitWords / transcriptWords
+  const ratio = splitWordCount(split) / transcriptWords
   return ratio >= MIN_RETAINED_WORD_RATIO && ratio <= MAX_RETAINED_WORD_RATIO
 }
 

@@ -722,24 +722,42 @@ export function moveExampleToFolder(id: string, folder: string): string {
   return target
 }
 
-// Applies what the utility model made of an import (story 5.7). Rewritten
-// content invalidates the embedding computed from the original text, so it is
-// recomputed in the background the same way an import does.
+// What a utility pass may change about an example already in the corpus: the
+// tidy pass's tags and content (story 5.7), and the title and section specs a
+// transcript split (story 8.18) or a clean-up (story 8.19) settles on. An
+// absent field is one the pass had nothing to say about and leaves alone.
+export interface ExampleEnhancement {
+  title?: string
+  tags?: string[]
+  content?: string
+  sections?: ExampleSectionSpec[]
+}
+
+// Applies what the utility model made of an example. The embedding is
+// computed from the title, tags and body together, so any of the three
+// changing invalidates it and it is recomputed in the background the same way
+// an import does — retrieval keeps working off the old one until it lands.
 export function applyExampleEnhancement(
   id: string,
-  enhancement: { tags?: string[]; content?: string }
+  enhancement: ExampleEnhancement
 ): ExampleRecord | null {
   const example = getUserExamples().find(candidate => candidate.id === id)
   if (!example) return null
 
   const updated: ExampleRecord = {
     ...example,
+    title: enhancement.title?.trim() || example.title,
     tags: enhancement.tags ?? example.tags,
-    content: enhancement.content ?? example.content
+    content: enhancement.content ?? example.content,
+    sections: enhancement.sections ?? example.sections
   }
   const stored = saveUserExample(updated)
 
-  if (enhancement.content && enhancement.content !== example.content) {
+  if (
+    stored.title !== example.title ||
+    stored.content !== example.content ||
+    stored.tags.join(',') !== example.tags.join(',')
+  ) {
     void attachEmbedding(stored)
   }
 
@@ -747,26 +765,12 @@ export function applyExampleEnhancement(
 }
 
 // Replaces a transcript import with its split: the sectioned markdown as the
-// body, the per-section specs as metadata, and the title the split settled on.
-// The body has changed, so the embedding computed from the raw transcript is
-// recomputed the same way an import does.
+// body, the per-section specs as metadata, and the title the split settled on
 export function applyTranscriptSplit(
   id: string,
   split: { title: string; content: string; sections: ExampleSectionSpec[] }
 ): ExampleRecord | null {
-  const example = getUserExamples().find(candidate => candidate.id === id)
-  if (!example) return null
-
-  const updated: ExampleRecord = {
-    ...example,
-    title: split.title.trim() || example.title,
-    content: split.content,
-    sections: split.sections
-  }
-  saveUserExample(updated)
-  void attachEmbedding(updated)
-
-  return updated
+  return applyExampleEnhancement(id, split)
 }
 
 // Every tag in use across the corpus, most-used first — the vocabulary the

@@ -2106,7 +2106,7 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   color: var(--ink-muted);
 }
 
-.example-import .import-meter-header p {
+.import-meter-header p {
   margin: 0;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
@@ -2463,6 +2463,51 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
 
 .example-folder > header label.radio-field input[type="radio"] {
   accent-color: var(--accent);
+}
+
+/* The clean-up pass over the folder, alongside the folder's own actions.
+   Offered only where there is something for it to do, so it carries the
+   count rather than a bare verb. */
+.example-folder-cleanup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.example-folder-cleanup:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.example-folder-cleanup:disabled {
+  opacity: 0.5;
+}
+
+.example-folder-cleanup-help {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+/* The clean-up meter and its closing line sit between the folder's header
+   and its examples, where the work is happening */
+.example-folder .import-meter {
+  margin-top: 0.75rem;
+}
+
+.example-cleanup-result {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--accent);
 }
 
 .example-folder-delete {

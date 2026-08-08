@@ -1,8 +1,23 @@
 import { useReducer, useState } from 'react'
-import { Check, FileText, FolderOpen, Pencil, Trash2, Wand2, X } from 'lucide-react'
+import {
+  Check,
+  FileText,
+  FolderOpen,
+  Pencil,
+  Sparkles,
+  Trash2,
+  Wand2,
+  X
+} from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import { exampleFolder, parseTags, UNFILED_FOLDER } from '../services/exampleCorpus'
 import { needsDirectAddress } from '../services/importAssist'
+import { cleanupJobsFor } from '../services/exampleCleanup'
+import {
+  CLEANUP_PROGRESS_LABELS,
+  type ImportFileProgress
+} from '../services/importProgress'
+import { ImportProgressMeter } from './ImportProgressMeter'
 import {
   canonicalizeTags,
   customTagsIn,
@@ -199,17 +214,17 @@ const FolderName = ({ folder, headingId, onRenamed }: FolderNameProps) => {
   )
 }
 
-// The section files a transcript import was split into, addressed the way the
-// script filesystem addresses them. Only examples that came from a transcript
-// carry specs, so everything else renders without it.
+// The section files an example was divided into — by a transcript import
+// (story 8.18) or by the clean-up pass (story 8.19) — addressed the way the
+// script filesystem addresses them. An example that has never been divided
+// carries no specs, and renders without this.
 const ExampleSectionList = ({ example }: { example: ExampleRecord }) => {
   const tree = buildExampleFs(example)
 
   return (
     <details className="example-sections">
       <summary>
-        {tree.sections.length} {tree.sections.length === 1 ? 'section' : 'sections'} from
-        the transcript
+        {tree.sections.length} {tree.sections.length === 1 ? 'section' : 'sections'}
       </summary>
       <ol>
         {tree.sections.map(section => (
@@ -236,6 +251,13 @@ interface ExampleFolderSectionProps {
   selectionCounts: Record<string, number>
   // The example being rewritten into direct address right now, if any
   rewritingExampleId: string | null
+  // The rows of the clean-up run showing in this folder, empty in every
+  // folder the last run did not touch, and the line it finished on
+  cleanupFiles: ImportFileProgress[]
+  cleanupNote: string | null
+  // Whether a clean-up is running anywhere on the page: they go one at a
+  // time, so the buttons close everywhere while one is out
+  cleanupRunning: boolean
   onActivated: (folder: string) => void
   onFolderRenamed: (from: string, to: string) => void
   onFolderDeleted: (folder: string) => void
@@ -243,6 +265,8 @@ interface ExampleFolderSectionProps {
   onDetailsSaved: (id: string, details: { tags: string[]; folder: string }) => void
   onOpenAsScript: (example: ExampleRecord) => void
   onRewriteExample: (example: ExampleRecord) => void
+  onCleanUpFolder: (folder: string, examples: ExampleRecord[]) => void
+  onCleanUpExample: (folder: string, example: ExampleRecord) => void
 }
 
 // One folder of user examples: which folder is grounding generation is a
@@ -256,15 +280,24 @@ export const ExampleFolderSection = ({
   active,
   selectionCounts,
   rewritingExampleId,
+  cleanupFiles,
+  cleanupNote,
+  cleanupRunning,
   onActivated,
   onFolderRenamed,
   onFolderDeleted,
   onExampleDeleted,
   onDetailsSaved,
   onOpenAsScript,
-  onRewriteExample
+  onRewriteExample,
+  onCleanUpFolder,
+  onCleanUpExample
 }: ExampleFolderSectionProps) => {
   const words = examples.reduce((total, example) => total + countWords(example.content), 0)
+  // The examples here with something for the clean-up pass to do. Offered
+  // only where there is work: a folder of properly titled, sectioned and
+  // tagged scripts has nothing to gain from a round of requests.
+  const untidy = examples.filter(example => cleanupJobsFor(example).length > 0)
 
   return (
     <section className="example-folder" aria-labelledby={headingId} data-active={active}>
@@ -294,6 +327,18 @@ export const ExampleFolderSection = ({
           />
           <span>{active ? 'Used for generation' : 'Use for generation'}</span>
         </label>
+        {untidy.length > 0 && (
+          <button
+            type="button"
+            className="example-folder-cleanup"
+            disabled={cleanupRunning}
+            onClick={() => onCleanUpFolder(folder, untidy)}
+            aria-describedby={`${headingId}_cleanup_help`}
+          >
+            <Sparkles size={14} />
+            {untidy.length === 1 ? 'Clean up 1 example' : `Clean up ${untidy.length} examples`}
+          </button>
+        )}
         <button
           type="button"
           className="example-folder-delete"
@@ -303,6 +348,23 @@ export const ExampleFolderSection = ({
           Delete folder
         </button>
       </header>
+
+      {untidy.length > 0 && (
+        <p className="example-folder-cleanup-help" id={`${headingId}_cleanup_help`}>
+          The utility model names the scripts still titled after the file they
+          arrived in, divides the ones with no sections into sections with a
+          spec each, and tags the ones tagged before the standard vocabulary
+          existed. It leaves the words of every script alone.
+        </p>
+      )}
+
+      <ImportProgressMeter files={cleanupFiles} labels={CLEANUP_PROGRESS_LABELS} />
+
+      {cleanupNote && (
+        <p className="example-cleanup-result" role="status" aria-live="polite">
+          {cleanupNote}
+        </p>
+      )}
 
       {examples.length === 0 ? (
         <p className="example-folder-empty">
@@ -332,6 +394,20 @@ export const ExampleFolderSection = ({
                 />
               </div>
               <div className="example-actions">
+                {/* Same pass as the folder's button, over this example
+                    alone, and shown on the same terms: only where one of
+                    its three jobs has something to do */}
+                {cleanupJobsFor(example).length > 0 && (
+                  <button
+                    onClick={() => onCleanUpExample(folder, example)}
+                    disabled={cleanupRunning}
+                    aria-label={`Clean up ${example.title}`}
+                    type="button"
+                  >
+                    <Sparkles size={16} />
+                    Clean up
+                  </button>
+                )}
                 {/* Offered only where there is something to rewrite: an
                     example that already speaks to the listener has nothing
                     for the pass to do */}

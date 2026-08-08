@@ -5,7 +5,13 @@
 // hypnosis system prompt or the example corpus, and the model behind it is
 // the small cheap one chosen in settings.
 
-export type UtilityJob = 'tagging' | 'formatting' | 'voicing' | 'transcript'
+export type UtilityJob =
+  | 'tagging'
+  | 'formatting'
+  | 'voicing'
+  | 'transcript'
+  | 'sectioning'
+  | 'retitling'
 
 export interface UtilityCompletionRequest {
   job: UtilityJob
@@ -32,5 +38,7 @@ export const UTILITY_JOB_LABELS: Record<UtilityJob, string> = {
   tagging: 'Tagging',
   formatting: 'Markdown formatting',
   voicing: 'Direct address',
-  transcript: 'Transcript split'
+  transcript: 'Transcript split',
+  sectioning: 'Sectioning',
+  retitling: 'Retitling'
 }
