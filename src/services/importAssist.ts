@@ -94,9 +94,11 @@ export function stripCodeFence(text: string): string {
   return (fenced ? fenced[1] : trimmed).trim()
 }
 
-// The prose of a script, ignoring heading lines, as a word count. Headings
-// are the one thing formatting is allowed to add.
-function bodyWordCount(text: string): number {
+// Pure: the prose of a script, ignoring heading lines, as a word count.
+// Headings are the one thing formatting is allowed to add — and the one thing
+// the clean-up pass's sectioning (story 8.19) adds too, so both passes measure
+// what they must not lose the same way.
+export function bodyWordCount(text: string): number {
   return text
     .split('\n')
     .filter(line => !HEADING_LINE.test(line))

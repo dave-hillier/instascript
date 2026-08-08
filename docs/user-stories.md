@@ -590,6 +590,25 @@ Acceptance criteria:
 - With no provider configured, the import still happens and the status line says splitting was unavailable
 - A split example lists its sections, each with its virtual filesystem path, word count and spec
 
+### 8.19 Clean up the examples I already collected [Implemented]
+
+As a user with a corpus collected over time, I want a clean-up button that titles, sections and tags the examples already in it, so that material imported before a pass existed — or imported in a hurry — is as findable and as useful to generation as material imported today.
+
+Notes: the tidy pass (5.7) only ever ran on the way in, and only over what an import happened to need at the time. What is left behind is scripts still titled after the file they arrived in, walls of prose with no sections a retrieval prompt can address, and tags from before the standard vocabulary (8.17). Clean up is the same kind of work done on demand, from the folder header (over everything in the folder that has something to gain) or from one example's row.
+
+Three jobs run in the order they depend on each other — retitle, then section with the title the script now has, then tag with the section headings in view — and each is offered only where there is something to do, so a folder of properly titled, sectioned and tagged scripts is never offered the button and never costs a request. The checks are the point: a title reply longer than a title, or a sectioning that summarised or padded the script, is discarded and that part of the example is left exactly as it was. Sectioning reuses the transcript split's parse and its structural checks (8.18) but holds the words to a much narrower band — a transcript legitimately loses speaker labels and the client's replies, whereas a script already written has nothing to lose. Tagging merges rather than replaces: the model's standard labels lead, and the user's own topic tags are kept behind them.
+
+Acceptance criteria:
+- A clean-up button sits in each folder's header, carrying the number of examples in that folder with something to gain, and on the row of each of those examples
+- Neither button appears where the pass has nothing to do, and no request is spent finding that out
+- Retitling only touches a title still showing the marks of the file it arrived in — an extension, an ordering prefix, underscores or a slug's hyphens, a whole first line of prose, or no capital anywhere
+- Sectioning gives an example the `## ` headings and the `> ` specs a generated script has, including for an example that already had headings but no specs
+- Every word of the script survives sectioning; a reply that summarised or padded it is discarded and the example keeps what it had
+- Tagging brings an example tagged before the standard vocabulary up to it, keeping the topic tags it already carried
+- The run reports through the import meter, in the folder it is running in, naming the request each example is sitting on
+- A failed request leaves that job undone and the other two running; with no provider configured nothing is changed and the status line says so
+- The title, tags and body all feed the example's embedding, so any of them changing has it recomputed
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]

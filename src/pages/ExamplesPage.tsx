@@ -35,6 +35,15 @@ import {
   rewriteForDirectAddress,
   type ImportAssistOutcome
 } from '../services/importAssist'
+import {
+  cleanUpExample,
+  createCleanupProgress,
+  describeCleanupOutcome,
+  EMPTY_CLEANUP_OUTCOME,
+  isEmptyCleanup,
+  recordCleanup,
+  type CleanupOutcome
+} from '../services/exampleCleanup'
 import { adoptExampleAsScript } from '../services/exampleToScript'
 import {
   describePromotableScript,
@@ -105,6 +114,17 @@ type SplitState =
   | { status: 'unavailable' }
   | { status: 'finished'; outcome: TranscriptImportOutcome; model: string }
 
+// The clean-up pass (story 8.19) over examples already in the corpus. It runs
+// one folder at a time and reports through the import meter, so what is held
+// here is which folder's meter is on screen, whether it is still going, and
+// the line it finished on.
+type CleanupState = {
+  folder: string | null
+  running: boolean
+  files: ImportFileProgress[]
+  note: string | null
+}
+
 type ExamplesState = {
   examples: ExampleRecord[]
   importCount: number
@@ -137,6 +157,7 @@ type ExamplesState = {
   promotion: PromotionState
   rewrite: RewriteState
   split: SplitState
+  cleanup: CleanupState
 }
 
 type ExamplesAction =
@@ -165,6 +186,9 @@ type ExamplesAction =
   | { type: 'EXAMPLE_REWRITE_FINISHED'; example: ExampleRecord | null; note: string }
   | { type: 'TRANSCRIPT_SPLIT_UNAVAILABLE' }
   | { type: 'TRANSCRIPT_SPLIT_FINISHED'; outcome: TranscriptImportOutcome; model: string }
+  | { type: 'CLEANUP_STARTED'; folder: string; files: ImportFileProgress[] }
+  | { type: 'CLEANUP_STAGED'; id: string; stage: ImportStage }
+  | { type: 'CLEANUP_FINISHED'; note: string }
 
 const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
   examples.filter(example => example.source === 'user')
@@ -227,6 +251,29 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
           note: action.note,
           exampleId: action.exampleId
         })
+      }
+    case 'CLEANUP_STARTED':
+      return {
+        ...state,
+        cleanup: {
+          folder: action.folder,
+          running: true,
+          files: action.files,
+          note: null
+        }
+      }
+    case 'CLEANUP_STAGED':
+      return {
+        ...state,
+        cleanup: {
+          ...state.cleanup,
+          files: advanceImportFile(state.cleanup.files, action.id, action.stage)
+        }
+      }
+    case 'CLEANUP_FINISHED':
+      return {
+        ...state,
+        cleanup: { ...state.cleanup, running: false, note: action.note }
       }
     case 'EXAMPLE_ASSISTED': {
       const assisted = action.example
@@ -508,7 +555,8 @@ export const ExamplesPage = () => {
       assist: { status: 'idle' },
       promotion: { status: 'idle' },
       rewrite: { runningId: null, note: null },
-      split: { status: 'idle' }
+      split: { status: 'idle' },
+      cleanup: { folder: null, running: false, files: [], note: null }
     })
   )
   const importSummary = summarizeImportProgress(state.importFiles, state.importIgnored)
@@ -764,6 +812,51 @@ export const ExamplesPage = () => {
       note: updated
         ? `${service.model} rewrote "${updated.title}" into direct address.`
         : `"${example.title}" is no longer in the corpus.`
+    })
+  }
+
+  // Story 8.19: the tidy pass, run on demand over material already in the
+  // corpus rather than only on the way in. The examples are usable as they
+  // stand; this only improves them, so an unreachable model or an unusable
+  // reply leaves each one exactly as it was.
+  const handleCleanUp = async (folder: string, targets: ExampleRecord[]) => {
+    if (state.cleanup.running || targets.length === 0) return
+    const files = createCleanupProgress(targets)
+    dispatch({ type: 'CLEANUP_STARTED', folder, files })
+
+    const service = createUtilityService()
+    if (!service.isLive) {
+      dispatch({
+        type: 'CLEANUP_FINISHED',
+        note: 'Cleaning up needs a configured provider — the mock cannot title, section or tag a script.'
+      })
+      return
+    }
+
+    const knownTags = getKnownTags()
+    let outcome: CleanupOutcome = EMPTY_CLEANUP_OUTCOME
+    // Sequential for the same reason the import passes are: a folder can be
+    // dozens of examples, and a queue of parallel requests to a rate-limited
+    // key fails more of them than it finishes sooner
+    for (const example of targets) {
+      const cleanup = await cleanUpExample(example, service, knownTags, {
+        onJobStarted: job => dispatch({ type: 'CLEANUP_STAGED', id: example.id, stage: job })
+      })
+      if (!isEmptyCleanup(cleanup)) {
+        dispatch({
+          type: 'EXAMPLE_ASSISTED',
+          example: applyExampleEnhancement(example.id, cleanup)
+        })
+      }
+      outcome = recordCleanup(outcome, cleanup)
+      dispatch({ type: 'CLEANUP_STAGED', id: example.id, stage: 'done' })
+    }
+
+    dispatch({
+      type: 'CLEANUP_FINISHED',
+      note:
+        describeCleanupOutcome(outcome, service.model) ||
+        `${service.model} found nothing to change.`
     })
   }
 
@@ -1069,6 +1162,9 @@ export const ExamplesPage = () => {
             active={folder === state.activeFolder}
             selectionCounts={selectionCounts}
             rewritingExampleId={state.rewrite.runningId}
+            cleanupFiles={state.cleanup.folder === folder ? state.cleanup.files : []}
+            cleanupNote={state.cleanup.folder === folder ? state.cleanup.note : null}
+            cleanupRunning={state.cleanup.running}
             onActivated={handleFolderActivated}
             onFolderRenamed={handleFolderRenamed}
             onFolderDeleted={handleFolderDelete}
@@ -1077,6 +1173,12 @@ export const ExamplesPage = () => {
             onOpenAsScript={handleOpenAsScript}
             onRewriteExample={example => {
               void handleRewriteExample(example)
+            }}
+            onCleanUpFolder={(name, untidy) => {
+              void handleCleanUp(name, untidy)
+            }}
+            onCleanUpExample={(name, example) => {
+              void handleCleanUp(name, [example])
             }}
           />
         ))
