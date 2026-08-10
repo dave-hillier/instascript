@@ -2,10 +2,13 @@ Review the hypnosis script below against the numbered style rules. Judge each se
 
 {styleRules}
 
-For every "##" section of the script, output exactly one line in one of these two formats:
+For every "##" section of the script, output exactly one line in one of these three formats:
 
 VERDICT: <section title> | compliant
 VERDICT: <section title> | violates <rule numbers, comma-separated> | <one-line reason>
+VERDICT: <section title> | violates devices | <which device the section departs from, and how>
+
+Use the third form only where devices from the corpus are listed above, and only for a section that reads like the rules rather than like the corpus. Where a section departs from both a rule and a device, report the rule.
 
 Output only VERDICT lines, one per section, in script order — no preamble, no commentary, no code fences.
 

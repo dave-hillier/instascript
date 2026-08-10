@@ -24,6 +24,8 @@ export type ImportStage =
   | 'formatting'
   // The utility model is suggesting tags
   | 'tagging'
+  // The utility model is reading an example for the devices it uses
+  | 'devices'
   // Terminal
   | 'done'
   | 'skipped'
@@ -59,6 +61,9 @@ const STAGE_FRACTION: Record<ImportStage, number> = {
   sectioning: 0.65,
   formatting: 0.8,
   tagging: 0.9,
+  // The device pass (story 8.20) is one request per example, so a row is
+  // either waiting on it or done
+  devices: 0.5,
   done: 1,
   skipped: 1,
   failed: 1
@@ -74,6 +79,7 @@ const STAGE_LABEL: Record<ImportStage, string> = {
   sectioning: 'Dividing into sections',
   formatting: 'Formatting as markdown',
   tagging: 'Suggesting tags',
+  devices: 'Reading for devices',
   done: 'Imported',
   skipped: 'Skipped',
   failed: 'Failed'
@@ -213,6 +219,15 @@ export const CLEANUP_PROGRESS_LABELS: ProgressMeterLabels = {
   finished: 'Clean-up complete',
   done: 'Cleaned up',
   track: 'Examples processed',
+  noun: { one: 'example', many: 'examples' }
+}
+
+export const DEVICE_PROGRESS_LABELS: ProgressMeterLabels = {
+  region: 'Device extraction progress',
+  busy: 'Reading the corpus',
+  finished: 'Corpus read',
+  done: 'Read',
+  track: 'Examples read',
   noun: { one: 'example', many: 'examples' }
 }
 

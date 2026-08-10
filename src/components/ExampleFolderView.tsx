@@ -19,6 +19,8 @@ import {
   type ImportFileProgress
 } from '../services/importProgress'
 import { ImportProgressMeter } from './ImportProgressMeter'
+import { CorpusDevicePanel } from './CorpusDevicePanel'
+import type { CorpusDeviceSet } from '../services/corpusDevices'
 import {
   canonicalizeTags,
   customTagsIn,
@@ -393,6 +395,13 @@ interface ExampleFolderViewProps {
   // Whether a clean-up is running anywhere on the page: they go one at a
   // time, so the buttons close everywhere while one is out
   cleanupRunning: boolean
+  // The devices read out of this folder (story 8.20), what a run over it is
+  // doing now, and whether the folder has changed since they were read
+  devices: CorpusDeviceSet | null
+  devicesStale: boolean
+  deviceFiles: ImportFileProgress[]
+  deviceNote: string | null
+  devicesRunning: boolean
   onActivated: (folder: string) => void
   onFolderRenamed: (from: string, to: string) => void
   onFolderDeleted: (folder: string) => void
@@ -402,6 +411,8 @@ interface ExampleFolderViewProps {
   onRewriteExample: (example: ExampleRecord) => void
   onCleanUpFolder: (folder: string, examples: ExampleRecord[]) => void
   onCleanUpExample: (folder: string, example: ExampleRecord) => void
+  onDevicesExtracted: (folder: string, examples: ExampleRecord[]) => void
+  onDevicesCleared: (folder: string) => void
 }
 
 // The folder being browsed, opened out: its path, what it holds, and what can
@@ -419,6 +430,11 @@ export const ExampleFolderView = ({
   cleanupFiles,
   cleanupNote,
   cleanupRunning,
+  devices,
+  devicesStale,
+  deviceFiles,
+  deviceNote,
+  devicesRunning,
   onActivated,
   onFolderRenamed,
   onFolderDeleted,
@@ -427,7 +443,9 @@ export const ExampleFolderView = ({
   onOpenAsScript,
   onRewriteExample,
   onCleanUpFolder,
-  onCleanUpExample
+  onCleanUpExample,
+  onDevicesExtracted,
+  onDevicesCleared
 }: ExampleFolderViewProps) => {
   const words = examples.reduce((total, example) => total + countWords(example.content), 0)
   // The examples here with something for the clean-up pass to do. Offered
@@ -491,6 +509,19 @@ export const ExampleFolderView = ({
           {cleanupNote}
         </p>
       )}
+
+      <CorpusDevicePanel
+        folder={folder}
+        headingId={headingId}
+        examples={examples}
+        devices={devices}
+        stale={devicesStale}
+        files={deviceFiles}
+        note={deviceNote}
+        running={devicesRunning}
+        onExtract={onDevicesExtracted}
+        onCleared={onDevicesCleared}
+      />
 
       {examples.length === 0 ? (
         <p className="example-folder-empty">

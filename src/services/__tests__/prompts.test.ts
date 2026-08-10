@@ -15,8 +15,14 @@ import {
   withGenerationSystemPrompt,
   buildStructureBlock,
   withStructureBlock,
-  buildExampleTaggingPrompt
+  buildExampleTaggingPrompt,
+  buildDeviceConsolidationPrompt,
+  buildDeviceExtractionPrompt,
+  formatDeviceObservations,
+  formatDevicesForPrompt,
+  getStyleRules
 } from '../prompts'
+import type { CorpusDevice } from '../corpusDevices'
 import { buildScriptFs, renderScriptFsTree } from '../scriptFs'
 import { buildLengthPlan } from '../scriptLength'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
@@ -681,5 +687,94 @@ describe('buildExampleTaggingPrompt (story 8.17)', () => {
 
   it('says so plainly when the corpus has no topic tags yet', () => {
     expect(buildExampleTaggingPrompt(['explicit'])).toContain('(none yet)')
+  })
+})
+
+describe('the corpus device supplement (story 8.20)', () => {
+  const devices: CorpusDevice[] = [
+    {
+      name: 'Counted descent',
+      instruction: 'Count down on the out-breath, a number to a breath.',
+      quote: 'ten … and down'
+    },
+    { name: 'Named return', instruction: 'Close by naming the room they came back to.' }
+  ]
+
+  it('contributes nothing at all for a corpus that was never read', () => {
+    expect(formatDevicesForPrompt([])).toBe('')
+  })
+
+  it('numbers the devices and quotes the corpus where it can', () => {
+    const block = formatDevicesForPrompt(devices)
+
+    expect(block).toContain('1. Counted descent — Count down on the out-breath')
+    expect(block).toContain('From the corpus: "ten … and down"')
+    expect(block).toContain('2. Named return')
+    // The device without one says nothing rather than quoting an empty string
+    expect(block.match(/From the corpus/g)).toHaveLength(1)
+  })
+
+  it('says which way a device and a rule resolve when they disagree', () => {
+    const block = formatDevicesForPrompt(devices)
+
+    expect(block).toContain('follow the device')
+    expect(block).toContain('follow the rule')
+  })
+
+  it('sits between the rules and the exemplars it describes', () => {
+    const prompt = getSystemPrompt() + formatDevicesForPrompt(devices) +
+      formatExamplesForPrompt([
+        { content: 'Body of Deep Rest', metadata: { id: 'ex-rest', title: 'Deep Rest' } }
+      ])
+
+    expect(prompt.indexOf('## Style rules')).toBeLessThan(
+      prompt.indexOf('## Devices from this corpus')
+    )
+    expect(prompt.indexOf('## Devices from this corpus')).toBeLessThan(
+      prompt.indexOf('## Examples')
+    )
+  })
+
+  it('is left out of a generation prompt when nothing has been read', () => {
+    expect(buildGenerationSystemPrompt(buildLengthPlan(), [])).toBe(getSystemPrompt())
+  })
+
+  it('tells the consolidation how much material it is looking at', () => {
+    const prompt = buildDeviceConsolidationPrompt(7)
+
+    expect(prompt).toContain('7 hypnosis scripts')
+    expect(prompt).toContain('at least two different scripts')
+    expect(prompt).not.toContain('{sources}')
+    expect(prompt).not.toContain('{recurrence}')
+    expect(prompt).not.toContain('{maxDevices}')
+    expect(buildDeviceExtractionPrompt()).not.toContain('{maxDevices}')
+  })
+
+  it('asks a corpus of one what defines it, since nothing there can recur', () => {
+    const prompt = buildDeviceConsolidationPrompt(1)
+
+    expect(prompt).toContain('one hypnosis script')
+    expect(prompt).toContain('only one script here')
+    expect(prompt).not.toContain('at least two different scripts')
+  })
+
+  it('pools the observations one script at a time', () => {
+    const observations = formatDeviceObservations([
+      { title: 'Deep Rest', devices: [devices[0]] },
+      { title: 'Waking Slowly', devices: [devices[1]] }
+    ])
+
+    expect(observations).toContain('### Script 1: Deep Rest')
+    expect(observations).toContain('DEVICE: Counted descent | Count down on the out-breath, a number to a breath. | ten … and down')
+    expect(observations).toContain('### Script 2: Waking Slowly')
+  })
+})
+
+describe('rules and corpus (story 8.20)', () => {
+  it('gives the corpus the register and the rules the requirements', () => {
+    const rules = getStyleRules()
+
+    expect(rules).toContain('## Rules and corpus')
+    expect(rules).toContain('the rule wins')
   })
 })
