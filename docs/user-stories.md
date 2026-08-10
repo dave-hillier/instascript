@@ -610,6 +610,29 @@ Acceptance criteria:
 - A failed request leaves that job undone and the other two running; with no provider configured nothing is changed and the status line says so
 - The title, tags and body all feed the example's embedding, so any of them changing has it recomputed
 
+### 8.20 Extract the devices my corpus writes with [Implemented]
+
+As a user whose corpus is the point of the app, I want what my scripts have in common extracted from them and stated to the model as plainly as the app's own style rules are, so that a generation sounds like my material rather than like the rulebook that was written before any of it existed.
+
+Notes: the corpus reaches generation as few-shot material — the exemplars are quoted in full and the model is left to infer what they share. Nothing states that inference anywhere, whereas the fourteen numbered style rules state their case very plainly indeed, and an instruction beats an inference. The style-review pass (8.5) then judged the finished script against the rules alone, pulling anything that had picked up the corpus's voice back towards them. Devices are the missing half of that pair: not more rules, but a description of the material, written down where it can compete.
+
+Extraction is a map and a reduce over the utility model (5.7): one request per example asking what devices that script uses — how it opens, how it hands the listener on, what it returns to, how it closes — then one request over the pooled answers asking which of them recur, because a device in one script is that script's and a device in five is the corpus's. What comes back is checked in code the way every other utility reply is: the line format, the field lengths, duplicate names, a cap of ten, and — the check that matters — whether the phrase offered to illustrate a device is really somewhere in the corpus. A supplement that illustrates the corpus with a line the corpus never contained is worse than one that does not illustrate itself at all, so an unverifiable quote is dropped and the device kept.
+
+The supplement is stored against the folder it was read from, so switching the folder that grounds generation switches it too, and it is read as each prompt is built, exactly as the standing instructions (5.9) are. Precedence is stated rather than left to be guessed, in the system prompt and in the block itself: the rules say what a script must contain and how it is laid out, the corpus says how it sounds, and where following a device would drop something a rule requires the rule wins.
+
+Acceptance criteria:
+- A Devices panel on each folder reads it on demand, naming how many scripts it will read, and nothing in the corpus is changed by the run
+- One request per script, then one over the pooled answers; the consolidation asks only for devices two or more of the scripts share
+- Each device is a name, an instruction written to somebody about to write in this style, and — where it can be verified — a phrase from the corpus
+- A quote that is not in the corpus is dropped and its device kept; a reply that answered with prose stores nothing and leaves any previous supplement alone
+- Scripts too short to hold a device are not read and cost no request
+- The devices are sent with the exemplars in every writing request of a run, between the style rules and the examples they describe
+- The style review judges against them as well as against the numbered rules, and can find a section wanting for reading like the rules instead of like the corpus
+- The system prompt states which way a rule and a device resolve when they disagree
+- The supplement belongs to its folder: switching folders switches it, and a corpus never read carries none and sends prompts exactly as they ship
+- A folder that has changed since it was read says so, and can be read again or cleared
+- The run reports through the import meter, naming the script each request is sitting on; with no provider configured nothing is stored and the status line says so
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]

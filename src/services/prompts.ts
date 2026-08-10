@@ -13,6 +13,8 @@ import directAddressPrompt from '../prompts/direct-address.txt?raw'
 import transcriptSplitPrompt from '../prompts/transcript-split.txt?raw'
 import exampleSectioningPrompt from '../prompts/example-sectioning.txt?raw'
 import exampleTitlePrompt from '../prompts/example-title.txt?raw'
+import deviceExtractionPrompt from '../prompts/device-extraction.txt?raw'
+import deviceConsolidationPrompt from '../prompts/device-consolidation.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -24,6 +26,14 @@ import type { ScriptFsTree } from './scriptFs'
 import { exampleLabel, mountExamples, renderScriptFsTree } from './scriptFs'
 import { describeStandardTagVocabulary, isStandardTag } from './standardTags'
 import { getJobInstructions } from './config'
+import {
+  formatDeviceLine,
+  getActiveCorpusDevices,
+  MAX_DEVICES,
+  MAX_DEVICES_PER_EXAMPLE,
+  MIN_SOURCES_FOR_RECURRENCE
+} from './corpusDevices'
+import type { CorpusDevice, DeviceObservation } from './corpusDevices'
 
 /**
  * Prompt generation. Pure apart from the standing instructions below, which
@@ -258,10 +268,20 @@ export function getStyleRules(): string {
 
 // The critique request for the style-review pass: the consolidated script
 // plus the system prompt's own style rules, asking for one strict
-// line-oriented verdict per section
+// line-oriented verdict per section.
+//
+// The corpus devices (story 8.20) are sent with the rules, because a pass
+// that judges only against the rules is a pass that pulls every script back
+// towards them — which is the drift the devices exist to counter. Judged
+// against both, a section can be found wanting for reading like the rulebook
+// instead of like the corpus.
 export function buildStyleCritiquePrompt(script: string): string {
   return styleCritiquePrompt
-    .replace('{styleRules}', () => withStyleInstructions(getStyleRules()))
+    .replace(
+      '{styleRules}',
+      () => withStyleInstructions(getStyleRules()) +
+        formatDevicesForPrompt(getActiveCorpusDevices())
+    )
     .replace('{script}', () => script)
 }
 
@@ -424,13 +444,98 @@ export function formatExamplesForPrompt(examples: ExampleScript[]): string {
     ).join('\n\n') + '\n'
 }
 
+// --- Corpus devices (story 8.20) -----------------------------------------
+// The supplement extracted from the corpus: what these scripts actually do,
+// stated as plainly as the style rules are stated. Exemplars are quoted in
+// full and left to speak for themselves, which is exactly the weakness — an
+// inference drawn from examples loses to an instruction written down. This is
+// the instruction the corpus never got to write.
+
+// Pure: the devices as a prompt block, or nothing at all when the corpus has
+// never been read for them. It goes between the rules and the exemplars: it
+// is about the exemplars, and it is what the rules do not say.
+export function formatDevicesForPrompt(devices: CorpusDevice[]): string {
+  if (devices.length === 0) return ''
+
+  const entries = devices
+    .map((device, index) => {
+      const quote = device.quote ? `\n   From the corpus: "${device.quote}"` : ''
+      return `${index + 1}. ${device.name} — ${device.instruction}${quote}`
+    })
+    .join('\n')
+
+  return '\n## Devices from this corpus\n\n' +
+    'These devices recur across the scripts this corpus is made of. They are ' +
+    'what the exemplars have in common, read out of them and written down. ' +
+    'Write with them: sounding like this corpus is the point of it being here.\n\n' +
+    entries +
+    '\n\nWhere a device differs from the wording, rhythm or register a numbered ' +
+    'rule above suggests, follow the device. Where following one would drop ' +
+    'something a rule requires, or reach for something a rule names to avoid, ' +
+    'follow the rule.\n'
+}
+
+// The extraction request, asked once per example. Neither set of standing
+// instructions (story 5.9) is appended: this job neither writes a script nor
+// takes material into the library — it reads what is already there, and an
+// instruction about how the user likes scripts written would bias the reading.
+export function buildDeviceExtractionPrompt(): string {
+  return deviceExtractionPrompt.replace('{maxDevices}', String(MAX_DEVICES_PER_EXAMPLE))
+}
+
+export function buildDeviceExtractionInput(title: string, content: string): string {
+  return `Title: ${title}\n\n${content}`
+}
+
+// What makes a device the corpus's rather than one script's: that another
+// script does it too. A corpus of one has no second script to agree with it,
+// so it is asked the only question it can answer — what defines this one.
+function describeRecurrence(sourceCount: number): string {
+  if (sourceCount < MIN_SOURCES_FOR_RECURRENCE) {
+    return 'There is only one script here, so give the devices that most ' +
+      'define how it is written, and merge any that are the same device ' +
+      'described twice.'
+  }
+  return 'Include a device only if the blocks above show it in at least two ' +
+    'different scripts. Where the same device is described in different ' +
+    'words, merge those descriptions into one line and name it once.'
+}
+
+// The consolidation request, asked once over the pooled observations
+export function buildDeviceConsolidationPrompt(sourceCount: number): string {
+  const sources = sourceCount === 1
+    ? 'one hypnosis script'
+    : `${sourceCount} hypnosis scripts`
+
+  return deviceConsolidationPrompt
+    .replace('{sources}', sources)
+    .replace('{recurrence}', () => describeRecurrence(sourceCount))
+    .replace('{maxDevices}', String(MAX_DEVICES))
+}
+
+// The pooled observations, one block per script. Titles are kept so the
+// consolidation can see that a device shows up in different scripts rather
+// than three times in one.
+export function formatDeviceObservations(observations: DeviceObservation[]): string {
+  return observations
+    .map(({ title, devices }, index) =>
+      `### Script ${index + 1}: ${title}\n\n` +
+      devices.map(formatDeviceLine).join('\n')
+    )
+    .join('\n\n')
+}
+
 // The one system message a whole generation run is sent with. Every request
 // that writes prose — the outline, each section, each rewrite — must carry the
 // identical string: it is both the shared cached prefix and what
 // normaliseConversationHistory collapses replayed history down to.
+// The devices (story 8.20) sit between the two: they describe the exemplars,
+// and they are read from settings as the prompt is built, like the standing
+// instructions, so every request in a run carries the identical string.
 export function buildGenerationSystemPrompt(plan: LengthPlan, examples: ExampleScript[]): string {
-  if (examples.length === 0) return getSystemPrompt(plan)
-  return getSystemPrompt(plan) + formatExamplesForPrompt(examples)
+  const devices = formatDevicesForPrompt(getActiveCorpusDevices())
+  if (examples.length === 0) return getSystemPrompt(plan) + devices
+  return getSystemPrompt(plan) + devices + formatExamplesForPrompt(examples)
 }
 
 // Examples are sent, never stored: one copy of the corpus per stored

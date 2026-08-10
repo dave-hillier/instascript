@@ -33,3 +33,8 @@ The script must be:
 12. Towards the beginning ensure there is some focus on breathwork. Periodically bring focus back to breathing and following.
 13. Create a state of disassociation to highten responsiveness to suggestions, the disconnect from their body and the feeling of automatically following suggestions.
 14. Avoid technical hypnosis terms such as dissociate, fractionation, feedback loop, etc. Aim to create these states rather than use the jargon.
+
+## Rules and corpus
+
+The rules above say what every script must contain and how it must be laid out. They do not describe how the writing should sound: that comes from the example scripts, and from any devices listed with them. Where the corpus phrases something differently from the way a rule's own wording suggests — its rhythm, its register, the words it reaches for — write it the way the corpus does. Where writing it that way would drop something a rule requires, or reach for something a rule names to avoid, the rule wins.
+

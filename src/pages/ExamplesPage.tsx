@@ -44,6 +44,17 @@ import {
   recordCleanup,
   type CleanupOutcome
 } from '../services/exampleCleanup'
+import {
+  areDevicesStale,
+  clearCorpusDevices,
+  getCorpusDevices,
+  saveCorpusDevices
+} from '../services/corpusDevices'
+import {
+  createDeviceProgress,
+  describeDeviceOutcome,
+  extractCorpusDevices
+} from '../services/deviceExtraction'
 import { adoptExampleAsScript } from '../services/exampleToScript'
 import {
   describePromotableScript,
@@ -127,6 +138,17 @@ type CleanupState = {
   note: string | null
 }
 
+// The device pass (story 8.20) over a folder's examples. What it finds is
+// stored against the folder and read back as folders are browsed, the same
+// way the selection counts are, so what is held here is only the run: whose
+// meter is on screen, whether it is still going, and the line it finished on.
+type DeviceState = {
+  folder: string | null
+  running: boolean
+  files: ImportFileProgress[]
+  note: string | null
+}
+
 // Which folder the listing is showing. Browsing a folder is not choosing it:
 // the folder generation draws on is `activeFolder`, and this is only where
 // the eye is — including on the bundled set, which is browsed but never
@@ -167,6 +189,7 @@ type ExamplesState = {
   rewrite: RewriteState
   split: SplitState
   cleanup: CleanupState
+  devices: DeviceState
 }
 
 type ExamplesAction =
@@ -200,6 +223,10 @@ type ExamplesAction =
   | { type: 'CLEANUP_STARTED'; folder: string; files: ImportFileProgress[] }
   | { type: 'CLEANUP_STAGED'; id: string; stage: ImportStage }
   | { type: 'CLEANUP_FINISHED'; note: string }
+  | { type: 'DEVICES_STARTED'; folder: string; files: ImportFileProgress[] }
+  | { type: 'DEVICES_STAGED'; id: string; stage: ImportStage }
+  | { type: 'DEVICES_FINISHED'; note: string }
+  | { type: 'DEVICES_CLEARED' }
 
 const userExamplesOf = (examples: ExampleRecord[]): ExampleRecord[] =>
   examples.filter(example => example.source === 'user')
@@ -293,6 +320,36 @@ const examplesReducer = (state: ExamplesState, action: ExamplesAction): Examples
       return {
         ...state,
         cleanup: { ...state.cleanup, running: false, note: action.note }
+      }
+    case 'DEVICES_STARTED':
+      return {
+        ...state,
+        devices: {
+          folder: action.folder,
+          running: true,
+          files: action.files,
+          note: null
+        }
+      }
+    case 'DEVICES_STAGED':
+      return {
+        ...state,
+        devices: {
+          ...state.devices,
+          files: advanceImportFile(state.devices.files, action.id, action.stage)
+        }
+      }
+    case 'DEVICES_FINISHED':
+      return {
+        ...state,
+        devices: { ...state.devices, running: false, note: action.note }
+      }
+    case 'DEVICES_CLEARED':
+      // The panel reads what is stored, so clearing needs no state of its
+      // own beyond taking the finished line down with the devices it described
+      return {
+        ...state,
+        devices: { folder: null, running: false, files: [], note: null }
       }
     case 'EXAMPLE_ASSISTED': {
       const assisted = action.example
@@ -556,7 +613,8 @@ export const ExamplesPage = () => {
       promotion: { status: 'idle' },
       rewrite: { runningId: null, note: null },
       split: { status: 'idle' },
-      cleanup: { folder: null, running: false, files: [], note: null }
+      cleanup: { folder: null, running: false, files: [], note: null },
+      devices: { folder: null, running: false, files: [], note: null }
     })
   )
   const importSummary = summarizeImportProgress(state.importFiles, state.importIgnored)
@@ -583,6 +641,12 @@ export const ExamplesPage = () => {
         : folders.includes(state.activeFolder)
           ? state.activeFolder
           : (folders[0] ?? null)
+  const viewedExamples = viewedFolder
+    ? userExamples.filter(example => exampleFolder(example) === viewedFolder)
+    : []
+  // The devices read out of the folder on screen (story 8.20), read back from
+  // storage as folders are browsed the same way the selection counts are
+  const viewedDevices = viewedFolder ? getCorpusDevices(viewedFolder) : null
   const railFolders = folders.map(folder => ({
     name: folder,
     count: userExamples.filter(example => exampleFolder(example) === folder).length,
@@ -876,6 +940,46 @@ export const ExamplesPage = () => {
     })
   }
 
+  // Story 8.20: reading a folder for the devices its scripts have in common.
+  // The corpus is unchanged by this — nothing here writes to an example — so
+  // a run that comes back with nothing usable leaves whatever supplement the
+  // folder already had exactly as it was.
+  const handleExtractDevices = async (folder: string, targets: ExampleRecord[]) => {
+    if (state.devices.running) return
+    const files = createDeviceProgress(targets)
+    if (files.length === 0) return
+    dispatch({ type: 'DEVICES_STARTED', folder, files })
+
+    const service = createUtilityService()
+    if (!service.isLive) {
+      dispatch({
+        type: 'DEVICES_FINISHED',
+        note: 'Reading the corpus needs a configured provider — the mock cannot read a script for its devices.'
+      })
+      return
+    }
+
+    const outcome = await extractCorpusDevices(folder, targets, service, {
+      onExampleStarted: id => dispatch({ type: 'DEVICES_STAGED', id, stage: 'devices' }),
+      // A script that gave nothing up — unreachable, or genuinely without a
+      // device the model could name — says so on its own row rather than
+      // reading as read
+      onExampleFinished: (id, found) =>
+        dispatch({ type: 'DEVICES_STAGED', id, stage: found > 0 ? 'done' : 'skipped' })
+    })
+    if (outcome.set) saveCorpusDevices(outcome.set)
+
+    dispatch({
+      type: 'DEVICES_FINISHED',
+      note: describeDeviceOutcome(outcome, service.model)
+    })
+  }
+
+  const handleClearDevices = (folder: string) => {
+    clearCorpusDevices(folder)
+    dispatch({ type: 'DEVICES_CLEARED' })
+  }
+
   // Corpus to library: the example is reconstructed as a script — an outline
   // and its sections — so everything the script page does works on it. The
   // script is a copy from here on; editing it never writes back.
@@ -1006,9 +1110,7 @@ export const ExamplesPage = () => {
             key={viewedFolder}
             folder={viewedFolder}
             headingId="example-folder-heading"
-            examples={userExamples.filter(
-              example => exampleFolder(example) === viewedFolder
-            )}
+            examples={viewedExamples}
             folders={folderOptions}
             active={viewedFolder === state.activeFolder}
             selectionCounts={selectionCounts}
@@ -1020,6 +1122,15 @@ export const ExamplesPage = () => {
               state.cleanup.folder === viewedFolder ? state.cleanup.note : null
             }
             cleanupRunning={state.cleanup.running}
+            devices={viewedDevices}
+            devicesStale={areDevicesStale(viewedDevices, viewedExamples)}
+            deviceFiles={
+              state.devices.folder === viewedFolder ? state.devices.files : []
+            }
+            deviceNote={
+              state.devices.folder === viewedFolder ? state.devices.note : null
+            }
+            devicesRunning={state.devices.running}
             onActivated={handleFolderActivated}
             onFolderRenamed={handleFolderRenamed}
             onFolderDeleted={handleFolderDelete}
@@ -1035,6 +1146,10 @@ export const ExamplesPage = () => {
             onCleanUpExample={(name, example) => {
               void handleCleanUp(name, [example])
             }}
+            onDevicesExtracted={(name, folderExamples) => {
+              void handleExtractDevices(name, folderExamples)
+            }}
+            onDevicesCleared={handleClearDevices}
           />
         ) : (
           <p className="example-nothing-yet">

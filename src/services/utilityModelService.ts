@@ -12,6 +12,10 @@ export type UtilityJob =
   | 'transcript'
   | 'sectioning'
   | 'retitling'
+  // Reading one example for the devices it uses, and consolidating what a
+  // whole folder's readings have in common (story 8.20)
+  | 'devices'
+  | 'deviceDigest'
 
 export interface UtilityCompletionRequest {
   job: UtilityJob
@@ -40,5 +44,7 @@ export const UTILITY_JOB_LABELS: Record<UtilityJob, string> = {
   voicing: 'Direct address',
   transcript: 'Transcript split',
   sectioning: 'Sectioning',
-  retitling: 'Retitling'
+  retitling: 'Retitling',
+  devices: 'Device extraction',
+  deviceDigest: 'Device consolidation'
 }

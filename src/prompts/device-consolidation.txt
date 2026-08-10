@@ -1,0 +1,13 @@
+You are given the devices found in {sources} from one writer's collection, one block per script. Say which devices the collection is characterised by — the ones that make these scripts recognisably each other's, rather than the ones that belong to a single script.
+
+Reply with at most {maxDevices} lines, most characteristic first, each in exactly this format:
+
+DEVICE: <name, at most eight words> | <one sentence, imperative, telling a writer how to use this device> | <one of the quotes given for it above, copied exactly>
+
+Rules:
+- Output the DEVICE lines only. No preamble, no numbering, no commentary, no code fences.
+- {recurrence}
+- Write the second field as an instruction to somebody about to write a script in this style — "Open on…", "Return to… every few paragraphs", "Close by…" — not as a report of what these scripts did.
+- Copy the third field from the material above, exactly as it is written there. Do not compose a new one; leave the field empty rather than invent a quote.
+- Leave out anything that would be true of hypnosis scripts in general. What is wanted is what this collection does that another collection would not.
+- Fewer, sharper lines are better than a full list. If only three devices genuinely stand out, give three.
