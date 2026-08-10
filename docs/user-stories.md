@@ -425,11 +425,12 @@ Acceptance criteria:
 ### 8.3 Diverse, budget-aware exemplar selection [Implemented]
 As a user, I want the app to pick a small set of *different* high-quality examples that fit the context budget, so that the model sees range rather than five variations of the same script.
 
-Notes: relevance-ranked candidates are filtered by greedy MMR-style diversity (token-overlap penalty against already-selected examples) and fitted to the token budget using actual example sizes. The examples that informed a generation are recorded on the conversation and shown on the script page.
+Notes: relevance-ranked candidates are filtered by greedy MMR-style diversity (token-overlap penalty against already-selected examples) and fitted to the token budget using actual example sizes. The examples that informed a generation are recorded on the conversation and shown on the script page. "Small set" is now literal: the count is capped at six rather than at whatever a 120K window holds (~twenty whole scripts). Few-shot style transfer flattens out after a handful of exemplars and the one nearest the instruction dominates (8.8), so the extra fourteen bought dilution and tokens on every prose request — and on a personal corpus of a few dozen scripts, taking twenty meant sending nearly the whole folder, which left ranking and diversity with nothing to decide. The context arithmetic remains as the safety valve: a long script still squeezes the count down towards the floor of three.
 
 Acceptance criteria:
 - Selected examples are deduplicated by similarity/tags, not just top-k
 - Selection respects the computed token budget using real example sizes
+- The count is capped well below what the context window would allow
 - The script page (or a debug view) can show which examples informed a generation
 
 ### 8.4 Outline-first generation [Implemented]

@@ -36,6 +36,12 @@ describe('getRecommendedExampleCount', () => {
     expect(withReserve).toBe(3)
   })
 
+  it('caps the count well below what the window would hold', () => {
+    // The window has room for roughly twenty whole scripts; the cap, not the
+    // arithmetic, is what decides the count for an ordinary script
+    expect(getRecommendedExampleCount(systemPrompt, 0, 0)).toBe(6)
+  })
+
   it('never drops below the minimum example count', () => {
     const count = getRecommendedExampleCount(
       systemPrompt,
