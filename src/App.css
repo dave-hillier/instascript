@@ -261,17 +261,22 @@ main form > div {
   padding: 0.625rem 0.75rem;
 }
 
-/* Keeps the submit button at the trailing edge on the line it wraps onto */
-main form > div > div:last-child {
+/* Keeps the submit button at the trailing edge of the row. Of-type rather
+   than last-child: the footer ends with a paragraph of its own */
+main form > div > div:last-of-type {
   margin-left: auto;
 }
 
-/* Composer footer, left side: the requested spoken length */
-main form > div > div:first-child {
+/* Composer footer, left side: the requested spoken length and the switches.
+   It gives way rather than pushing the submit button onto a line of its own,
+   wrapping within itself instead */
+main form > div > div:first-of-type {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.625rem;
+  min-width: 0;
 }
 
 main form label[for="target-length"] {
@@ -332,6 +337,40 @@ main form label.briefing-toggle input[type="checkbox"] {
   width: auto;
   margin: 0;
   accent-color: var(--accent);
+}
+
+/* Composer footer: how closely a generation follows the corpus (story 8.21) */
+main form label.fidelity-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+main form label.fidelity-choice select {
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* Its own line beneath the footer's controls: the difference between the two
+   settings is worth a sentence, and a sentence does not fit beside them */
+main form .fidelity-help {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2603,6 +2642,19 @@ article[data-section-titles="hidden"] section:focus-within > header .section-act
   font-size: 0.8125rem;
   line-height: 1.5;
   color: var(--ink-muted);
+}
+
+/* What a device is bound to, and the same move without it (story 8.21) */
+.example-device-bound,
+.example-device-generic {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.example-device-bound {
+  font-family: var(--font-path);
 }
 
 /* ------------------------------------------------------------------ */

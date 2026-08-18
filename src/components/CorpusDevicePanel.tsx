@@ -1,7 +1,7 @@
 import { ScanText, Trash2 } from 'lucide-react'
 import type { ExampleRecord } from '../types/example'
 import type { CorpusDeviceSet } from '../services/corpusDevices'
-import { deviceSourcesIn } from '../services/corpusDevices'
+import { boundTerms, deviceSourcesIn } from '../services/corpusDevices'
 import { describeDeviceStaleness } from '../services/deviceExtraction'
 import {
   DEVICE_PROGRESS_LABELS,
@@ -91,8 +91,23 @@ export const CorpusDevicePanel = ({
           ? 'Nothing here is long enough to read for devices yet.'
           : devices
             ? 'These are sent with the exemplars every time this folder grounds a generation, and the style review judges against them as well as against the rules.'
-            : 'The utility model reads each script for the moves it makes, then says which of them this collection has in common. What it finds is sent with the exemplars, so the style the corpus is in is stated rather than left to be inferred.'}
+            : 'The utility model reads each script for the moves it makes, then says which of them this collection has in common, and which of those are built on words belonging to this collection alone. What it finds is sent with the exemplars, so the style the corpus is in is stated rather than left to be inferred.'}
       </p>
+
+      {devices && (
+        <p className="example-devices-help">
+          {devices.generalised
+            ? boundTerms(devices.devices).length > 0
+              ? 'A generation set to Generic sends the moves marked below without ' +
+                'this collection\u2019s own words, and leaves out any move that ' +
+                'could not be said without them.'
+              : 'Nothing here is particular to this collection, so a generation set ' +
+                'to Generic sends these devices exactly as a faithful one does.'
+            : 'These were read before the collection\u2019s own names and trigger ' +
+              'words were marked. Read again to have a Generic generation drop ' +
+              'them rather than infer them.'}
+        </p>
+      )}
 
       {staleness && (
         <p className="example-devices-stale" role="status">
@@ -116,6 +131,16 @@ export const CorpusDevicePanel = ({
               <p className="example-device-instruction">{device.instruction}</p>
               {device.quote && (
                 <blockquote className="example-device-quote">{device.quote}</blockquote>
+              )}
+              {device.bound && device.bound.length > 0 && (
+                <p className="example-device-bound">
+                  This collection&rsquo;s own: {device.bound.join(', ')}
+                </p>
+              )}
+              {device.generic && (
+                <p className="example-device-generic">
+                  Generic: {device.generic.name} &mdash; {device.generic.instruction}
+                </p>
               )}
             </li>
           ))}

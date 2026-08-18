@@ -1,15 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
+  areActiveDevicesGeneralised,
   areDevicesStale,
+  boundTerms,
   clearCorpusDevices,
+  containsTerm,
   corpusSignature,
   CORPUS_DEVICES_KEY,
+  devicesForFidelity,
   deviceSourcesIn,
   formatDeviceLine,
   getCorpusDevices,
   MAX_DEVICES,
   parseDeviceLines,
   parseDeviceSets,
+  parseGenericLines,
+  parseStyleFidelity,
   saveCorpusDevices,
   verifyDeviceQuotes,
   type CorpusDevice,
@@ -186,7 +192,8 @@ describe('areDevicesStale', () => {
     model: 'fake-mini',
     generatedAt: 1,
     sources: 1,
-    signature
+    signature,
+    generalised: false
   })
 
   it('is false while the folder is as it was when it was read', () => {
@@ -271,7 +278,8 @@ describe('stored per folder', () => {
     model: 'fake-mini',
     generatedAt: 5,
     sources: 2,
-    signature: '2:abc'
+    signature: '2:abc',
+    generalised: false
   })
 
   it('keeps each folder\'s devices apart', () => {
@@ -302,6 +310,150 @@ describe('stored per folder', () => {
     saveCorpusDevices(set('  '))
 
     expect(getCorpusDevices('Unfiled')?.devices).toEqual([device()])
+  })
+})
+
+// Story 8.21: what in a device belongs to the collection rather than to the
+// craft, and what a generation gets when it asks for the move without it
+describe('parseGenericLines', () => {
+  const devices: CorpusDevice[] = [
+    device(),
+    {
+      name: 'Abattoir drop',
+      instruction: 'Say "abattoir" to drop them where the last count left off.',
+      quote: 'abattoir … and down you go'
+    }
+  ]
+
+  it('marks the device and keeps the move said without the word', () => {
+    const marked = parseGenericLines(
+      'GENERIC: Abattoir drop | Cue word drop | Say the cue word to drop them ' +
+      'where the last count left off. | abattoir',
+      devices
+    )
+
+    expect(marked[0]).toEqual(device())
+    expect(marked[1].bound).toEqual(['abattoir'])
+    expect(marked[1].generic).toEqual({
+      name: 'Cue word drop',
+      instruction: 'Say the cue word to drop them where the last count left off.'
+    })
+  })
+
+  it('drops a line naming a device that is not there', () => {
+    const marked = parseGenericLines(
+      'GENERIC: Ocean drift | Plain drift | Drift them out. | ocean',
+      devices
+    )
+
+    expect(marked).toEqual(devices)
+  })
+
+  it('drops a word the device it was claimed of does not contain', () => {
+    const marked = parseGenericLines(
+      'GENERIC: Abattoir drop | Cue word drop | Say the cue word. | mistletoe',
+      devices
+    )
+
+    expect(marked[1].bound).toBeUndefined()
+  })
+
+  it('keeps the marking when the restatement still carries the word', () => {
+    const marked = parseGenericLines(
+      'GENERIC: Abattoir drop | Abattoir drop | Say "abattoir" to drop them. | abattoir',
+      devices
+    )
+
+    expect(marked[1].bound).toEqual(['abattoir'])
+    expect(marked[1].generic).toBeUndefined()
+  })
+
+  it('takes nothing from a reply that answered with prose', () => {
+    expect(parseGenericLines('Nothing here belongs to this collection alone.', devices))
+      .toEqual(devices)
+  })
+})
+
+describe('containsTerm', () => {
+  it('matches a word rather than a fragment of one', () => {
+    expect(containsTerm('the ash settles', 'ash')).toBe(true)
+    expect(containsTerm('the ashes settle', 'ash')).toBe(false)
+    expect(containsTerm('you drop for Miss Vera', 'miss vera')).toBe(true)
+    expect(containsTerm('you drop for her', 'Miss Vera')).toBe(false)
+  })
+
+  it('reads past the quotation marks a corpus happens to use', () => {
+    expect(containsTerm('say \u201cabattoir\u201d and go', 'abattoir')).toBe(true)
+  })
+})
+
+describe('devicesForFidelity', () => {
+  const plain = device()
+  const bound: CorpusDevice = {
+    name: 'Abattoir drop',
+    instruction: 'Say "abattoir" to drop them where the last count left off.',
+    quote: 'abattoir … and down you go',
+    bound: ['abattoir'],
+    generic: {
+      name: 'Cue word drop',
+      instruction: 'Say the cue word to drop them where the last count left off.'
+    }
+  }
+
+  it('sends the corpus as it was read when the run is faithful', () => {
+    expect(devicesForFidelity([plain, bound], 'faithful')).toEqual([plain, bound])
+  })
+
+  it('sends the move without the word, and without the quote carrying it', () => {
+    expect(devicesForFidelity([plain, bound], 'generic')).toEqual([
+      plain,
+      {
+        name: 'Cue word drop',
+        instruction: 'Say the cue word to drop them where the last count left off.'
+      }
+    ])
+  })
+
+  it('leaves out a device that could not be said without the word', () => {
+    const unsaid: CorpusDevice = { ...bound, generic: undefined }
+
+    expect(devicesForFidelity([plain, unsaid], 'generic')).toEqual([plain])
+  })
+
+  it('keeps another device\'s cue word out of the quote it hides in', () => {
+    const borrowed: CorpusDevice = {
+      name: 'Counted descent',
+      instruction: 'Count them down on the out-breath.',
+      quote: 'ten … nine … abattoir'
+    }
+
+    expect(devicesForFidelity([bound, borrowed], 'generic')).toContainEqual({
+      name: 'Counted descent',
+      instruction: 'Count them down on the out-breath.'
+    })
+  })
+
+  it('sends a corpus with nothing particular in it unchanged either way', () => {
+    expect(devicesForFidelity([plain], 'generic')).toEqual([plain])
+  })
+})
+
+describe('boundTerms', () => {
+  it('pools the words of the whole set, once each', () => {
+    expect(boundTerms([
+      { name: 'A', instruction: 'One.', bound: ['abattoir', 'Miss Vera'] },
+      { name: 'B', instruction: 'Two.', bound: ['Abattoir'] },
+      { name: 'C', instruction: 'Three.' }
+    ])).toEqual(['abattoir', 'Miss Vera'])
+  })
+})
+
+describe('parseStyleFidelity', () => {
+  it('falls back to faithful for anything it does not recognise', () => {
+    expect(parseStyleFidelity('generic')).toBe('generic')
+    expect(parseStyleFidelity('faithful')).toBe('faithful')
+    expect(parseStyleFidelity(undefined)).toBe('faithful')
+    expect(parseStyleFidelity('loose')).toBe('faithful')
   })
 })
 
@@ -336,12 +488,95 @@ describe('what the prompts carry', () => {
       model: 'fake-mini',
       generatedAt: 1,
       sources: 3,
-      signature: '3:abc'
+      signature: '3:abc',
+      generalised: false
     })
 
     expect(buildGenerationSystemPrompt(plan, [])).toContain('Breath counted down')
     // The review judges against them too, or it pulls every script back to
     // the rules the devices exist to counterweight
     expect(buildStyleCritiquePrompt('# A script')).toContain('Breath counted down')
+  })
+
+  // Story 8.21: the same folder, read two ways
+  const boundSet = (): CorpusDeviceSet => ({
+    folder: 'Unfiled',
+    devices: [
+      device(),
+      {
+        name: 'Abattoir drop',
+        instruction: 'Say "abattoir" to drop them where the last count left off.',
+        quote: 'abattoir … and down you go',
+        bound: ['abattoir'],
+        generic: {
+          name: 'Cue word drop',
+          instruction: 'Say the cue word to drop them where the last count left off.'
+        }
+      }
+    ],
+    model: 'fake-mini',
+    generatedAt: 1,
+    sources: 3,
+    signature: '3:abc',
+    generalised: true
+  })
+
+  it('sends the collection\'s own words with a faithful run and not a generic one', async () => {
+    const { buildGenerationSystemPrompt } = await import('../prompts')
+    const { buildLengthPlan } = await import('../scriptLength')
+    const plan = buildLengthPlan()
+    saveCorpusDevices(boundSet())
+
+    store.set('styleFidelity', JSON.stringify('faithful'))
+    const faithful = buildGenerationSystemPrompt(plan, [])
+    expect(faithful).toContain('abattoir')
+    expect(faithful).not.toContain('## Reading the examples')
+
+    store.set('styleFidelity', JSON.stringify('generic'))
+    const generic = buildGenerationSystemPrompt(plan, [])
+    expect(generic).not.toContain('abattoir')
+    expect(generic).toContain('Cue word drop')
+    expect(generic).toContain('Breath counted down')
+  })
+
+  it('says what the exemplars are being read for when the run is generic', async () => {
+    const { buildGenerationSystemPrompt } = await import('../prompts')
+    const { buildLengthPlan } = await import('../scriptLength')
+    const plan = buildLengthPlan()
+    store.set('styleFidelity', JSON.stringify('generic'))
+
+    const prompt = buildGenerationSystemPrompt(plan, [{ content: 'Ten … and down' }])
+
+    // The note is about the exemplars, so it comes before them
+    expect(prompt).toContain('## Reading the examples')
+    expect(prompt.indexOf('## Reading the examples'))
+      .toBeLessThan(prompt.indexOf('## Examples'))
+  })
+
+  it('holds the review to what the run was asked for', async () => {
+    const { buildStyleCritiquePrompt } = await import('../prompts')
+    saveCorpusDevices(boundSet())
+    store.set('styleFidelity', JSON.stringify('generic'))
+
+    const critique = buildStyleCritiquePrompt('# A script')
+
+    expect(critique).not.toContain('abattoir')
+    expect(critique).toContain('## What this script was asked for')
+  })
+
+  it('remembers what is particular to a folder across a save and a load', () => {
+    saveCorpusDevices(boundSet())
+
+    const stored = getCorpusDevices('Unfiled')
+    expect(stored?.generalised).toBe(true)
+    expect(stored?.devices[1].bound).toEqual(['abattoir'])
+    expect(stored?.devices[1].generic?.name).toBe('Cue word drop')
+    expect(areActiveDevicesGeneralised()).toBe(true)
+  })
+
+  it('knows a folder read before the marks existed from one with nothing to mark', () => {
+    saveCorpusDevices({ ...boundSet(), generalised: false })
+
+    expect(areActiveDevicesGeneralised()).toBe(false)
   })
 })

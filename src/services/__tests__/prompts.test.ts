@@ -20,6 +20,8 @@ import {
   buildDeviceExtractionPrompt,
   formatDeviceObservations,
   formatDevicesForPrompt,
+  formatFidelityForCritique,
+  formatFidelityForPrompt,
   getStyleRules
 } from '../prompts'
 import type { CorpusDevice } from '../corpusDevices'
@@ -712,6 +714,37 @@ describe('the corpus device supplement (story 8.20)', () => {
     expect(block).toContain('2. Named return')
     // The device without one says nothing rather than quoting an empty string
     expect(block.match(/From the corpus/g)).toHaveLength(1)
+  })
+
+  // Story 8.21: the same devices, sent two ways
+  it('sends the moves without the collection\'s own words when asked to', () => {
+    const bound: CorpusDevice = {
+      name: 'Abattoir drop',
+      instruction: 'Say "abattoir" to drop them.',
+      quote: 'abattoir … and down',
+      bound: ['abattoir'],
+      generic: { name: 'Cue word drop', instruction: 'Say the cue word to drop them.' }
+    }
+
+    const block = formatDevicesForPrompt([...devices, bound], 'generic')
+
+    expect(block).not.toContain('abattoir')
+    expect(block).toContain('Cue word drop')
+    expect(block).toContain('These are the moves, not the words')
+  })
+
+  it('says nothing extra to a faithful run', () => {
+    expect(formatDevicesForPrompt(devices, 'faithful'))
+      .toBe(formatDevicesForPrompt(devices))
+    expect(formatFidelityForPrompt('faithful')).toBe('')
+    expect(formatFidelityForCritique('faithful')).toBe('')
+  })
+
+  it('leaves the ordinary words of the craft to a generic run', () => {
+    const note = formatFidelityForPrompt('generic')
+
+    expect(note).toContain('drop, deeper, breathe, let go')
+    expect(note).toContain('the brief')
   })
 
   it('says which way a device and a rule resolve when they disagree', () => {

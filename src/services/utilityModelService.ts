@@ -16,6 +16,9 @@ export type UtilityJob =
   // whole folder's readings have in common (story 8.20)
   | 'devices'
   | 'deviceDigest'
+  // Reading the consolidated devices for the words in them that belong to
+  // this collection alone, and how each is said without them (story 8.21)
+  | 'deviceGeneric'
 
 export interface UtilityCompletionRequest {
   job: UtilityJob
@@ -46,5 +49,6 @@ export const UTILITY_JOB_LABELS: Record<UtilityJob, string> = {
   sectioning: 'Sectioning',
   retitling: 'Retitling',
   devices: 'Device extraction',
-  deviceDigest: 'Device consolidation'
+  deviceDigest: 'Device consolidation',
+  deviceGeneric: 'Device generalisation'
 }

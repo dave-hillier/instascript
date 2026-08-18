@@ -19,14 +19,18 @@ import {
   buildDeviceConsolidationPrompt,
   buildDeviceExtractionInput,
   buildDeviceExtractionPrompt,
-  formatDeviceObservations
+  buildDeviceGeneralisationPrompt,
+  formatDeviceObservations,
+  formatDevicesForGeneralisation
 } from './prompts'
 import {
+  boundTerms,
   corpusSignature,
   deviceSourcesIn,
   MAX_DEVICES,
   MAX_DEVICES_PER_EXAMPLE,
   parseDeviceLines,
+  parseGenericLines,
   verifyDeviceQuotes,
   type CorpusDevice,
   type CorpusDeviceSet,
@@ -45,6 +49,9 @@ export interface DeviceExtractionOptions {
   onExampleFinished?: (id: string, found: number) => void
   // Called once the reading is done and the consolidation request goes out
   onConsolidating?: () => void
+  // Called as the generalisation request (story 8.21) goes out over the
+  // consolidated devices
+  onGeneralising?: () => void
 }
 
 // What one run came to. The set is null when nothing usable came back, which
@@ -55,6 +62,42 @@ export interface DeviceExtractionOutcome {
   // How many examples were read, and how many device observations they gave
   sources: number
   observations: number
+}
+
+// What one generalisation pass came to: the devices with story 8.21's marks
+// on them, and whether the pass ran at all. A request that failed leaves the
+// devices exactly as they were consolidated and says the corpus has not been
+// read for what is particular to it — which is not the same as having found
+// nothing particular in it.
+interface GeneralisationOutcome {
+  devices: CorpusDevice[]
+  generalised: boolean
+}
+
+// Asks which devices are built out of words belonging to this collection
+// alone, and how each is said without them. One request over the finished
+// list, not one per script: it reads the devices, and the devices are what a
+// generation is sent.
+async function generaliseDevices(
+  devices: CorpusDevice[],
+  service: UtilityModelService,
+  signal?: AbortSignal
+): Promise<GeneralisationOutcome> {
+  try {
+    const reply = await service.complete({
+      job: 'deviceGeneric',
+      system: buildDeviceGeneralisationPrompt(),
+      user: formatDevicesForGeneralisation(devices),
+      maxOutputTokens: EXTRACTION_TOKEN_BUDGET,
+      signal
+    })
+    // An empty reply is a complete answer: a collection whose devices are all
+    // made of ordinary words has nothing particular to mark
+    return { devices: parseGenericLines(reply, devices), generalised: true }
+  } catch (error) {
+    console.warn('Could not read the devices for what is particular to them:', error)
+    return { devices, generalised: false }
+  }
 }
 
 // Reads one example for the devices it uses. A failed or unusable reply
@@ -86,7 +129,13 @@ export async function extractCorpusDevices(
   folder: string,
   examples: ExampleRecord[],
   service: UtilityModelService,
-  { signal, onExampleStarted, onExampleFinished, onConsolidating }: DeviceExtractionOptions = {}
+  {
+    signal,
+    onExampleStarted,
+    onExampleFinished,
+    onConsolidating,
+    onGeneralising
+  }: DeviceExtractionOptions = {}
 ): Promise<DeviceExtractionOutcome> {
   const sources = deviceSourcesIn(examples)
   const observations: DeviceObservation[] = []
@@ -131,11 +180,18 @@ export async function extractCorpusDevices(
   const verified = verifyDeviceQuotes(devices, examples.map(example => example.content))
   if (verified.length === 0) return outcome
 
+  // Story 8.21: the same devices, marked with what in them belongs to this
+  // collection and to nobody else. Only a generic generation reads the marks,
+  // but they are read once here rather than per run.
+  onGeneralising?.()
+  const marked = await generaliseDevices(verified, service, signal)
+
   return {
     ...outcome,
     set: {
       folder,
-      devices: verified,
+      devices: marked.devices,
+      generalised: marked.generalised,
       model: service.model,
       generatedAt: Date.now(),
       sources: sources.length,
@@ -175,7 +231,12 @@ export function describeDeviceOutcome(
       : `${read} but found nothing the collection has in common.`
   }
   const found = set.devices.length
-  return `${read} and found ${found} ${found === 1 ? 'device' : 'devices'} they share.`
+  const shared = `${read} and found ${found} ${found === 1 ? 'device' : 'devices'} they share`
+  const terms = boundTerms(set.devices).length
+  if (!set.generalised) return `${shared}.`
+  return terms === 0
+    ? `${shared}, none of them built on words of the collection's own.`
+    : `${shared}, ${terms} ${terms === 1 ? 'word' : 'words'} in them the collection's own.`
 }
 
 // Pure: how the panel says a supplement is out of date. Null when the devices
