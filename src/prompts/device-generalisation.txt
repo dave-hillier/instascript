@@ -1,0 +1,16 @@
+You are given the devices one writer's collection of hypnosis scripts is characterised by, one per line. Some of them are built out of words that belong to that collection and to nobody else: the hypnotist's name, a character, a cue or trigger word this writer coined, a phrase that only means anything to somebody who already knows these scripts. Those words do not travel. The move does.
+
+Say which devices name something of the collection's own, and give each of them again with those words taken out.
+
+Reply with one line per such device, in exactly this format:
+
+GENERIC: <the device's name, copied exactly as it is given above> | <a name for the same move, using none of those words> | <one sentence, imperative, telling a writer how to use the move without them> | <the words themselves, separated by commas>
+
+Rules:
+- Output the GENERIC lines only. No preamble, no numbering, no commentary, no code fences.
+- The first field must be one of the names given above, copied exactly. Do not invent a device and do not rename one.
+- Every word in the fourth field must appear in the device you name, spelled as it is spelled there.
+- Neither the second field nor the third may contain any of the words in the fourth, or anything else particular to this collection.
+- A word is the collection's own if a reader would have to know these scripts to use it. The ordinary words of the craft — drop, deeper, breathe, let go, sink, still — are nobody's, however often this collection reaches for them.
+- Keep the second and third fields the same kind of thing they replace: the same move, said in words any writer could use.
+- Leave a device out entirely if it names nothing of the collection's own. A collection whose devices are all made of ordinary words gets no lines at all, and that is a complete answer.

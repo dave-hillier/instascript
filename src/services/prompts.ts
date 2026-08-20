@@ -15,6 +15,7 @@ import exampleSectioningPrompt from '../prompts/example-sectioning.txt?raw'
 import exampleTitlePrompt from '../prompts/example-title.txt?raw'
 import deviceExtractionPrompt from '../prompts/device-extraction.txt?raw'
 import deviceConsolidationPrompt from '../prompts/device-consolidation.txt?raw'
+import deviceGeneralisationPrompt from '../prompts/device-generalisation.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
@@ -25,15 +26,16 @@ import type { DocumentSection } from './conversationDocument'
 import type { ScriptFsTree } from './scriptFs'
 import { exampleLabel, mountExamples, renderScriptFsTree } from './scriptFs'
 import { describeStandardTagVocabulary, isStandardTag } from './standardTags'
-import { getJobInstructions } from './config'
+import { getJobInstructions, getStyleFidelity } from './config'
 import {
+  devicesForFidelity,
   formatDeviceLine,
   getActiveCorpusDevices,
   MAX_DEVICES,
   MAX_DEVICES_PER_EXAMPLE,
   MIN_SOURCES_FOR_RECURRENCE
 } from './corpusDevices'
-import type { CorpusDevice, DeviceObservation } from './corpusDevices'
+import type { CorpusDevice, DeviceObservation, StyleFidelity } from './corpusDevices'
 
 /**
  * Prompt generation. Pure apart from the standing instructions below, which
@@ -276,11 +278,13 @@ export function getStyleRules(): string {
 // against both, a section can be found wanting for reading like the rulebook
 // instead of like the corpus.
 export function buildStyleCritiquePrompt(script: string): string {
+  const fidelity = getStyleFidelity()
   return styleCritiquePrompt
     .replace(
       '{styleRules}',
       () => withStyleInstructions(getStyleRules()) +
-        formatDevicesForPrompt(getActiveCorpusDevices())
+        formatDevicesForPrompt(getActiveCorpusDevices(), fidelity) +
+        formatFidelityForCritique(fidelity)
     )
     .replace('{script}', () => script)
 }
@@ -454,25 +458,84 @@ export function formatExamplesForPrompt(examples: ExampleScript[]): string {
 // Pure: the devices as a prompt block, or nothing at all when the corpus has
 // never been read for them. It goes between the rules and the exemplars: it
 // is about the exemplars, and it is what the rules do not say.
-export function formatDevicesForPrompt(devices: CorpusDevice[]): string {
-  if (devices.length === 0) return ''
+export function formatDevicesForPrompt(
+  devices: CorpusDevice[],
+  fidelity: StyleFidelity = 'faithful'
+): string {
+  const sent = devicesForFidelity(devices, fidelity)
+  if (sent.length === 0) return ''
 
-  const entries = devices
+  const entries = sent
     .map((device, index) => {
       const quote = device.quote ? `\n   From the corpus: "${device.quote}"` : ''
       return `${index + 1}. ${device.name} — ${device.instruction}${quote}`
     })
     .join('\n')
 
+  // A generic generation is given the same moves with the collection's own
+  // words already taken out of them (story 8.21), so what it is told about
+  // them is that the move is the point and the wording is this script's own
+  const scope = fidelity === 'generic'
+    ? '\n\nThese are the moves, not the words. Where one of them is worked in ' +
+      'this corpus with a name, a coined trigger word or a phrase of its own, ' +
+      'the move is here and that word is not: make the same move with words ' +
+      'this brief supports. An ordinary word of the craft is not one of those ' +
+      'words and is yours to use.'
+    : ''
+
   return '\n## Devices from this corpus\n\n' +
     'These devices recur across the scripts this corpus is made of. They are ' +
     'what the exemplars have in common, read out of them and written down. ' +
     'Write with them: sounding like this corpus is the point of it being here.\n\n' +
     entries +
+    scope +
     '\n\nWhere a device differs from the wording, rhythm or register a numbered ' +
     'rule above suggests, follow the device. Where following one would drop ' +
     'something a rule requires, or reach for something a rule names to avoid, ' +
     'follow the rule.\n'
+}
+
+// Pure: what the style review is to make of a generic generation (story
+// 8.21). The review judges against the devices, and in a generic run the
+// devices it is given are already the moves without the collection's own
+// words — so what is left to say is which way to read a section that does not
+// use those words, and which way to read one that does.
+export function formatFidelityForCritique(fidelity: StyleFidelity): string {
+  if (fidelity !== 'generic') return ''
+
+  return '\n## What this script was asked for\n\n' +
+    'This script was asked to be written in the corpus\'s manner but not in ' +
+    'its particulars. A section is not wanting for using plain words where ' +
+    'the corpus uses a name, a coined trigger word or a phrase of its own — ' +
+    'that is what was asked for. A section that reaches for one of those ' +
+    'words, or names a hypnotist or a character the brief never mentioned, ' +
+    'is wanting, and the fix is the same move in words the brief supports.\n'
+}
+
+// Pure: how the exemplars are to be read (story 8.21). The devices are a
+// description of the corpus and can have the collection's own words taken out
+// of them before they are sent; the exemplars are the corpus, quoted whole,
+// with every name and cue word it ever coined still in them. A generic
+// generation therefore needs saying what it is reading them for — otherwise
+// the strongest signal in the prompt is a set of scripts full of particulars
+// nobody asked to have copied.
+//
+// Faithful adds nothing: the exemplars already say what they are for.
+export function formatFidelityForPrompt(fidelity: StyleFidelity): string {
+  if (fidelity !== 'generic') return ''
+
+  return '\n## Reading the examples\n\n' +
+    'The examples below are here for how they are written — their rhythm, ' +
+    'their register, the shape of the moves they make. What is particular to ' +
+    'them is not: the names they call the hypnotist and anyone in them, the ' +
+    'trigger and cue words this writer coined, the phrases that only land for ' +
+    'somebody who already knows these scripts. Do not carry any of that into ' +
+    'this script.\n\n' +
+    'Where an example fires a state with a word of its own, do the same thing ' +
+    'with a plain one: the ordinary words of the craft — drop, deeper, ' +
+    'breathe, let go — belong to nobody and are yours. Where the brief itself ' +
+    'asks for a name, a trigger or a phrase, that is the brief\'s and is ' +
+    'written exactly as it asks.\n'
 }
 
 // The extraction request, asked once per example. Neither set of standing
@@ -513,6 +576,22 @@ export function buildDeviceConsolidationPrompt(sourceCount: number): string {
     .replace('{maxDevices}', String(MAX_DEVICES))
 }
 
+// The generalisation request (story 8.21), asked once over the consolidated
+// devices: which of them are built out of words that belong to this
+// collection alone, and how each of those is said without them. It reads the
+// devices rather than the corpus — those lines are what a generation is
+// actually sent, so they are where a coined trigger word has to be caught.
+export function buildDeviceGeneralisationPrompt(): string {
+  return deviceGeneralisationPrompt
+}
+
+// The devices as the generalisation request reads them: the same line format
+// the consolidation answered in, so a name copied back is copied from
+// something the parse can find again.
+export function formatDevicesForGeneralisation(devices: CorpusDevice[]): string {
+  return devices.map(formatDeviceLine).join('\n')
+}
+
 // The pooled observations, one block per script. Titles are kept so the
 // consolidation can see that a device shows up in different scripts rather
 // than three times in one.
@@ -533,9 +612,11 @@ export function formatDeviceObservations(observations: DeviceObservation[]): str
 // and they are read from settings as the prompt is built, like the standing
 // instructions, so every request in a run carries the identical string.
 export function buildGenerationSystemPrompt(plan: LengthPlan, examples: ExampleScript[]): string {
-  const devices = formatDevicesForPrompt(getActiveCorpusDevices())
+  const fidelity = getStyleFidelity()
+  const devices = formatDevicesForPrompt(getActiveCorpusDevices(), fidelity)
   if (examples.length === 0) return getSystemPrompt(plan) + devices
-  return getSystemPrompt(plan) + devices + formatExamplesForPrompt(examples)
+  return getSystemPrompt(plan) + devices +
+    formatFidelityForPrompt(fidelity) + formatExamplesForPrompt(examples)
 }
 
 // Examples are sent, never stored: one copy of the corpus per stored

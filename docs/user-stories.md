@@ -633,6 +633,28 @@ Acceptance criteria:
 - A folder that has changed since it was read says so, and can be read again or cleared
 - The run reports through the import meter, naming the script each request is sitting on; with no provider configured nothing is stored and the status line says so
 
+### 8.21 Choose how closely a script follows the corpus [Implemented]
+
+As a user generating from a corpus, I want to say whether this script should be faithful to its style or only generally in it, so that I can borrow how my material is written without borrowing the trigger words and names that belong to the scripts it came from.
+
+Notes: the devices (8.20) describe a collection, and a collection is described partly in words nobody else can use. A move travels — open by handing the body's weight to what it is resting on, count down on the out-breath. What does not travel is the hypnotist's or a character's name, the cue word this writer coined, the phrase that only lands for somebody who already knows these scripts. "Drop" is the craft's and is anybody's; "drop for [name]" and "abattoir" are not, and a script written for a different brief should not be firing them.
+
+So the extraction gains a third request, once over the consolidated devices rather than once per script: which of them name something of the collection's own, what those words are, and the same move said without them. Both halves are checked in code, because both can be: a word claimed to be in a device must actually be in it, matched as a word rather than as a fragment of one, and a restatement that still contains one of those words is not a restatement. A device whose marking checks out but whose restatement does not keeps the marking and loses the restatement — knowing a device is particular is worth having on its own, since it is what keeps the device out of a generic run.
+
+**Corpus style** on the composer chooses between the two, and persists like the briefing toggle beside it. Faithful is the default and is exactly what the app did before: the devices as they were read. Generic sends a marked device in its restated form, leaves out a device that could not be said without the collection's words, and drops a quote that carries one — a device may be borrowed from and still illustrate itself in somebody else's cue word. The exemplars themselves cannot be edited the same way: they are the corpus, quoted whole, with every particular still in them. So a generic run is told what it is reading them for, and the style review is told what the run was asked for, or it would fault a script for using plain words where the corpus uses its own.
+
+Acceptance criteria:
+- The composer offers Faithful and Generic, says in a line what the difference is, and remembers the choice
+- Faithful sends exactly the prompts story 8.20 sent — the setting is invisible until it is changed
+- The extraction marks which devices are built on words belonging to the collection, and stores the same move said without them
+- A word not found in the device that claimed it is dropped; a line whose words are all dropped changes nothing
+- A restatement still carrying one of those words is discarded, and the device is left out of a generic run rather than sent with the word in it
+- A generic run sends the restated devices, and drops any quote carrying one of the collection's own words, whichever device it was marked on
+- A generic run is told the exemplars are there for how they are written and not for what is particular to them, and that the ordinary words of the craft, and anything the brief asks for by name, are its own to use
+- The style review judges a generic run for what it was asked for: plain words where the corpus uses its own are not a fault, and reaching for the corpus's own words is
+- The panel shows what each device is bound to and how it reads without it, and a folder read before the marks existed says so rather than passing as having nothing particular in it
+- A failed generalisation request keeps the devices exactly as they were consolidated, and the folder reads as never having been asked
+
 ## Epic 9: Visual Design
 
 ### 9.1 Design pass over the whole UI [Implemented]

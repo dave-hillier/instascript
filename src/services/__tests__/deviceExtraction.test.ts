@@ -6,6 +6,7 @@ import {
   extractCorpusDevices
 } from '../deviceExtraction'
 import { corpusSignature } from '../corpusDevices'
+import type { CorpusDeviceSet } from '../corpusDevices'
 import type { ExampleRecord } from '../../types/example'
 import type {
   UtilityCompletionRequest,
@@ -72,7 +73,8 @@ describe('extractCorpusDevices', () => {
     expect(service.requests.map(request => request.job)).toEqual([
       'devices',
       'devices',
-      'deviceDigest'
+      'deviceDigest',
+      'deviceGeneric'
     ])
     expect(outcome.sources).toBe(2)
     expect(outcome.observations).toBe(4)
@@ -198,6 +200,104 @@ describe('extractCorpusDevices', () => {
   })
 })
 
+// Story 8.21: the generalisation pass over the consolidated devices. The
+// corpus below is written so a cue word of its own really is in it, since a
+// term is only kept when it is found in the device that claimed it.
+const BOUND_CONSOLIDATION = [
+  'DEVICE: Counted descent | Count down on the out-breath, a number to a breath. | Ten … and down',
+  'DEVICE: Abattoir drop | Say "abattoir" to drop them where the count left off. | Ten … and down'
+].join('\n')
+
+const GENERALISATION_REPLY =
+  'GENERIC: Abattoir drop | Cue word drop | Say the cue word to drop them ' +
+  'where the count left off. | abattoir'
+
+const replyWithBinding = (request: UtilityCompletionRequest): string => {
+  if (request.job === 'devices') return EXTRACTION_REPLY
+  if (request.job === 'deviceDigest') return BOUND_CONSOLIDATION
+  return GENERALISATION_REPLY
+}
+
+describe('the generalisation pass (story 8.21)', () => {
+  it('marks what belongs to the collection and says the move without it', async () => {
+    const service = new FakeUtilityService(replyWithBinding)
+
+    const outcome = await extractCorpusDevices('Sleep', examples, service)
+
+    expect(outcome.set?.generalised).toBe(true)
+    expect(outcome.set?.devices[0].bound).toBeUndefined()
+    expect(outcome.set?.devices[1]).toEqual({
+      name: 'Abattoir drop',
+      instruction: 'Say "abattoir" to drop them where the count left off.',
+      quote: 'Ten … and down',
+      bound: ['abattoir'],
+      generic: {
+        name: 'Cue word drop',
+        instruction: 'Say the cue word to drop them where the count left off.'
+      }
+    })
+  })
+
+  it('reads the devices themselves, since the devices are what a run is sent', async () => {
+    const service = new FakeUtilityService(replyWithBinding)
+
+    await extractCorpusDevices('Sleep', examples, service)
+
+    const generalisation = service.requests[3]
+    expect(generalisation.job).toBe('deviceGeneric')
+    expect(generalisation.user).toContain('DEVICE: Abattoir drop |')
+    expect(generalisation.user).not.toContain('Let the chair take your weight')
+  })
+
+  it('keeps the marking when the restatement still carries the word', async () => {
+    const service = new FakeUtilityService(request =>
+      request.job === 'deviceGeneric'
+        ? 'GENERIC: Abattoir drop | Abattoir drop | Say "abattoir" to drop them. | abattoir'
+        : replyWithBinding(request)
+    )
+
+    const outcome = await extractCorpusDevices('Sleep', examples, service)
+
+    expect(outcome.set?.devices[1].bound).toEqual(['abattoir'])
+    expect(outcome.set?.devices[1].generic).toBeUndefined()
+  })
+
+  it('drops a line whose words are not in the device it names', async () => {
+    const service = new FakeUtilityService(request =>
+      request.job === 'deviceGeneric'
+        ? 'GENERIC: Counted descent | Cue word drop | Say the cue word. | mistletoe'
+        : replyWithBinding(request)
+    )
+
+    const outcome = await extractCorpusDevices('Sleep', examples, service)
+
+    expect(outcome.set?.devices.every(device => device.bound === undefined)).toBe(true)
+    expect(outcome.set?.generalised).toBe(true)
+  })
+
+  it('keeps the devices, and says it never asked, when the request fails', async () => {
+    const service = new FakeUtilityService(request =>
+      request.job === 'deviceGeneric' ? '__throw__' : replyWithBinding(request)
+    )
+
+    const outcome = await extractCorpusDevices('Sleep', examples, service)
+
+    expect(outcome.set?.devices).toHaveLength(2)
+    expect(outcome.set?.generalised).toBe(false)
+  })
+
+  it('says when it is generalising, once the reading is done', async () => {
+    const service = new FakeUtilityService(replyWithBinding)
+    let generalising = 0
+
+    await extractCorpusDevices('Sleep', examples, service, {
+      onGeneralising: () => { generalising += 1 }
+    })
+
+    expect(generalising).toBe(1)
+  })
+})
+
 describe('createDeviceProgress', () => {
   it('gives a row only to the scripts that will actually be read', () => {
     const rows = createDeviceProgress([
@@ -211,18 +311,38 @@ describe('createDeviceProgress', () => {
 })
 
 describe('describeDeviceOutcome', () => {
-  const set = {
+  const set: CorpusDeviceSet = {
     folder: 'Sleep',
     devices: [{ name: 'Counted descent', instruction: 'Count them down.' }],
     model: 'fake-mini',
     generatedAt: 1,
     sources: 4,
-    signature: '4:abc'
+    signature: '4:abc',
+    generalised: false
   }
 
   it('says what was read and what was found', () => {
     expect(describeDeviceOutcome({ set, sources: 4, observations: 12 }, 'fake-mini'))
       .toBe('fake-mini read 4 scripts and found 1 device they share.')
+  })
+
+  it('says how much of what was found is the collection\'s own (story 8.21)', () => {
+    const generalised: CorpusDeviceSet = { ...set, generalised: true }
+    expect(describeDeviceOutcome({ set: generalised, sources: 4, observations: 12 }, 'fake-mini'))
+      .toBe(
+        'fake-mini read 4 scripts and found 1 device they share, none of them ' +
+        'built on words of the collection\'s own.'
+      )
+
+    const bound: CorpusDeviceSet = {
+      ...generalised,
+      devices: [{ ...set.devices[0], bound: ['abattoir'] }]
+    }
+    expect(describeDeviceOutcome({ set: bound, sources: 4, observations: 12 }, 'fake-mini'))
+      .toBe(
+        'fake-mini read 4 scripts and found 1 device they share, 1 word in ' +
+        'them the collection\'s own.'
+      )
   })
 
   it('distinguishes finding nothing from finding nothing in common', () => {

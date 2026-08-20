@@ -1,4 +1,5 @@
 import { resolveRetiredModel } from './modelPresets'
+import { parseStyleFidelity, type StyleFidelity } from './corpusDevices'
 
 export type APIProvider = 'openai' | 'openrouter' | 'mock'
 
@@ -138,6 +139,20 @@ export function getJobInstructions(job: InstructionJob): string {
 
 export function setJobInstructions(job: InstructionJob, instructions: string): void {
   writeSetting(INSTRUCTION_KEYS[job], instructions.trim())
+}
+
+// How closely a generation follows the corpus it is grounded in (story
+// 8.21). Faithful is the default and is what the app did before the setting
+// existed: the corpus's devices are sent as they were read, cue words and
+// names and all. Generic sends the moves without the particulars — the
+// collection's coined trigger words, its hypnotist's name, the phrases that
+// only mean something to somebody who already knows these scripts.
+export function getStyleFidelity(): StyleFidelity {
+  return parseStyleFidelity(readSetting<string>('styleFidelity', 'faithful'))
+}
+
+export function setStyleFidelity(fidelity: StyleFidelity): void {
+  writeSetting('styleFidelity', fidelity)
 }
 
 // Which engine reads the script aloud in performance mode (story 4.5):

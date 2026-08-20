@@ -9,9 +9,16 @@ import type { Script } from '../types/script'
 import {
   createAppConfig,
   getModel,
+  getStyleFidelity,
   isBriefingStageEnabled,
-  setBriefingStageEnabled
+  setBriefingStageEnabled,
+  setStyleFidelity
 } from '../services/config'
+import {
+  areActiveDevicesGeneralised,
+  parseStyleFidelity,
+  type StyleFidelity
+} from '../services/corpusDevices'
 import { providerUsedFor, resolveProviderStatus, unavailableReason } from '../services/providerStatus'
 import { subscribeToConfig, getConfigRevision } from '../services/configStore'
 import { filterScriptsByQuery, parseSortOrder, sortScriptsByCreation } from '../utils/scriptLibrary'
@@ -35,6 +42,8 @@ export const HomePage = () => {
   // running — the brief it is asking about
   const [askFirst, setAskFirst] = useState(isBriefingStageEnabled)
   const [briefing, setBriefing] = useState<string | null>(null)
+  // How closely this generation follows the corpus grounding it (story 8.21)
+  const [fidelity, setFidelity] = useState<StyleFidelity>(getStyleFidelity)
   const navigate = useNavigate()
 
   // The requested length, shown as both the duration the user is choosing and
@@ -95,6 +104,23 @@ export const HomePage = () => {
     setAskFirst(enabled)
     setBriefingStageEnabled(enabled)
   }
+
+  const handleFidelityChanged = (value: string) => {
+    const chosen = parseStyleFidelity(value)
+    setFidelity(chosen)
+    setStyleFidelity(chosen)
+  }
+
+  // A generic generation leans on the corpus having been read for what is
+  // particular to it: without that reading the devices are sent as they were
+  // written, cue words and all, and only the standing instruction keeps them
+  // out of the script
+  const fidelityHelp = fidelity === 'generic'
+    ? areActiveDevicesGeneralised()
+      ? 'The corpus\'s moves, written without its own names and trigger words.'
+      : 'The corpus\'s moves, without its own names and trigger words. Read the ' +
+        'active folder for devices to have them marked rather than inferred.'
+    : 'Written in the corpus\'s devices as they were read, cue words and names and all.'
 
   // `briefedPrompt` is what the model is asked to write from: the typed brief,
   // or the typed brief with the briefing answers appended. The title still
@@ -223,6 +249,18 @@ export const HomePage = () => {
                   />
                   <span>Ask me questions first</span>
                 </label>
+                <label className="fidelity-choice" htmlFor="style-fidelity">
+                  <span>Corpus style</span>
+                  <select
+                    id="style-fidelity"
+                    value={fidelity}
+                    onChange={(e) => handleFidelityChanged(e.target.value)}
+                    aria-describedby="style-fidelity-help"
+                  >
+                    <option value="faithful">Faithful</option>
+                    <option value="generic">Generic</option>
+                  </select>
+                </label>
               </div>
               <div>
                 <button
@@ -234,6 +272,9 @@ export const HomePage = () => {
                   <ArrowUp size={24} />
                 </button>
               </div>
+              <p className="fidelity-help" id="style-fidelity-help">
+                {fidelityHelp}
+              </p>
             </div>
           </form>
         </section>
