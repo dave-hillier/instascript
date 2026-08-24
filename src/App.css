@@ -1233,6 +1233,19 @@ dialog fieldset:last-child {
   margin-bottom: 0;
 }
 
+/* The theme fieldset's note when the stored preference could not be read.
+   Outranks the shared `[role="status"]` block, which would otherwise centre
+   it in a measure narrower than the buttons it sits above. */
+dialog p.theme-preference-warning {
+  max-width: none;
+  margin: 0 0 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--danger);
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

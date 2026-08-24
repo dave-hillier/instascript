@@ -19,8 +19,7 @@ import {
 } from '../services/modelPresets'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
-
-type Theme = 'light' | 'dark' | 'system'
+import type { Theme } from '../services/themePreference'
 
 const CUSTOM_MODEL = 'custom'
 
@@ -159,6 +158,7 @@ type SettingsModalProps = {
   isOpen: boolean
   onClose: () => void
   theme: Theme
+  themePreferenceUnreadable: boolean
   onThemeChange: (theme: Theme) => void
   apiKey: string
   openRouterApiKey: string
@@ -190,6 +190,7 @@ export const SettingsModal = ({
   isOpen,
   onClose,
   theme,
+  themePreferenceUnreadable,
   onThemeChange,
   apiKey,
   openRouterApiKey,
@@ -456,6 +457,13 @@ export const SettingsModal = ({
           <legend className="sr-only">Theme Settings</legend>
 
           <label htmlFor="theme-selector">Theme</label>
+          {themePreferenceUnreadable && (
+            <p className="theme-preference-warning" role="status">
+              Your saved theme could not be read, so the system setting is
+              showing instead. It has not been overwritten — pick a theme here
+              to save a new one, or leave this alone and the saved one stands.
+            </p>
+          )}
           <div
             role="group"
             aria-labelledby="theme-selector"

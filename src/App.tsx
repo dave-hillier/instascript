@@ -21,6 +21,7 @@ import {
   type APIProvider
 } from './services/config'
 import { configChanged } from './services/configStore'
+import { loadThemePreference, saveTheme, type Theme } from './services/themePreference'
 import type { SettingsFormValues } from './components/SettingsModal'
 import { clearStoredConversations, loadStoredConversations, saveStoredConversation } from './services/conversationStorage'
 import { serializeLibraryExport, parseLibraryExport, mergeLibrary, type LibraryImportCounts } from './services/libraryTransfer'
@@ -59,8 +60,6 @@ import {
 } from './services/backupFolder'
 import './App.css'
 
-type Theme = 'light' | 'dark' | 'system'
-
 type ThemeAction = { type: 'SET_THEME'; theme: Theme }
 type ModalAction = { type: 'TOGGLE_SETTINGS_MODAL' }
 type SectionTitlesAction = { type: 'TOGGLE_SECTION_TITLES' }
@@ -70,6 +69,9 @@ type PerformanceModeAction =
 
 type UIState = {
   theme: Theme
+  // True when a theme is stored that we could not read, so the theme in hand
+  // is the fallback rather than the user's choice
+  themePreferenceUnreadable: boolean
   showSettingsModal: boolean
   showSectionTitles: boolean
   performanceMode: boolean
@@ -81,7 +83,7 @@ type UIAction = ThemeAction | ModalAction | SectionTitlesAction | PerformanceMod
 const uiReducer = (state: UIState, action: UIAction): UIState => {
   switch (action.type) {
     case 'SET_THEME':
-      return { ...state, theme: action.theme }
+      return { ...state, theme: action.theme, themePreferenceUnreadable: false }
     case 'TOGGLE_SETTINGS_MODAL':
       return { ...state, showSettingsModal: !state.showSettingsModal }
     case 'TOGGLE_SECTION_TITLES':
@@ -95,25 +97,12 @@ const uiReducer = (state: UIState, action: UIAction): UIState => {
   }
 }
 
-function AppContent() {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const { state, dispatch } = useAppContext()
-  const {
-    getConversationByScriptId,
-    state: conversationState,
-    dispatch: conversationDispatch
-  } = useConversationContext()
+const createInitialUIState = (): UIState => {
+  const themePreference = loadThemePreference()
 
-  const [uiState, uiDispatch] = useReducer(uiReducer, {
-    theme: (() => {
-      try {
-        const item = window.localStorage.getItem('theme')
-        return item ? JSON.parse(item) : 'system'
-      } catch {
-        return 'system'
-      }
-    })(),
+  return {
+    theme: themePreference.theme,
+    themePreferenceUnreadable: themePreference.status === 'unreadable',
     showSettingsModal: false,
     showSectionTitles: (() => {
       try {
@@ -124,7 +113,20 @@ function AppContent() {
       }
     })(),
     performanceMode: false
-  })
+  }
+}
+
+function AppContent() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { state, dispatch } = useAppContext()
+  const {
+    getConversationByScriptId,
+    state: conversationState,
+    dispatch: conversationDispatch
+  } = useConversationContext()
+
+  const [uiState, uiDispatch] = useReducer(uiReducer, undefined, createInitialUIState)
 
   // Brief "Copied" confirmation after copying the script to the clipboard
   const [copyConfirmed, setCopyConfirmed] = useState(false)
@@ -240,15 +242,6 @@ function AppContent() {
     mediaQuery.addEventListener('change', handleChange)
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [])
-
-  // Save theme preference when it changes
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('theme', JSON.stringify(uiState.theme))
-    } catch (error) {
-      console.error('Error saving theme to localStorage:', error)
-    }
-  }, [uiState.theme])
 
   // Save OpenAI API key to sessionStorage
   useEffect(() => {
@@ -590,7 +583,11 @@ function AppContent() {
     uiDispatch({ type: 'TOGGLE_SETTINGS_MODAL' })
   }
 
+  // Written here rather than in an effect on the theme: an effect also runs on
+  // mount, which would persist the fallback theme over a stored preference we
+  // had failed to read. Only a theme the user picked is ever written.
   const handleThemeChange = (newTheme: Theme) => {
+    saveTheme(newTheme)
     uiDispatch({ type: 'SET_THEME', theme: newTheme })
   }
 
@@ -720,6 +717,7 @@ function AppContent() {
         isOpen={uiState.showSettingsModal}
         onClose={handleCloseModal}
         theme={uiState.theme}
+        themePreferenceUnreadable={uiState.themePreferenceUnreadable}
         onThemeChange={handleThemeChange}
         apiKey={apiKey || ''}
         openRouterApiKey={openRouterApiKey || ''}
