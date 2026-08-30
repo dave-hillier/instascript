@@ -437,6 +437,7 @@ describe('the tool path writes the script by calling tools', () => {
     for (const request of harness.sections) {
       expect(request.options).toBeUndefined()
     }
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
     for (const generation of generationsOf(harness)) {
       expect(generation.toolCalls).toBeUndefined()
     }
@@ -514,6 +515,7 @@ describe('a call that is not the one this turn needs', () => {
     expect(harness.scriptUpdates[harness.scriptUpdates.length - 1].status).toBe('complete')
 
     // D1: nothing was stored with an empty response, the grounding turn included
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
     for (const generation of generationsOf(harness)) {
       expect(generation.response.trim()).not.toBe('')
     }
@@ -877,6 +879,7 @@ describe('a refused body never survives as an unmarked generation (D6)', () => {
       controller.signal
     )
 
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
     for (const generation of generationsOf(harness)) {
       expect(generation.response.trim()).not.toBe('')
     }
@@ -903,6 +906,7 @@ describe('a truncated prose reply is not stored as the outline or the section', 
       harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
     ).rejects.toThrow('Failed to parse outline')
 
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
     for (const generation of generationsOf(harness)) {
       expect(generation.response).not.toContain('## Awak')
       expect(generation.response.trim()).not.toBe('')
@@ -924,6 +928,7 @@ describe('a truncated prose reply is not stored as the outline or the section', 
       harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
     ).rejects.toThrow('Induction')
 
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
     for (const generation of generationsOf(harness)) {
       expect(generation.response).not.toContain(fragment)
       expect(generation.response.trim()).not.toBe('')
@@ -1082,5 +1087,273 @@ describe('renderOutlineFromToolCall', () => {
         JSON.stringify({ title: 'Deep Rest', sections: [{ description: 'no title' }, { title: '  ' }] })
       )
     ).toBeNull()
+  })
+})
+
+
+// The frames that report what a request cost — firstToken, usage, finished —
+// have been in the stream since the frame protocol landed with nothing reading
+// them: `Generation.cachedTokens` was declared, reduced, persisted, parsed and
+// asserted on without one line anywhere setting it, and the cost summary
+// estimated tokens from a character count while the provider's own numbers
+// went past unread. These tests are about the collection, so they assert on
+// the conversation a save would write, through the real reducer.
+describe('a generation records what its request cost', () => {
+  const USAGE = { promptTokens: 900, completionTokens: 120, cachedTokens: 768 } as const
+
+  // Wraps the harness's own provider double so every request it answers ends
+  // the way a provider with stream_options.include_usage does: the usage block
+  // rides its own final chunk, after the finish reason.
+  const reportUsage = (harness: Harness): void => {
+    const services = (harness.orchestrator as unknown as { services: RawScriptServices }).services
+    const base = {
+      generateScript: services.scriptService.generateScript,
+      regenerateSection: services.scriptService.regenerateSection
+    }
+    const withUsage = async function* (
+      frames: AsyncIterable<ProviderFrame>
+    ): AsyncGenerator<ProviderFrame, void, unknown> {
+      yield* frames
+      yield { kind: 'usage', ...USAGE }
+    }
+    services.scriptService.generateScript = (...args) => withUsage(base.generateScript(...args))
+    services.scriptService.regenerateSection = (...args) =>
+      withUsage(base.regenerateSection(...args))
+  }
+
+  it('stores the provider’s own numbers on every generation of a tool run', async () => {
+    const harness = createHarness()
+    reportUsage(harness)
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    const generations = generationsOf(harness)
+    expect(generations.length).toBeGreaterThan(0)
+    for (const generation of generations) {
+      expect(generation.metrics?.promptTokens).toBe(900)
+      expect(generation.metrics?.completionTokens).toBe(120)
+      expect(generation.metrics?.cachedTokens).toBe(768)
+      // 'tool_calls' for the outline and each section_write, as the double
+      // finishes them
+      expect(generation.metrics?.finishReason).toBe('tool_calls')
+      expect(generation.metrics?.aborted).toBeUndefined()
+    }
+  })
+
+  it('fills the cache-hit count nothing used to populate', async () => {
+    const harness = createHarness()
+    reportUsage(harness)
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
+    for (const generation of generationsOf(harness)) {
+      expect(generation.cachedTokens).toBe(768)
+    }
+  })
+
+  it('measures the span and the latency to first token', async () => {
+    const harness = createHarness()
+    reportUsage(harness)
+    const before = Date.now()
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    const after = Date.now()
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
+    for (const generation of generationsOf(harness)) {
+      const metrics = generation.metrics!
+      expect(metrics.startedAt).toBeGreaterThanOrEqual(before)
+      expect(metrics.endedAt).toBeLessThanOrEqual(after)
+      expect(metrics.endedAt).toBeGreaterThanOrEqual(metrics.startedAt)
+      expect(metrics.firstTokenAt).toBeGreaterThanOrEqual(before)
+    }
+  })
+
+  it('records the prose path the same way, tools or no tools', async () => {
+    const harness = createHarness({
+      model: 'gpt-3.5-turbo-instruct',
+      body: () => ({ prose: words(SECTION_TARGET_WORDS) })
+    })
+    reportUsage(harness)
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
+    for (const generation of generationsOf(harness)) {
+      expect(generation.toolCalls).toBeUndefined()
+      expect(generation.metrics?.promptTokens).toBe(900)
+      expect(generation.metrics?.finishReason).toBe('stop')
+    }
+  })
+
+  it('leaves metrics off a run whose provider reported no usage at all', async () => {
+    // The whole record is optional, one field at a time: a provider without
+    // include_usage still gets a span and a finish reason, and no token counts
+    // invented for it.
+    const harness = createHarness()
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
+    for (const generation of generationsOf(harness)) {
+      expect(generation.metrics?.promptTokens).toBeUndefined()
+      expect(generation.metrics?.completionTokens).toBeUndefined()
+      expect(generation.cachedTokens).toBeUndefined()
+      expect(generation.metrics?.startedAt).toBeGreaterThan(0)
+    }
+  })
+
+  it('marks the turn a stopped run ended on as aborted', async () => {
+    const controller = new AbortController()
+    const harness = createHarness()
+    const services = (harness.orchestrator as unknown as { services: RawScriptServices }).services
+
+    // Stopped before anything arrived, which is the turn streamOrClose closes
+    services.scriptService.regenerateSection = () => {
+      controller.abort()
+      return textFrames('anything at all')
+    }
+
+    await harness.orchestrator.generateScript(
+      { prompt: 'A deep rest script' },
+      harness.conversation,
+      controller.signal
+    )
+
+    const closed = generationsOf(harness)[generationsOf(harness).length - 1]
+    expect(closed.response).toContain('ended before the model finished')
+    expect(closed.metrics?.aborted).toBe(true)
+    // The outline turn ran to its own end, so it is not marked
+    expect(generationsOf(harness)[0].metrics?.aborted).toBeUndefined()
+  })
+
+  it('keeps the first token time the stream reported first', async () => {
+    // A stream that somehow reports first-token twice is reporting the same
+    // first token, so the earlier reading is the true one and the later one
+    // must not overwrite it
+    const harness = createHarness()
+    const services = (harness.orchestrator as unknown as { services: RawScriptServices }).services
+    const base = {
+      generateScript: services.scriptService.generateScript,
+      regenerateSection: services.scriptService.regenerateSection
+    }
+    const reportedTwice = async function* (
+      frames: AsyncIterable<ProviderFrame>
+    ): AsyncGenerator<ProviderFrame, void, unknown> {
+      yield { kind: 'firstToken', at: 1000 }
+      for await (const frame of frames) {
+        yield frame.kind === 'firstToken' ? { kind: 'firstToken', at: 9000 } : frame
+      }
+    }
+    services.scriptService.generateScript = (...args) => reportedTwice(base.generateScript(...args))
+    services.scriptService.regenerateSection = (...args) =>
+      reportedTwice(base.regenerateSection(...args))
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
+    for (const generation of generationsOf(harness)) {
+      expect(generation.metrics?.firstTokenAt).toBe(1000)
+    }
+  })
+
+  it('never hands a turn that made no request of its own the previous turn’s numbers', async () => {
+    // The outline turn's record is taken and REMOVED as it is stored. The
+    // section turn below opens a generation and then fails before it reaches a
+    // stream at all, so it has nothing measured to report — and must say so,
+    // rather than being closed carrying the outline request's usage.
+    const harness = createHarness()
+    const services = (harness.orchestrator as unknown as { services: RawScriptServices }).services
+    const base = services.scriptService.generateScript
+    services.scriptService.generateScript = (...args) =>
+      (async function* (): AsyncGenerator<ProviderFrame, void, unknown> {
+        yield* base(...args)
+        yield { kind: 'usage', promptTokens: 900, completionTokens: 120 }
+      })()
+    services.scriptService.regenerateSection = () => {
+      throw new Error('the request never went out')
+    }
+
+    await expect(
+      harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+    ).rejects.toThrow()
+
+    const generations = generationsOf(harness)
+    expect(generations[0].metrics?.promptTokens).toBe(900)
+
+    const closed = generations[generations.length - 1]
+    expect(closed.response).toContain('ended before the model finished')
+    expect(closed.metrics).toBeUndefined()
+  })
+
+  it('gives each turn its own record rather than the previous turn’s', async () => {
+    const harness = createHarness()
+    const services = (harness.orchestrator as unknown as { services: RawScriptServices }).services
+    const base = services.scriptService.regenerateSection
+    let request = 0
+    services.scriptService.regenerateSection = (...args) => {
+      request += 1
+      const completionTokens = request * 100
+      const frames = base(...args)
+      return (async function* (): AsyncGenerator<ProviderFrame, void, unknown> {
+        yield* frames
+        yield { kind: 'usage', promptTokens: 900, completionTokens }
+      })()
+    }
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    const sectionGenerations = generationsOf(harness).filter(generation =>
+      generation.toolCalls?.some(call => call.name === SECTION_WRITE_TOOL)
+    )
+    expect(sectionGenerations.map(generation => generation.metrics?.completionTokens))
+      .toEqual([100, 200])
+  })
+})
+
+// --- what round each generation of a tool-written run belongs to -----------
+
+describe('the rounds a tool-written run records', () => {
+  it('files every attempt at one section under the single round that planned it', async () => {
+    const harness = createHarness({
+      body: (title, attempt) =>
+        title === 'Induction' && attempt === 1
+          ? words(SECTION_MAX_WORDS + 200)
+          : words(SECTION_TARGET_WORDS)
+    })
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    // Two generations for Induction — the refused draft and the rewrite —
+    // and one round between them: a round is what the plan asked for, not
+    // what it took to deliver.
+    const induction = generationsOf(harness).filter(generation =>
+      (generation.toolCalls ?? []).some(call => call.title === 'Induction'))
+    expect(induction).toHaveLength(2)
+    expect(induction[0].round).toEqual({ round: 2, kind: 'section', sectionIndex: 0 })
+    expect(induction[1].round).toEqual({ round: 2, kind: 'section', sectionIndex: 0 })
+
+    const rounds = generationsOf(harness).map(generation => generation.round!)
+    expect(rounds[0]).toEqual({ round: 1, kind: 'outline' })
+    expect(rounds[rounds.length - 1])
+      .toEqual({ round: 3, kind: 'section', sectionIndex: 1 })
+  })
+
+  it('files a handshake turn under the round it was answering for', async () => {
+    const harness = createHarness({
+      outlineReply: attempt =>
+        attempt === 1
+          ? { call: { name: GROUNDING_SELECT_TOOL, args: '{"query":"deep rest"}', id: 'call_g' } }
+          : null
+    })
+
+    await harness.orchestrator.generateScript({ prompt: 'A deep rest script' }, harness.conversation)
+
+    const generations = generationsOf(harness)
+    expect(generationsOf(harness).length).toBeGreaterThan(0)
+    // The refusal turn and the outline that followed it are one round
+    expect(generations[0].round).toEqual({ round: 1, kind: 'outline' })
+    expect(generations[1].round).toEqual({ round: 1, kind: 'outline' })
   })
 })

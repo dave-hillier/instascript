@@ -6,6 +6,7 @@ import {
   sectionStatusNote
 } from '../scriptProjection'
 import { consolidateSections } from '../conversationDocument'
+import { parseOutlineCritiqueResponse } from '../outlineCritique'
 import type { Generation, GenerationToolCall, RawConversation } from '../../types/conversation'
 
 // The seam has two branches and one conversation can contain both, so the
@@ -68,8 +69,9 @@ describe('sectionSlug', () => {
 
 describe('projectConversation: markdown generations', () => {
   it('projects nothing for a conversation with no generations', () => {
-    expect(projectConversation(undefined)).toEqual({ title: undefined, sections: [], fullContent: '' })
-    expect(projectConversation(conversationOf())).toEqual({ title: undefined, sections: [], fullContent: '' })
+    const empty = { title: undefined, outline: undefined, sections: [], rounds: [], fullContent: '' }
+    expect(projectConversation(undefined)).toEqual(empty)
+    expect(projectConversation(conversationOf())).toEqual(empty)
   })
 
   it('takes only the title from outlines and lets the last outline win', () => {
@@ -349,5 +351,289 @@ describe('the two folds agree about a rejected draft', () => {
 
     expect(projectConversation(waived).sections[0].content).toBe('Too short.')
     expect(consolidateSections(waived)).toEqual([{ title: 'Arrival', content: 'Too short.' }])
+  })
+})
+
+// A design review asked whether a critique or review generation's prose is
+// folded as script content: neither fold skips one, because a critique
+// response is neither an outline nor a rejected generation. It is not, and
+// these pin why — the three critique prompts each ask for a shape that folds
+// to nothing. VERDICT lines open no section, because a section is only opened
+// by a "## " heading; and the outline critique's revision is stored as the
+// revised outline itself, which both folds already skip as an outline.
+describe('the critique and review passes fold as nothing', () => {
+  const script = conversationOf(
+    markdownGeneration('# Deep Rest\n\n## Induction\nA plan.'),
+    markdownGeneration('## Induction\nBreathe out slowly and let go.')
+  )
+
+  const withCritique = (response: string): RawConversation =>
+    conversationOf(...script.generations, markdownGeneration(response))
+
+  const untouched = [{ title: 'Induction', content: 'Breathe out slowly and let go.' }]
+
+  it('leaves the script untouched after a style critique', () => {
+    // style-critique.txt: "Output only VERDICT lines, one per section"
+    const conversation = withCritique(
+      'VERDICT: Induction | compliant\nVERDICT: Awakening | violates 6 | Cliched imagery.'
+    )
+
+    expect(consolidateSections(conversation)).toEqual(untouched)
+    expect(projectConversation(conversation).sections[0].content)
+      .toBe('Breathe out slowly and let go.')
+  })
+
+  it('leaves the script untouched after a whole-script review, preamble and all', () => {
+    const conversation = withCritique(
+      'Here is my review of the script as a whole:\nVERDICT: Induction | cohesive'
+    )
+
+    expect(consolidateSections(conversation)).toEqual(untouched)
+    expect(projectConversation(conversation).sections).toHaveLength(1)
+  })
+
+  it('leaves the script untouched when the outline critique approves', () => {
+    const conversation = withCritique('OUTLINE OK')
+
+    expect(consolidateSections(conversation)).toEqual(untouched)
+    expect(projectConversation(conversation).sections).toHaveLength(1)
+    expect(projectConversation(conversation).sections[0].content)
+      .toBe('Breathe out slowly and let go.')
+  })
+
+  it('leaves the script untouched when the outline critique revises', () => {
+    // The orchestrator stores the revision as exactly the revised outline
+    // text, which begins at its "# " line, so both folds read it as an outline
+    const revised = parseOutlineCritiqueResponse(
+      'The balance is off.\n\n# Deep Rest\n## Induction\nSettle deeper.\n## Awakening\nReturn.'
+    )
+    const conversation = withCritique(revised.revisedOutlineText!)
+
+    expect(consolidateSections(conversation)).toEqual(untouched)
+    expect(projectConversation(conversation).title).toBe('Deep Rest')
+  })
+})
+
+// --- what the round planner reads out of a conversation -------------------
+
+const roundGeneration = (
+  response: string,
+  round: Generation['round'],
+  toolCalls?: Array<Omit<GenerationToolCall, 'id'>>
+): Generation => ({
+  ...(toolCalls ? toolGeneration(response, toolCalls) : markdownGeneration(response)),
+  round
+})
+
+describe('projectConversation: the plan the run is working to', () => {
+  const plan = '# Deep Rest\n## Induction\nSettle.\n## Awakening\nReturn.'
+
+  it('does not trust a prose outline that is the conversation\'s last generation', () => {
+    // It may have been cut off mid-plan and still parse; a shortened plan
+    // silently shortens the whole script.
+    const document = projectConversation(conversationOf(markdownGeneration(plan)))
+
+    expect(document.title).toBe('Deep Rest')
+    expect(document.outline).toBeUndefined()
+  })
+
+  it('trusts a prose outline once the conversation has moved past it', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration(plan),
+      markdownGeneration('## Induction\nBreathe out slowly.')
+    ))
+
+    expect(document.outline?.sections.map(section => section.title))
+      .toEqual(['Induction', 'Awakening'])
+  })
+
+  it('trusts a tool-written outline that is the last generation, because the call finished', () => {
+    const document = projectConversation(conversationOf(
+      roundGeneration(plan, { round: 1, kind: 'outline' }, [
+        { name: 'outline_write', title: 'Deep Rest', status: 'accepted' }
+      ])
+    ))
+
+    expect(document.outline?.sections.map(section => section.title))
+      .toEqual(['Induction', 'Awakening'])
+  })
+
+  it('takes no plan from a refused outline call', () => {
+    const document = projectConversation(conversationOf(
+      roundGeneration(plan, { round: 1, kind: 'outline' }, [
+        { name: 'outline_write', status: 'rejected', reason: 'REJECTED: no usable plan' }
+      ])
+    ))
+
+    expect(document.outline).toBeUndefined()
+  })
+
+  it('lets a revised plan from the outline critique supersede the first one', () => {
+    const revised = '# Deep Rest\n## Induction\nSettle.\n## Deepening\nDown.\n## Awakening\nReturn.'
+    const document = projectConversation(conversationOf(
+      markdownGeneration(plan),
+      roundGeneration(revised, { round: 2, kind: 'outline-critique' }),
+      markdownGeneration('## Induction\nBreathe out slowly.')
+    ))
+
+    expect(document.outline?.sections.map(section => section.title))
+      .toEqual(['Induction', 'Deepening', 'Awakening'])
+  })
+})
+
+describe('projectConversation: the rounds a conversation has a record of', () => {
+  it('collects them in the order they were admitted', () => {
+    const document = projectConversation(conversationOf(
+      roundGeneration('# Deep Rest\n## Induction\nSettle.', { round: 1, kind: 'outline' }),
+      roundGeneration('VERDICT: OUTLINE OK', { round: 2, kind: 'outline-critique' }),
+      roundGeneration('## Induction\nBreathe out.', { round: 3, kind: 'section', sectionIndex: 0 })
+    ))
+
+    expect(document.rounds).toEqual([
+      { round: 1, kind: 'outline' },
+      { round: 2, kind: 'outline-critique' },
+      { round: 3, kind: 'section', sectionIndex: 0 }
+    ])
+  })
+
+  // The asymmetry with the section fold, stated as a test: a round that
+  // produced nothing still ran and still used its number.
+  it('keeps the round of a wholly rejected generation, which the section fold drops', () => {
+    const conversation = conversationOf(
+      roundGeneration('## Induction\nToo short.', { round: 3, kind: 'section', sectionIndex: 0 }, [
+        { name: 'section_write', title: 'Induction', status: 'rejected', wordCount: 12 }
+      ])
+    )
+    const document = projectConversation(conversation)
+
+    expect(document.sections).toEqual([])
+    expect(document.rounds).toEqual([{ round: 3, kind: 'section', sectionIndex: 0 }])
+  })
+
+  it('tolerates a generation with no round at all, such as a manual edit', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nEdited by hand.'),
+      roundGeneration('## Awakening\nReturn now.', { round: 4, kind: 'section', sectionIndex: 1 })
+    ))
+
+    expect(document.rounds).toEqual([{ round: 4, kind: 'section', sectionIndex: 1 }])
+    expect(document.sections.map(section => section.title)).toEqual(['Induction', 'Awakening'])
+  })
+})
+
+describe('projectConversation: which body a resume redoes', () => {
+  it('suspects the prose body of the conversation\'s last generation', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('# Deep Rest\n## Induction\nSettle.'),
+      markdownGeneration('## Induction\nBreathe out slowly.'),
+      markdownGeneration('## Awakening\nAnd the stream stopped here')
+    ))
+
+    expect(document.sections.map(section => [section.title, section.truncationSuspect]))
+      .toEqual([['Induction', undefined], ['Awakening', true]])
+  })
+
+  it('never suspects a tool-written body, because the call is the finish evidence', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('# Deep Rest\n## Induction\nSettle.'),
+      roundGeneration('## Induction\nBreathe out slowly.', { round: 2, kind: 'section', sectionIndex: 0 }, [
+        { name: 'section_write', title: 'Induction', status: 'accepted', wordCount: 3 }
+      ])
+    ))
+
+    expect(document.sections[0].truncationSuspect).toBeUndefined()
+  })
+
+  it('clears the suspicion when a later generation rewrites the same section', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nCut off here'),
+      markdownGeneration('## Awakening\nReturn now.')
+    ))
+
+    expect(document.sections.find(section => section.title === 'Induction')!.truncationSuspect)
+      .toBeUndefined()
+  })
+})
+
+describe('a critique round is a reply about the script, never part of it', () => {
+  const script = conversationOf(
+    markdownGeneration('# Deep Rest\n\n## Induction\nA plan.'),
+    markdownGeneration('## Induction\nBreathe out slowly and let go.')
+  )
+
+  // The latent bug the round record fixes: a critique wording its verdicts
+  // under "## " headings used to become sections of the script.
+  it('does not turn a style critique\'s headings into sections', () => {
+    const conversation = conversationOf(
+      ...script.generations,
+      roundGeneration(
+        '## Induction\nVERDICT: violates 6 | Cliched imagery.\n\n## Awakening\nVERDICT: compliant',
+        { round: 5, kind: 'style-critique' }
+      )
+    )
+    const document = projectConversation(conversation)
+
+    expect(document.sections.map(section => section.title)).toEqual(['Induction'])
+    expect(document.sections[0].content).toBe('Breathe out slowly and let go.')
+  })
+
+  it('does not turn a whole-script review\'s headings into sections', () => {
+    const conversation = conversationOf(
+      ...script.generations,
+      roundGeneration('## Continuity\nThe arc holds.', { round: 6, kind: 'review' })
+    )
+
+    expect(projectConversation(conversation).sections.map(section => section.title))
+      .toEqual(['Induction'])
+  })
+
+  it('does not turn an outline critique\'s revised plan into sections', () => {
+    const conversation = conversationOf(
+      ...script.generations,
+      roundGeneration('# Deep Rest\n## Induction\nSettle.\n## Awakening\nReturn.',
+        { round: 3, kind: 'outline-critique' }),
+      markdownGeneration('## Awakening\nAnd back into the room.')
+    )
+    const document = projectConversation(conversation)
+
+    expect(document.sections.map(section => section.title)).toEqual(['Induction', 'Awakening'])
+    expect(document.sections[0].content).toBe('Breathe out slowly and let go.')
+  })
+})
+
+describe('a run folding its own conversation between rounds', () => {
+  const plan = '# Deep Rest\n## Induction\nSettle.\n## Awakening\nReturn.'
+
+  // Without this the loop could never move past its own outline round: the
+  // plan it just wrote is the last generation, so the positional rule would
+  // distrust it and the planner would ask for the outline again, forever.
+  it('trusts the prose outline it has just closed itself', () => {
+    const conversation = conversationOf(markdownGeneration(plan))
+
+    expect(projectConversation(conversation).outline).toBeUndefined()
+    expect(projectConversation(conversation, null, { lastGenerationSettled: true })
+      .outline?.sections.map(section => section.title)).toEqual(['Induction', 'Awakening'])
+  })
+
+  it('does not suspect the prose section it has just closed itself', () => {
+    const conversation = conversationOf(
+      markdownGeneration(plan),
+      markdownGeneration('## Induction\nBreathe out slowly.')
+    )
+
+    expect(projectConversation(conversation).sections[0].truncationSuspect).toBe(true)
+    expect(projectConversation(conversation, null, { lastGenerationSettled: true })
+      .sections[0].truncationSuspect).toBeUndefined()
+  })
+
+  it('carries the plan as it is stored, not as a re-render of the parse', () => {
+    const wordy = '# Deep Rest\n## Induction\nSettle down.\nAnd further down.'
+
+    expect(projectConversation(conversationOf(markdownGeneration(wordy)), null,
+      { lastGenerationSettled: true }).outlineText).toBe(wordy)
+  })
+
+  it('has no plan text when it has no plan', () => {
+    expect(projectConversation(conversationOf()).outlineText).toBeUndefined()
   })
 })

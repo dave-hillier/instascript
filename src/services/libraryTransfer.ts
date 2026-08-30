@@ -6,7 +6,7 @@
 import type { Script } from '../types/script'
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
 import { sanitizeSelectionCounts } from './exampleCorpus'
-import { sanitizeGenerationToolCalls } from './conversationParser'
+import { sanitizeGenerationToolCalls, sanitizeGenerationMetrics, sanitizeGenerationRound } from './conversationParser'
 
 export const LIBRARY_EXPORT_FORMAT = 'instascript-library'
 export const LIBRARY_EXPORT_VERSION = 1
@@ -130,7 +130,15 @@ const validateGeneration = (value: unknown, conversationId: string): Generation 
     // malformed tool call only costs the structure around prose that is
     // intact in `response`. Throwing here would abort the whole import over
     // a record nothing needs, so an unrecognised entry is simply dropped.
-    toolCalls: sanitizeGenerationToolCalls(value.toolCalls)
+    toolCalls: sanitizeGenerationToolCalls(value.toolCalls),
+    // Drop-not-throw as well, and for a stronger version of the same reason:
+    // metrics are a record ABOUT the request, so a malformed one costs a line
+    // of telemetry, while throwing here would abort the import of an entire
+    // library over it.
+    metrics: sanitizeGenerationMetrics(value.metrics),
+    // And again: a round record says why a generation was made. An import that
+    // cannot read one loses the reason, not the writing.
+    round: sanitizeGenerationRound(value.round)
   }
 }
 

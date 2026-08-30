@@ -49,6 +49,9 @@ describe('estimateConversationTokens', () => {
     // Outputs: 200 + 100 = 300
     expect(totals.outputTokens).toBe(300)
     expect(totals.generationCount).toBe(2)
+    // Neither generation recorded what the provider billed, so both were
+    // estimated
+    expect(totals.measuredCount).toBe(0)
   })
 
   it('returns zeros for an empty conversation', () => {
@@ -59,14 +62,14 @@ describe('estimateConversationTokens', () => {
       createdAt: 1,
       updatedAt: 1
     })
-    expect(totals).toEqual({ inputTokens: 0, outputTokens: 0, generationCount: 0 })
+    expect(totals).toEqual({ inputTokens: 0, outputTokens: 0, generationCount: 0, measuredCount: 0 })
   })
 })
 
 describe('estimateCostUsd', () => {
   it('prices known models from the static table', () => {
     const cost = estimateCostUsd(
-      { inputTokens: 1_000_000, outputTokens: 500_000, generationCount: 3 },
+      { inputTokens: 1_000_000, outputTokens: 500_000 },
       'gpt-5'
     )
     expect(cost).toBeCloseTo(1.25 + 5, 10)
@@ -74,7 +77,7 @@ describe('estimateCostUsd', () => {
 
   it('returns null for unknown models', () => {
     expect(
-      estimateCostUsd({ inputTokens: 1000, outputTokens: 1000, generationCount: 1 }, 'some/custom-model')
+      estimateCostUsd({ inputTokens: 1000, outputTokens: 1000 }, 'some/custom-model')
     ).toBeNull()
   })
 
@@ -101,5 +104,83 @@ describe('formatCostUsd', () => {
 
   it('collapses sub-cent costs to a floor', () => {
     expect(formatCostUsd(0.0004)).toBe('< $0.01')
+  })
+})
+
+
+describe('estimateConversationTokens with real provider usage', () => {
+  it('counts what the provider billed instead of guessing at the characters', () => {
+    const conversation = makeConversation()
+    conversation.generations[0].metrics = {
+      startedAt: 1,
+      endedAt: 2,
+      promptTokens: 1_000,
+      completionTokens: 400,
+      cachedTokens: 768,
+      finishReason: 'stop'
+    }
+    conversation.generations[1].metrics = {
+      startedAt: 3,
+      endedAt: 4,
+      promptTokens: 2_000,
+      completionTokens: 500,
+      finishReason: 'stop'
+    }
+
+    const totals = estimateConversationTokens(conversation)
+
+    // The character heuristic would have said 510 / 300 for this conversation
+    expect(totals.inputTokens).toBe(3_000)
+    expect(totals.outputTokens).toBe(900)
+    expect(totals.measuredCount).toBe(2)
+  })
+
+  it('keeps the estimate for a generation that predates metrics', () => {
+    const conversation = makeConversation()
+    conversation.generations[1].metrics = {
+      startedAt: 3,
+      endedAt: 4,
+      promptTokens: 2_000,
+      completionTokens: 500
+    }
+
+    const totals = estimateConversationTokens(conversation)
+
+    // Generation 0 is still estimated at 150 in / 200 out; generation 1 is
+    // measured. Without the fallback the older half of the conversation would
+    // silently read as free.
+    expect(totals.inputTokens).toBe(150 + 2_000)
+    expect(totals.outputTokens).toBe(200 + 500)
+    expect(totals.generationCount).toBe(2)
+    expect(totals.measuredCount).toBe(1)
+  })
+
+  it('falls back per side, for a provider that reported only one of them', () => {
+    const conversation = makeConversation()
+    conversation.generations[0].metrics = { startedAt: 1, endedAt: 2, completionTokens: 400 }
+    conversation.generations[1].metrics = { startedAt: 3, endedAt: 4 }
+
+    const totals = estimateConversationTokens(conversation)
+
+    expect(totals.inputTokens).toBe(510)
+    expect(totals.outputTokens).toBe(400 + 100)
+    expect(totals.measuredCount).toBe(1)
+  })
+
+  // The mirror of the case above: a provider that reported the prompt side and
+  // nothing else. The prompt figure alone is enough to count the generation as
+  // measured, exactly as the completion figure alone is.
+  it('counts a generation measured on a prompt figure the provider reported alone', () => {
+    const conversation = makeConversation()
+    conversation.generations[0].metrics = { startedAt: 1, endedAt: 2, promptTokens: 1_000 }
+    conversation.generations[1].metrics = { startedAt: 3, endedAt: 4 }
+
+    const totals = estimateConversationTokens(conversation)
+
+    // Generation 0's input is the reported 1000, its output still the
+    // estimated 200; generation 1 is estimated on both sides
+    expect(totals.inputTokens).toBe(1_000 + 360)
+    expect(totals.outputTokens).toBe(200 + 100)
+    expect(totals.measuredCount).toBe(1)
   })
 })

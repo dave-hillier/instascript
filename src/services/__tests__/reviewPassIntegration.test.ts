@@ -609,3 +609,213 @@ describe('which requests the exemplars ride on', () => {
     vi.restoreAllMocks()
   }, 30000)
 })
+
+// --- the round records a planned run leaves behind ------------------------
+
+// Exactly what a conversation written before round records reads back as
+const stripRounds = (generation: Generation): Generation => {
+  const stripped = { ...generation }
+  delete stripped.round
+  return stripped
+}
+
+describe('a planned run records the rounds it took', () => {
+  it('stamps every generation with the round that produced it, numbered from one', async () => {
+    const { orchestrator, conversation, getState } = createHarness(false)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    const generations = getState().conversations[0].generations
+    expect(generations.every(generation => generation.round !== undefined)).toBe(true)
+
+    const numbers = generations.map(generation => generation.round!.round)
+    expect(numbers[0]).toBe(1)
+    // Never decreasing, and a section round can open more than one generation
+    expect([...numbers].sort((a, b) => a - b)).toEqual(numbers)
+
+    expect(generations[0].round).toEqual({ round: 1, kind: 'outline' })
+    const planned = parseOutline(generations[0].response)?.sections ?? []
+    for (let index = 0; index < planned.length; index++) {
+      const section = writingGenerations(generations, planned[index].title)[0]
+      expect(section.round).toMatchObject({ kind: 'section', sectionIndex: index })
+    }
+  })
+
+  it('records the optional passes the pipeline asked for, in the order they ran', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(true)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    const generations = getState().conversations[0].generations
+    expect(outlineCritiqueGeneration(generations)!.round!.kind).toBe('outline-critique')
+    expect(styleCritiqueGeneration(generations)!.round!.kind).toBe('style-critique')
+
+    // The kinds a whole run takes, with the repeats collapsed
+    const kinds = generations
+      .map(generation => generation.round!.kind)
+      .filter((kind, index, all) => kind !== all[index - 1])
+    expect(kinds[0]).toBe('outline')
+    expect(kinds[1]).toBe('outline-critique')
+    expect(kinds[2]).toBe('section')
+    expect(kinds[kinds.length - 1]).toBe('style-critique')
+  })
+
+  // The record gate, end to end: a run resumed over a finished script must not
+  // critique its style a second time, because an approving critique leaves
+  // prose indistinguishable from a stage that never ran.
+  it('does not critique the style again when its record is already in the conversation', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const first = createHarness(true)
+
+    await first.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: first.conversation.id },
+      first.conversation
+    )
+
+    const written = first.getState().conversations[0].generations
+    const second = createHarness(true)
+    // Seeded into the harness's own state, which is what a reload leaves
+    second.conversation.generations.push(...written)
+
+    await second.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: second.conversation.id },
+      second.conversation
+    )
+
+    expect(second.getState().conversations[0].generations).toHaveLength(written.length)
+  })
+
+  // The numbering continues from what is stored, so a resumed run cannot
+  // re-issue a number already spent.
+  it('continues the numbering a stored conversation already carries', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const first = createHarness(false)
+
+    await first.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: first.conversation.id },
+      first.conversation
+    )
+
+    const written = first.getState().conversations[0]
+    const lastRound = written.generations[written.generations.length - 1].round!.round
+    // Drop the final section so the resumed run has something to plan
+    const kept = written.generations.slice(0, -1)
+
+    const second = createHarness(false)
+    second.conversation.generations.push(...kept)
+    await second.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: second.conversation.id },
+      second.conversation
+    )
+
+    const resumedRounds = second.getState().conversations[0].generations
+      .slice(kept.length)
+      .map(generation => generation.round!.round)
+    expect(resumedRounds.length).toBeGreaterThan(0)
+    expect(Math.min(...resumedRounds)).toBeGreaterThan(lastRound - 1)
+  })
+
+  // A legacy conversation carries no round records and its optional passes may
+  // well have run. Re-critiquing it on every open would be the alternative.
+  it('treats a conversation written before rounds existed as already critiqued', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const first = createHarness(false)
+
+    await first.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: first.conversation.id },
+      first.conversation
+    )
+
+    // Exactly what an old file reads back as: prose, and not one round record
+    const legacy = first.getState().conversations[0].generations.map(stripRounds)
+
+    const second = createHarness(true)
+    second.conversation.generations.push(...legacy)
+    await second.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: second.conversation.id },
+      second.conversation
+    )
+
+    const added = second.getState().conversations[0].generations.slice(legacy.length)
+    expect(added).toHaveLength(0)
+  })
+
+  it('still resumes a half-finished legacy conversation at the right section', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const first = createHarness(false)
+
+    await first.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: first.conversation.id },
+      first.conversation
+    )
+
+    const written = first.getState().conversations[0].generations
+    const planned = parseOutline(written[0].response)?.sections ?? []
+    const half = written.slice(0, written.length - 1).map(stripRounds)
+
+    const second = createHarness(false)
+    second.conversation.generations.push(...half)
+    await second.orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: second.conversation.id },
+      second.conversation
+    )
+
+    const added = second.getState().conversations[0].generations.slice(half.length)
+    expect(added.length).toBeGreaterThan(0)
+    // It wrote sections, not another outline
+    expect(added.every(generation => generation.round!.kind === 'section')).toBe(true)
+    expect(writingGenerations(added, planned[planned.length - 1].title).length)
+      .toBeGreaterThan(0)
+  })
+})
+
+describe('the whole-script review is a command that leaves a record', () => {
+  it('stamps a review round on everything the button writes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(false)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+    const beforeReview = getState().conversations[0].generations
+    const lastRound = beforeReview[beforeReview.length - 1].round!.round
+
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
+
+    const added = getState().conversations[0].generations.slice(beforeReview.length)
+    expect(added.length).toBeGreaterThan(0)
+    for (const generation of added) {
+      expect(generation.round).toEqual({ round: lastRound + 1, kind: 'review' })
+    }
+  })
+
+  // It is repeatable: a record gate would forbid the reader's second press,
+  // and the button is not gated by one.
+  it('can be pressed again, and numbers the second pass after the first', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { orchestrator, conversation, getState } = createHarness(false)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
+    const afterFirst = getState().conversations[0].generations
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
+    const afterSecond = getState().conversations[0].generations
+
+    expect(afterSecond.length).toBeGreaterThan(afterFirst.length)
+    const rounds = afterSecond.slice(afterFirst.length).map(generation => generation.round!.round)
+    expect(new Set(rounds).size).toBe(1)
+    expect(rounds[0]).toBe(afterFirst[afterFirst.length - 1].round!.round + 1)
+  })
+})

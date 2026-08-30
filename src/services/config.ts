@@ -208,14 +208,13 @@ export function setBriefingStageEnabled(enabled: boolean): void {
 // Whether the optional style-review pass (story 8.5) runs after each full
 // generation. Opt-in, since it adds one critique request plus up to two
 // section regenerations per run.
+// Read through readSetting like every other setting, rather than reaching for
+// window.localStorage directly: this is now read on the way into a generation
+// run, and a run is exercised in a node process where there is no window at
+// all — the bare read threw there, where every other setting simply returned
+// its default.
 export function isReviewPassEnabled(): boolean {
-  try {
-    const item = window.localStorage.getItem('reviewPass')
-    return item ? JSON.parse(item) === true : false
-  } catch (error) {
-    console.warn('Error loading review pass setting from localStorage:', error)
-    return false
-  }
+  return readSetting<boolean>('reviewPass', false) === true
 }
 
 export function createAppConfig(): AppConfig {

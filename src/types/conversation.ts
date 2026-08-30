@@ -108,16 +108,115 @@ export interface GenerationToolCall {
 // that it stays visible instead of quietly reading as a clean acceptance.
 export type GenerationToolCallStatus = 'accepted' | 'rejected' | 'waived'
 
+// The stages a run can be asked to perform, in the vocabulary the planner and
+// the round record share. It is declared HERE rather than beside the planner
+// so that the durable type can name it without the types module reaching down
+// into a service: everything under types/ is read by the parser, the importer
+// and the reducer, and none of them should have to import a planner to read a
+// stored field.
+//
+// Deliberately short. There is no 'grounding' and no 'briefing': grounding is
+// local retrieval performed once as a run precondition, and briefing happens
+// before the conversation exists. A kind this build does not recognise is
+// dropped on the way in, so a later build can add one without stranding a file
+// written by this one.
+export type PlannedRoundKind =
+  | 'outline'
+  | 'outline-critique'
+  | 'section'
+  | 'style-critique'
+  | 'review'
+
+// One planned round this generation is the product of. Like GenerationToolCall
+// it carries STRUCTURE, never prose, and is plain structured-cloneable data:
+// duplicateRawConversation copies generations with structuredClone.
+//
+// It exists for the stages that legitimately produce no artifact of their own.
+// An outline critique that approves and one that never ran leave the same
+// conversation behind, so without a record of the round a planner reading that
+// conversation back would ask for the critique again, and again, forever.
+export interface GenerationRound {
+  // Monotonic within the conversation. Numbering advances from the last
+  // record, not from how many records there are, so a round whose generations
+  // were discarded still consumed its number.
+  round: number
+  kind: PlannedRoundKind
+  // Present only on a section round: the index into the outline the round was
+  // planned against. Recorded for the activity log and for reading a plan
+  // back; the section gate itself matches on TITLE, because an outline
+  // critique can rewrite the plan and reorder it under the sections already
+  // written.
+  sectionIndex?: number
+}
+
+// What one provider request cost and how it behaved, recorded on the
+// generation the request produced. The frames carrying this — `firstToken`,
+// `usage`, `finished` — have been streaming past unread since the frame
+// protocol landed, while the cost summary estimated tokens from a character
+// heuristic; this is where the real numbers come to rest so they survive a
+// reload, an export and a duplicate.
+//
+// Every field but the span is OPTIONAL, because every one of them is
+// something a provider may simply not send: a provider without
+// `include_usage` reports no tokens, a stream that dies reports no finish
+// reason, and a generation written before this existed has no metrics at all.
+// A reader must treat all of it as evidence that may be missing rather than
+// as a record it can require.
+//
+// Deliberately NOT here: the model and provider names (they live on the
+// Script, and a per-generation copy would be a second truth to keep in step);
+// duration and latency-to-first-token (arithmetic on the fields below);
+// cost (arithmetic on the tokens and the price table, which changes after the
+// fact); and reasoning tokens (nothing in the stream carries them today, so
+// the field would be permanently unpopulated — exactly the defect
+// `cachedTokens` had).
+//
+// Plain structured-cloneable data, like GenerationToolCall above and for the
+// same reason: `duplicateRawConversation` copies generations with
+// `structuredClone`.
+export interface GenerationMetrics {
+  // When the request went out and when its stream ended, in epoch
+  // milliseconds. The pair is the one thing always present — it is measured
+  // here rather than reported by the provider.
+  startedAt: number
+  endedAt: number
+  // When the first delta of either kind arrived, as the stream reported it
+  firstTokenAt?: number
+  promptTokens?: number
+  completionTokens?: number
+  // The cached share of promptTokens, where the provider breaks it out
+  cachedTokens?: number
+  // The provider's own finish_reason ('stop', 'tool_calls', 'length', ...)
+  finishReason?: string
+  // Set only when the turn ended before the model finished — the user
+  // stopping the run, or a stream that failed. Absent means it ran to an end,
+  // not that it succeeded: `finishReason` is what says how it ended.
+  aborted?: boolean
+}
+
 export interface Generation {
   messages: ChatMessage[] // Complete messages array sent to OpenAI
   response: string // Assistant response received
   timestamp: number
-  cachedTokens?: number // From OpenAI response for monitoring cache hits
+  // The cached share of the prompt the provider billed. It predates
+  // `metrics` and is what conversations written before them carry, so it is
+  // kept and still written; on a generation written since, it is the same
+  // number as `metrics.cachedTokens` because both are set from one reading.
+  cachedTokens?: number
   exampleIds?: string[] // Ids of the corpus examples that informed this generation
   // The writing tool calls this generation is made of, when it was written by
   // tool call rather than as prose. Absent on every generation stored before
   // the tools existed, and on any generation that made no call.
   toolCalls?: GenerationToolCall[]
+  // What the request behind this generation cost and how it ended. Absent on
+  // every generation stored before metrics existed, and on any generation
+  // whose provider reported nothing.
+  metrics?: GenerationMetrics
+  // The planned round this generation was produced for, when it was produced
+  // by a planned run at all. Absent on a manual section edit, on every
+  // generation stored before rounds existed, and on the reader-initiated
+  // commands that are not rounds.
+  round?: GenerationRound
 }
 
 export interface RawConversation {

@@ -3,7 +3,10 @@ import type {
   RawConversation,
   Generation,
   ChatMessage,
-  GenerationToolCall
+  GenerationToolCall,
+  GenerationMetrics,
+  GenerationRound,
+  PlannedRoundKind
 } from '../types/conversation'
 import {
   GROUNDING_SELECT_TOOL,
@@ -66,6 +69,88 @@ export const sanitizeGenerationToolCalls = (value: unknown): GenerationToolCall[
   return calls.length > 0 ? calls : undefined
 }
 
+// Reads stored run metrics back, on exactly the terms the tool calls above
+// are read on: anything unrecognised is DROPPED rather than thrown, because
+// metrics are evidence about a request and the script itself is in
+// `response` — a malformed number is not worth losing a conversation over.
+//
+// The span is the admission test. A record with no startedAt/endedAt is not a
+// measurement of anything, and every other field is optional, so without the
+// pair there would be nothing to distinguish a metrics record from an empty
+// object. Each remaining field is dropped on its own if it is the wrong shape,
+// and the whole thing is rebuilt in declaration order so that a reparsed
+// record serializes back to byte-identical YAML — a file that changed every
+// time it was opened would churn storage for nothing.
+export const sanitizeGenerationMetrics = (value: unknown): GenerationMetrics | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+
+  const finiteNumber = (field: unknown): number | undefined =>
+    typeof field === 'number' && Number.isFinite(field) ? field : undefined
+
+  const startedAt = finiteNumber(record.startedAt)
+  const endedAt = finiteNumber(record.endedAt)
+  if (startedAt === undefined || endedAt === undefined) return undefined
+
+  const firstTokenAt = finiteNumber(record.firstTokenAt)
+  const promptTokens = finiteNumber(record.promptTokens)
+  const completionTokens = finiteNumber(record.completionTokens)
+  const cachedTokens = finiteNumber(record.cachedTokens)
+
+  return {
+    startedAt,
+    endedAt,
+    ...(firstTokenAt !== undefined ? { firstTokenAt } : {}),
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(cachedTokens !== undefined ? { cachedTokens } : {}),
+    ...(typeof record.finishReason === 'string' && record.finishReason.length > 0
+      ? { finishReason: record.finishReason }
+      : {}),
+    // Only an explicit true is an abort. Anything else — absent, false, a
+    // string — reads as "nothing was recorded", which is what absent means.
+    ...(record.aborted === true ? { aborted: true } : {})
+  }
+}
+
+const ROUND_KINDS: readonly string[] = [
+  'outline',
+  'outline-critique',
+  'section',
+  'style-critique',
+  'review'
+]
+
+const isPlannedRoundKind = (value: unknown): value is PlannedRoundKind =>
+  typeof value === 'string' && ROUND_KINDS.includes(value)
+
+// Reads a stored round record back, on exactly the terms the tool calls above
+// are read on: drop, never throw. A file may have been written by a build that
+// plans a stage this one has never heard of, and the script is in `response`
+// either way — an unreadable record of WHY a generation was made is not worth
+// losing the generation over. A dropped record costs one thing and one thing
+// only: a planner reading that conversation back may re-run a stage whose
+// record it could not read, which maxRounds bounds.
+//
+// Fields are rebuilt in the order they are declared on GenerationRound so that
+// a reparsed record serializes back to byte-identical YAML — a file that
+// changed every time it was opened would churn storage for nothing.
+export const sanitizeGenerationRound = (value: unknown): GenerationRound | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+
+  if (typeof record.round !== 'number' || !Number.isFinite(record.round)) return undefined
+  if (!isPlannedRoundKind(record.kind)) return undefined
+
+  return {
+    round: record.round,
+    kind: record.kind,
+    ...(typeof record.sectionIndex === 'number' && Number.isFinite(record.sectionIndex)
+      ? { sectionIndex: record.sectionIndex }
+      : {})
+  }
+}
+
 interface YamlBlock {
   type: 'conversation' | 'prompt' | 'response'
   timestamp?: number
@@ -78,6 +163,8 @@ interface YamlBlock {
   model?: string
   exampleIds?: string[]
   toolCalls?: unknown
+  metrics?: unknown
+  round?: unknown
 }
 
 export function parseConversationFromYamlMarkdown(content: string): RawConversation | null {
@@ -102,8 +189,11 @@ export function parseConversationFromYamlMarkdown(content: string): RawConversat
           id: parsed.id || '',
           scriptId: parsed.scriptId || '',
           generations: [],
-          createdAt: parsed.createdAt || Date.now(),
-          updatedAt: parsed.updatedAt || Date.now()
+          // `??`, never `||`: an epoch timestamp of 0 is a real timestamp,
+          // and treating it as absent would re-stamp it with now — so the same
+          // file would come back different every time it was opened
+          createdAt: parsed.createdAt ?? Date.now(),
+          updatedAt: parsed.updatedAt ?? Date.now()
         }
       } else if (parsed.type === 'prompt' && parsed.role === 'user') {
         const nextBlock = blocks[i + 1]?.trim()
@@ -125,6 +215,16 @@ export function parseConversationFromYamlMarkdown(content: string): RawConversat
         // A generation earns its place if it produced prose or made a tool
         // call. Skipping a bodiless one would strand its prompt in
         // pendingPrompt and attach it to the next generation instead.
+        //
+        // A round record is deliberately NOT part of this test, and must never
+        // become part of it. The already-deployed parser has never heard of
+        // `round`, so a generation earning its place through a round alone
+        // would be dropped by that parser and strand its prompt onto the next
+        // generation — the file would read differently in the two builds. The
+        // invariant that makes this safe: a round record only ever rides on a
+        // generation that already earns its place through prose or a tool
+        // call, which every round handler satisfies by always storing one
+        // non-empty line even when its stage wrote nothing.
         if (body || toolCalls) {
           if (pendingPrompt) {
             currentMessages.push(pendingPrompt)
@@ -149,7 +249,9 @@ export function parseConversationFromYamlMarkdown(content: string): RawConversat
             exampleIds: Array.isArray(parsed.exampleIds)
               ? parsed.exampleIds.map(String)
               : undefined,
-            toolCalls
+            toolCalls,
+            metrics: sanitizeGenerationMetrics(parsed.metrics),
+            round: sanitizeGenerationRound(parsed.round)
           })
 
           pendingPrompt = null
@@ -185,12 +287,28 @@ export function serializeConversationToYamlMarkdown(conversation: RawConversatio
   lines.push('')
   
   for (const generation of conversation.generations) {
-    const userMessage = generation.messages.find(m => m.role === 'user')
-    const assistantMessage = generation.messages.find(m => m.role === 'assistant')
+    // The LAST user message, not the first: every generation after the outline
+    // is sent the whole flattened conversation (buildConversationHistory), so
+    // its `messages` open with the outline prompt and end with the request this
+    // generation actually made. Writing the first would file the outline prompt
+    // as every generation's prompt, and since parsing rebuilds `messages` by
+    // accumulating the blocks it reads, one save-and-reload would make that the
+    // stored truth — leaving the activity thread, which matches on the request
+    // wording, with nothing to match. The same reasoning picks the last
+    // assistant message: on a reparsed generation the earlier ones belong to
+    // earlier generations.
+    const userMessage = [...generation.messages].reverse().find(m => m.role === 'user')
+    const assistantMessage = [...generation.messages].reverse().find(m => m.role === 'assistant')
     // The generation's own response is authoritative; some generations (e.g.
     // the outline) carry no assistant message in their request messages
     const responseContent = generation.response || assistantMessage?.content || ''
     const toolCalls = generation.toolCalls
+    // Written through the same sanitizer that reads it back, so a serialize →
+    // parse → serialize round trip is byte-stable whatever a caller put on the
+    // generation
+    const metrics = sanitizeGenerationMetrics(generation.metrics)
+    // Same round trip, same reason
+    const round = sanitizeGenerationRound(generation.round)
     
     if (userMessage) {
       lines.push('---')
@@ -219,7 +337,16 @@ export function serializeConversationToYamlMarkdown(conversation: RawConversatio
           : {}),
         // Optional, like exampleIds: absent when there are none, so files
         // written here still parse under a build that predates the field
-        ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {})
+        ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+        // Also optional, and deliberately NOT part of the admission test
+        // above: metrics describe a request, so they are worth keeping when a
+        // generation is kept, and never a reason on their own to keep a
+        // generation that wrote nothing.
+        ...(metrics ? { metrics } : {}),
+        // Optional and, like metrics, deliberately not part of the admission
+        // test above: a round says why a generation was made, never that one
+        // should be kept
+        ...(round ? { round } : {})
       }).trim())
       lines.push('---')
       lines.push(responseContent)

@@ -137,3 +137,160 @@ describe('rawConversationReducer generation tool calls', () => {
     expect(latestOf(next).toolCalls).toBeUndefined()
   })
 })
+
+
+describe('rawConversationReducer COMPLETE_GENERATION run metrics', () => {
+  const openState = (): RawConversationState => ({
+    conversations: [{
+      id: 'conv_a',
+      scriptId: 'script_a',
+      generations: [{
+        messages: [{ role: 'user', content: 'write a script' }],
+        response: '',
+        timestamp: 1000
+      }],
+      createdAt: 1000,
+      updatedAt: 1000
+    }],
+    currentGeneration: null,
+    generationMachine: null,
+    reviewReport: null
+  })
+
+  const metrics = {
+    startedAt: 1400,
+    endedAt: 1500,
+    firstTokenAt: 1420,
+    promptTokens: 900,
+    completionTokens: 120,
+    cachedTokens: 768,
+    finishReason: 'stop'
+  }
+
+  it('stores what the request cost on the generation it closes', () => {
+    const next = rawConversationReducer(openState(), {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Induction\nBreathe.',
+      metrics
+    })
+
+    expect(next.conversations[0].generations[0].metrics).toEqual(metrics)
+  })
+
+  it('fills the legacy cache count from the same reading, so the two agree', () => {
+    const next = rawConversationReducer(openState(), {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Induction\nBreathe.',
+      metrics
+    })
+
+    expect(next.conversations[0].generations[0].cachedTokens).toBe(768)
+  })
+
+  it('keeps the metrics already stored when a later completion carries none', () => {
+    // The prose section retry rewrites an already-completed generation when
+    // the FIRST attempt won. It makes no request of its own, so it must not
+    // erase what the retry request cost.
+    const completed = rawConversationReducer(openState(), {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Induction\nBreathe out slowly.',
+      metrics
+    })
+
+    const rewritten = rawConversationReducer(completed, {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Induction\nBreathe.'
+    })
+
+    expect(rewritten.conversations[0].generations[0].response).toBe('## Induction\nBreathe.')
+    expect(rewritten.conversations[0].generations[0].metrics).toEqual(metrics)
+    expect(rewritten.conversations[0].generations[0].cachedTokens).toBe(768)
+  })
+
+  it('leaves a completion that measured nothing without metrics', () => {
+    const next = rawConversationReducer(openState(), {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Induction\nBreathe.'
+    })
+
+    expect(next.conversations[0].generations[0].metrics).toBeUndefined()
+    expect(next.conversations[0].generations[0].cachedTokens).toBeUndefined()
+  })
+})
+
+describe('the round a generation belongs to', () => {
+  // A conversation with no generations yet, so every index below is the
+  // generation the test just opened
+  const baseState = (): RawConversationState => ({
+    conversations: [{ ...makeConversation('conv_a'), generations: [] }],
+    currentGeneration: null,
+    generationMachine: null,
+    reviewReport: null
+  })
+
+  it('stamps the round the run planned onto the generation it opens', () => {
+    const state = rawConversationReducer(
+      baseState(),
+      {
+        type: 'START_GENERATION',
+        conversationId: 'conv_a',
+        messages: [{ role: 'user', content: 'write the induction' }],
+        round: { round: 3, kind: 'section', sectionIndex: 0 }
+      }
+    )
+
+    expect(state.conversations[0].generations[0].round)
+      .toEqual({ round: 3, kind: 'section', sectionIndex: 0 })
+  })
+
+  // A round is fixed the moment a generation is opened, so it must NOT get
+  // the accumulate-merge toolCalls gets: an inherited round number would let
+  // a new generation claim the previous round's place in the plan.
+  it('does not inherit the previous generation\'s round', () => {
+    let state = rawConversationReducer(baseState(), {
+      type: 'START_GENERATION',
+      conversationId: 'conv_a',
+      messages: [{ role: 'user', content: 'write the induction' }],
+      round: { round: 3, kind: 'section', sectionIndex: 0 }
+    })
+    state = rawConversationReducer(state, {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Induction\nBreathe out.'
+    })
+    state = rawConversationReducer(state, {
+      type: 'START_GENERATION',
+      conversationId: 'conv_a',
+      messages: [{ role: 'user', content: 'a rewrite the reader asked for' }]
+    })
+
+    expect(state.conversations[0].generations[1].round).toBeUndefined()
+  })
+
+  it('carries the round through the streaming and closing of its generation', () => {
+    let state = rawConversationReducer(baseState(), {
+      type: 'START_GENERATION',
+      conversationId: 'conv_a',
+      messages: [{ role: 'user', content: 'critique the outline' }],
+      round: { round: 2, kind: 'outline-critique' }
+    })
+    state = rawConversationReducer(state, {
+      type: 'UPDATE_CURRENT_GENERATION',
+      conversationId: 'conv_a',
+      response: 'VERDICT'
+    })
+    state = rawConversationReducer(state, {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: 'VERDICT: APPROVED'
+    })
+
+    expect(state.conversations[0].generations[0].round)
+      .toEqual({ round: 2, kind: 'outline-critique' })
+  })
+})

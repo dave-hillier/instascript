@@ -1,10 +1,12 @@
 import { countWords, extractDocumentTitle } from '../utils/scriptMetrics'
-import { isOutlineResponse, isRejectedGeneration } from './conversationDocument'
+import { isOutlineResponse, isRejectedGeneration, parseOutline } from './conversationDocument'
 import type {
   Generation,
+  GenerationRound,
   GenerationToolCall,
   GenerationToolCallStatus,
-  RawConversation
+  RawConversation,
+  ScriptOutline
 } from '../types/conversation'
 
 // Where a conversation becomes the document a reader sees: the reading view
@@ -26,6 +28,14 @@ import type {
 //
 // Pure over its inputs — no React, no window — so it can be read and tested
 // without dragging the page's browser-only dependencies in.
+//
+// Since the round planner reads this, the projection also answers two
+// questions no reading view ever asked: which PLAN the run is working to, and
+// which rounds this conversation has a record of. The rounds fold deliberately
+// does NOT skip a rejected generation, unlike the section fold beside it: a
+// round that produced nothing still ran and still used its number, and a
+// planner that could not see it would propose it forever. The two folds answer
+// different questions and the asymmetry is the point.
 
 export interface ProjectedSection {
   // Stable slug the reading view wires into aria-controls
@@ -41,11 +51,38 @@ export interface ProjectedSection {
   status?: GenerationToolCallStatus
   // The waiver's justification, as the tool handler worded it
   statusReason?: string
+  // True when this body was folded out of markdown written by the
+  // conversation's LAST generation, so the stream behind it may have been cut
+  // off mid-sentence and the body may be a fragment. A tool-written body is
+  // never suspect: the tool path stores a body only from a stream that
+  // finished cleanly, so a call's existence IS the finish evidence. This is
+  // what a resume redoes a section on, in place of the old positional guess
+  // that redid the last written section unconditionally.
+  truncationSuspect?: boolean
 }
 
 export interface ProjectedDocument {
   title?: string
+  // The plan the run is working to, when a trustworthy one has been written.
+  //
+  // Three derivations of "the outline" existed before this one and disagreed;
+  // this is the single answer the planner reads. A plan written by an
+  // outline_write call is trusted outright, because the tool path stores one
+  // only from a cleanly finished stream. A plan folded out of PROSE is trusted
+  // only once the conversation has moved past it: a reply cut off at "## Awak"
+  // still parses as an outline, and a shortened plan silently shortens the
+  // whole script, so a later generation is the evidence that the outline
+  // finished streaming.
+  outline?: ScriptOutline
+  // The same plan as it is stored, which is what the prompts are built from.
+  // parseOutline keeps only the first line of each section's description, so
+  // re-rendering the parse would quietly shorten every brief the run sends;
+  // both forms come out of the one fold instead.
+  outlineText?: string
   sections: ProjectedSection[]
+  // Every round this conversation has a record of, in the order they were
+  // admitted, rejected generations included (see the module comment).
+  rounds: GenerationRound[]
   fullContent: string
 }
 
@@ -140,6 +177,15 @@ const upsert = (sections: ProjectedSection[], section: ProjectedSection): void =
   }
 }
 
+// What one generation contributed, beyond the sections it wrote into the
+// accumulator: the document title, and the plan when this generation is one
+// the plan can be trusted from.
+interface FoldResult {
+  title?: string
+  outline?: ScriptOutline
+  outlineText?: string
+}
+
 // --- the tool-call branch ------------------------------------------------
 //
 // Tool calls deliberately do NOT persist the section body: the rendered
@@ -174,13 +220,15 @@ const foldToolCalls = (
   generation: Generation,
   calls: GenerationToolCall[],
   sections: ProjectedSection[]
-): string | undefined => {
+): FoldResult => {
   const parsed = parseSections(generation.response).sections
   // Every heading some call spoke for, so the sweep below can tell prose the
   // calls left unclaimed from prose a call already folded or refused.
   const claimed = new Set<string>()
   let foldedSection = false
   let title: string | undefined
+  let outline: ScriptOutline | undefined
+  let outlineText: string | undefined
 
   for (const call of calls) {
     if (call.name === 'outline_write') {
@@ -189,6 +237,15 @@ const foldToolCalls = (
       parsed.forEach(section => claimed.add(section.title))
       if (call.status !== 'rejected') {
         title = call.title ?? extractDocumentTitle(generation.response) ?? title
+        // The plan itself, and trusted with no last-generation check: the tool
+        // path stores a rendered outline only from a stream that finished
+        // cleanly, so the call's existence is the finish evidence the prose
+        // rule below has to guess at.
+        const parsed = parseOutline(generation.response)
+        if (parsed) {
+          outline = parsed
+          outlineText = generation.response
+        }
       }
       continue
     }
@@ -226,42 +283,84 @@ const foldToolCalls = (
     }
   }
 
-  return title
+  return { title, outline, outlineText }
 }
 
 // --- the legacy markdown branch -----------------------------------------
 
 const foldMarkdown = (
   generation: Generation,
-  sections: ProjectedSection[]
-): string | undefined => {
+  sections: ProjectedSection[],
+  unsettled: boolean
+): FoldResult => {
   if (isOutlineResponse(generation.response)) {
-    return extractDocumentTitle(generation.response) ?? undefined
+    const parsed = unsettled ? null : parseOutline(generation.response)
+    return {
+      title: extractDocumentTitle(generation.response) ?? undefined,
+      // Only from a plan whose stream demonstrably ended. A prose reply cut
+      // off mid-plan still parses, and a shortened plan shortens the whole
+      // script; section writing opens a new generation, so a later generation
+      // is proof that this outline finished — as is a run telling us it
+      // closed this generation itself.
+      outline: parsed ?? undefined,
+      outlineText: parsed ? generation.response : undefined
+    }
   }
 
   for (const section of parseSections(generation.response).sections) {
-    upsert(sections, section)
+    // Nothing later can clear the mark, because there is nothing later — a
+    // subsequent generation would make this one settled, and an upsert of the
+    // same title writes a fresh section without it.
+    upsert(sections, unsettled ? { ...section, truncationSuspect: true } : section)
   }
-  return undefined
+  return {}
 }
 
 // --- the projection ------------------------------------------------------
 
+// What a caller knows about the conversation that the conversation itself
+// cannot say.
+export interface ProjectionContext {
+  // True when the conversation's LAST generation is finished as far as the
+  // caller is concerned. A run folding its own conversation between rounds
+  // knows this and a reader of a conversation at rest does not: the run closed
+  // that generation itself, one statement ago, so its body is whole.
+  //
+  // Left unset, the last generation is treated as possibly cut off mid-stream,
+  // which is what makes a resume redo the body it stopped in the middle of.
+  lastGenerationSettled?: boolean
+}
+
 export function projectConversation(
   conversation: RawConversation | undefined,
-  currentGeneration?: LiveGeneration | null
+  currentGeneration?: LiveGeneration | null,
+  context?: ProjectionContext
 ): ProjectedDocument {
   const sections: ProjectedSection[] = []
+  const rounds: GenerationRound[] = []
   let title: string | undefined
+  let outline: ScriptOutline | undefined
+  let outlineText: string | undefined
 
-  for (const generation of conversation?.generations ?? []) {
+  const generations = conversation?.generations ?? []
+  const unsettledIndex = context?.lastGenerationSettled ? -1 : generations.length - 1
+  for (let i = 0; i < generations.length; i++) {
+    const generation = generations[i]
+    // Collected before anything else and from EVERY generation, refused
+    // attempts included: a round that produced nothing still ran.
+    if (generation.round) rounds.push(generation.round)
+
     const calls = readToolCalls(generation)
-    const foldedTitle = calls
+    const folded = calls
       ? foldToolCalls(generation, calls, sections)
-      : foldMarkdown(generation, sections)
+      : foldMarkdownOrCritique(generation, sections, i === unsettledIndex)
     // A retried conversation can hold a fresh outline after earlier sections,
-    // so the last title to arrive wins.
-    title = foldedTitle ?? title
+    // so the last title, and the last plan, to arrive wins.
+    title = folded.title ?? title
+    if (folded.outline) {
+      outline = folded.outline
+      outlineText = folded.outlineText
+    }
   }
 
   const live = conversation && currentGeneration &&
@@ -278,7 +377,35 @@ export function projectConversation(
     ...sections.map(section => `## ${section.title}\n${section.content}`)
   ].filter(Boolean).join('\n\n')
 
-  return { title, sections, fullContent }
+  return { title, outline, outlineText, sections, rounds, fullContent }
+}
+
+// A critique is a reply ABOUT the script, not part of it. Before round records
+// existed there was no way to tell one apart in the log, so any "## " line in
+// a critique's reply became a section in the reading view and in the export —
+// a latent bug the planner would have made routine. A generation the run
+// stamped as a critique round is therefore never folded for prose.
+//
+// An OUTLINE critique is the exception on one axis: a revised plan is stored
+// as exactly the outline markdown, and it is the plan every later section
+// inherits, so it is still read for the outline — under the same prose rule as
+// any other, because a revision cut off mid-plan is no more trustworthy than a
+// first draft cut off mid-plan.
+//
+// A conversation written before round records carries none, and keeps the old
+// behaviour: nothing here can tell its critiques from its script.
+const foldMarkdownOrCritique = (
+  generation: Generation,
+  sections: ProjectedSection[],
+  unsettled: boolean
+): FoldResult => {
+  const kind = generation.round?.kind
+  if (kind === 'style-critique' || kind === 'review') return {}
+  if (kind === 'outline-critique') {
+    const parsed = unsettled ? null : parseOutline(generation.response)
+    return { outline: parsed ?? undefined, outlineText: parsed ? generation.response : undefined }
+  }
+  return foldMarkdown(generation, sections, unsettled)
 }
 
 // The in-flight section, spliced over the stored one or appended if it is new.
@@ -298,7 +425,12 @@ const spliceLiveSection = (
 
   const existing = sections.findIndex(section => section.title === sectionTitle)
   if (existing >= 0) {
-    sections[existing] = { ...sections[existing], content: live.content, wordCount: live.wordCount }
+    // truncationSuspect is dropped along with the body it described: it says
+    // that the STORED body may have been cut short, and the body here is the
+    // one arriving now. Nothing resumes from a section that is streaming.
+    const kept = { ...sections[existing], content: live.content, wordCount: live.wordCount }
+    delete kept.truncationSuspect
+    sections[existing] = kept
   } else {
     sections.push(live)
   }

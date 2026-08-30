@@ -1,4 +1,4 @@
-import type { RawConversation, GenerationRequest, RegenerationRequest, RefinementRequest, ChatMessage, ReviewRevision, ScriptOutline } from '../types/conversation'
+import type { RawConversation, Generation, GenerationRequest, GenerationRound, RegenerationRequest, RefinementRequest, ChatMessage, GenerationMetrics, ReviewRevision, ScriptOutline } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
@@ -23,7 +23,6 @@ import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './
 import { buildLengthPlan } from './scriptLength'
 import type { LengthPlan } from './scriptLength'
 import { assessScriptLength, formatLengthBrief, parseScriptReviewResponse, selectScriptRevisions, buildScriptRevisionInstruction, describeRevisionReason, formatScriptReviewSummary, SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
-import { KeyedRunGuard } from './runLifecycle'
 import { recordExampleSelections } from './exampleCorpus'
 import { isTextFrame, isToolCallFrame } from './providerFrame'
 import type { ProviderFrame } from './providerFrame'
@@ -32,7 +31,10 @@ import { WRITING_TOOLS, GROUNDING_SELECT_TOOL, OUTLINE_WRITE_TOOL, SECTION_WRITE
 // The one rule for "this generation contributed nothing to the script", shared
 // with the projection, the replayed history and the activity thread: four
 // readers have to agree on it, so there is one copy of it
-import { isRejectedGeneration } from './scriptProjection'
+import { projectConversation } from './scriptProjection'
+import type { ProjectedDocument } from './scriptProjection'
+import { planNextRound, resolvePipeline } from './roundPlan'
+import type { PlannedRound } from './roundPlan'
 import type { WritingToolName } from './writingTools'
 import type { ProviderCallOptions, ProviderTurn } from './scriptGenerationService'
 import { planGeneration } from './serviceFactory'
@@ -85,14 +87,6 @@ interface ReviewPassResult {
   // True when the critique request completed, so the outcome can be reported
   ran: boolean
   revised: ReviewRevision[]
-  // The consolidated script including revised sections, when any were revised
-  updatedContent?: string
-}
-
-interface ResumeState {
-  outline: ScriptOutline
-  outlineText: string
-  sectionTexts: Map<string, string>
 }
 
 // The corpus a run is grounded in, tracked for the whole run rather than per
@@ -123,6 +117,19 @@ interface StreamedResponse {
   // `length` finish means the provider cut the model off mid-body — in both
   // cases the JSON can look complete while the section is not.
   finishedCleanly: boolean
+}
+
+// One turn's metrics while its stream is still running. It is the mutable
+// counterpart of GenerationMetrics: `endedAt` is not here because it is not
+// known until the turn is closed, and nothing else is required because the
+// frames that carry it may never arrive.
+interface TurnMetricsDraft {
+  startedAt: number
+  firstTokenAt?: number
+  promptTokens?: number
+  completionTokens?: number
+  cachedTokens?: number
+  finishReason?: string
 }
 
 const toolField = (call: StreamedToolCall, field: string): string =>
@@ -251,60 +258,106 @@ export function renderOutlineFromToolCall(argumentsJson: string): string | null 
   return `# ${title}\n${rendered.join('\n')}`
 }
 
-// Inspect an existing conversation for a usable outline and already-generated
-// sections, so an interrupted or failed run can pick up where it left off
-// instead of starting over. Exported for unit testing.
-export function findResumeState(conversation: RawConversation): ResumeState | null {
-  let outline: ScriptOutline | null = null
-  let outlineText = ''
-  let outlineIndex = -1
+// Everything one round of a run needs that the conversation cannot tell it.
+//
+// Deliberately NOT here: the plan, the script so far, or which section is
+// next. Those are folded out of the conversation immediately before each
+// round, which is what makes a resumed run and a first attempt the same code
+// path — there is no run state that could disagree with the document.
+interface RoundContext {
+  conversationId: string
+  // The conversation as it stood when the run claimed it. Its generations are
+  // the run's starting point; everything written since is in the run log.
+  conversation: RawConversation
+  request: GenerationRequest
+  plan: LengthPlan
+  writesByTool: boolean
+  systemPrompt: string
+  storedSystemPrompt: string
+  examples: ExampleScript[]
+  exampleIds: string[]
+  grounding: RunGrounding
+  rejectionBudget: { remaining: number }
+  abortSignal?: AbortSignal
+}
 
-  for (let i = 0; i < conversation.generations.length; i++) {
-    // Defensive rather than load-bearing, unlike its counterpart in the section
-    // scan below: no shape a rejected generation is stored in can satisfy
-    // parseOutline today — a refused outline call and every handshake store a
-    // one-line record, and a refused section stores "## Title", which has no
-    // document heading to match. Kept so both scans answer to the same rule, so
-    // that a future refusal that does render an outline cannot resurrect one.
-    if (isRejectedGeneration(conversation.generations[i])) continue
-    const parsed = parseOutline(conversation.generations[i].response)
-    if (parsed) {
-      outline = parsed
-      outlineText = conversation.generations[i].response
-      outlineIndex = i
-    }
+// The word counts the progress display reads, in the order the plan names its
+// sections rather than the order they happened to be written — which is the
+// order the reader sees them in.
+const plannedSectionWordCounts = (document: ProjectedDocument): number[] => {
+  if (!document.outline) return []
+  const written = new Map(document.sections.map(section => [section.title, section.wordCount]))
+  return document.outline.sections
+    .map(section => written.get(section.title))
+    .filter((count): count is number => count !== undefined)
+}
+
+// What a turn is closed with when the request came back carrying nothing at
+// all — no prose, no tool call. It is deliberately a plain sentence rather
+// than a REJECTED line: nothing was refused here, the model simply answered
+// with nothing, and the generation exists to say that a request was made.
+const EMPTY_TURN_RECORD = 'The request finished without writing anything.'
+
+// How often a stream is allowed to write the conversation to storage while it
+// is still arriving, so a reader who reloads mid-run keeps most of what had
+// been written without every text frame costing a serialize-and-store.
+//
+// Constructed PER RUN, not per orchestrator. It used to be a pair of fields on
+// the class, which read as a cross-cutting guard and was not one: the provider
+// builds a new orchestrator for every user action, so the pair was reset on
+// every action and never throttled anything across two of them. A run is the
+// scope over which it actually means something, and this makes that the scope
+// it has.
+class StreamPersistence {
+  private lastSaveAt = 0
+  private readonly throttleMs: number
+
+  constructor(throttleMs = 1000) {
+    this.throttleMs = throttleMs
   }
 
-  if (!outline) return null
-
-  // An outline that is the conversation's last generation may itself be
-  // truncated (interrupted mid-stream) even though it parses — a shortened
-  // plan would silently produce a shorter script. Only trust an outline the
-  // run demonstrably moved past: section generation starts a new entry, so a
-  // later generation proves the outline finished streaming.
-  if (outlineIndex === conversation.generations.length - 1) return null
-
-  const sectionTexts = new Map<string, string>()
-  for (let i = outlineIndex + 1; i < conversation.generations.length; i++) {
-    // A rejected attempt is stored with its body so nothing is silently lost,
-    // but a resume must not restore a section the run itself refused
-    if (isRejectedGeneration(conversation.generations[i])) continue
-    const match = conversation.generations[i].response.match(/^##\s+(.+?)\s*\n([\s\S]*)$/)
-    if (match && match[2].trim()) {
-      sectionTexts.set(match[1].trim(), match[2].trim())
-    }
+  due(now: number): boolean {
+    if (now - this.lastSaveAt <= this.throttleMs) return false
+    this.lastSaveAt = now
+    return true
   }
-
-  return { outline, outlineText, sectionTexts }
 }
 
 export class RawScriptGenerationOrchestrator {
   private services: RawScriptServices
   private callbacks: RawGenerationCallbacks
   private options: RawGenerationOptions
-  private activeGenerations = new KeyedRunGuard()
-  private lastSaveTime = 0
-  private saveThrottleMs = 1000
+  // The metrics of the turn currently streaming, per conversation. It is held
+  // here rather than passed back through the stream helpers because the two
+  // of them return the PROSE and the tool calls, and the dozen turns that call
+  // them each close their generation somewhere else — several branches later,
+  // in a catch, or in the caller of the helper that streamed. Keyed by
+  // conversation because two scripts can generate at once; a turn is
+  // sequential within one conversation, so there is only ever one open draft
+  // per key, and `takeTurnMetrics` removes it as it is read so a later
+  // dispatch with no stream of its own cannot pick up the last turn's numbers.
+  private openTurnMetrics = new Map<string, TurnMetricsDraft>()
+  // The turn this class has OPENED and not yet closed, per conversation, and
+  // whatever it has streamed into it so far. It is the orchestrator's own
+  // record of its own dispatches rather than a reading of the reducer's state,
+  // because the state is reached through `getConversation`, which answers from
+  // a ref React reassigns on render — and nothing here can make React render.
+  // A turn opened one line ago and a turn opened and filled ten awaits ago
+  // therefore have to be answerable without asking React anything.
+  private openTurns = new Map<string, { body: string }>()
+  // The run's own mirror of the conversation it is writing, maintained from
+  // the dispatches below for the same reason openTurns is: the loop folds this
+  // conversation between every round to decide what to do next, and the only
+  // other way to read it back is `getConversation`, which answers from a ref
+  // React reassigns when it re-renders — and an await is not a render. A round
+  // that finished one statement ago has to be foldable regardless.
+  private runLog = new Map<string, Generation[]>()
+  // The round the run is currently performing, stamped onto every generation
+  // it opens. Held here rather than threaded through the twenty START_GENERATION
+  // sites for the same reason the empty-turn substitution is: this is the one
+  // place every dispatch passes through.
+  private currentRound: GenerationRound | undefined
+  private streamSaves = new StreamPersistence()
   // The corpus a conversation's run was grounded in, so a rewrite triggered
   // later in the same session sees the same exemplars without retrieving again
   private runExamples = new Map<string, ExampleScript[]>()
@@ -377,6 +430,166 @@ export class RawScriptGenerationOrchestrator {
     return examples
   }
 
+  // Every conversation action this class dispatches goes through here, which
+  // makes this the one place that knows both whether a turn is open and what
+  // has been written into it — without asking React, which cannot be made to
+  // answer on demand.
+  //
+  // It is also where the guarantee the whole file depends on is enforced. A
+  // generation stored with an empty response and no tool calls fails the
+  // serializer's admission test and is dropped from the saved file outright,
+  // taking the record of the request, its prompt and its cost with it. So a
+  // turn is never closed empty: a completion carrying nothing to store is
+  // closed with a line saying exactly that. Enforcing it HERE rather than at
+  // each of the twenty completions covers, in one place, the shape the
+  // per-path guards keep missing — a stream that SUCCEEDS while carrying no
+  // prose and no call at all, which reaches none of them.
+  private dispatch(action: RawConversationAction): void {
+    if (action.type === 'START_GENERATION') {
+      // The round is stamped here, once, rather than at each of the twenty
+      // sites that open a turn — including the several a single section round
+      // opens while a body is refused and asked for again, which all belong to
+      // the same round.
+      const round = action.round ?? this.currentRound
+      this.openTurns.set(action.conversationId, { body: '' })
+      this.appendToRunLog(action.conversationId, {
+        messages: action.messages,
+        response: '',
+        timestamp: Date.now(),
+        exampleIds: action.exampleIds,
+        round
+      })
+      this.callbacks.dispatch({ ...action, round })
+      return
+    } else if (action.type === 'UPDATE_CURRENT_GENERATION') {
+      const open = this.openTurns.get(action.conversationId)
+      if (open) open.body = action.response
+      this.amendRunLog(action.conversationId, generation => {
+        generation.response = action.response
+        if (action.toolCalls) generation.toolCalls = action.toolCalls
+      })
+    } else if (action.type === 'COMPLETE_GENERATION') {
+      this.openTurns.delete(action.conversationId)
+      // Trimmed, not merely truthy: a response of nothing but whitespace is
+      // written into the file as a blank block, and the parser reading it back
+      // trims it to nothing and drops the generation just the same.
+      if (!action.response.trim() && !(action.toolCalls && action.toolCalls.length > 0)) {
+        const substituted = { ...action, response: EMPTY_TURN_RECORD }
+        this.recordCompletion(substituted)
+        this.callbacks.dispatch(substituted)
+        return
+      }
+      this.recordCompletion(action)
+    } else if (
+      action.type === 'GENERATION_RESTARTED' ||
+      action.type === 'GENERATIONS_DISCARDED'
+    ) {
+      // Both throw away what a previous run left in the conversation, so any
+      // turn this class still thinks is open belongs to a run that no longer
+      // has generations to close
+      this.openTurns.delete(action.conversationId)
+      // Only a discard empties the conversation; a restart keeps every
+      // generation and clears the run's UI state, so the mirror keeps them too
+      if (action.type === 'GENERATIONS_DISCARDED') {
+        this.runLog.set(action.conversationId, [])
+      }
+    }
+
+    this.callbacks.dispatch(action)
+  }
+
+  // The mirror is written only while a run owns the conversation; outside a
+  // run there is nothing to keep in step with and nothing reading it.
+  private appendToRunLog(conversationId: string, generation: Generation): void {
+    this.runLog.get(conversationId)?.push(generation)
+  }
+
+  private amendRunLog(conversationId: string, amend: (generation: Generation) => void): void {
+    const log = this.runLog.get(conversationId)
+    const last = log?.[log.length - 1]
+    if (last) amend(last)
+  }
+
+  private recordCompletion(
+    action: Extract<RawConversationAction, { type: 'COMPLETE_GENERATION' }>
+  ): void {
+    this.amendRunLog(action.conversationId, generation => {
+      generation.response = action.response
+      if (action.toolCalls) generation.toolCalls = action.toolCalls
+      if (action.metrics) generation.metrics = action.metrics
+    })
+  }
+
+  // The conversation as this run has written it, folded into the document the
+  // planner reads. `settled` says the last generation is one this run closed
+  // itself, which is the finish evidence a reader of a conversation at rest
+  // has to guess at from position.
+  private projectRun(conversation: RawConversation, settled: boolean): ProjectedDocument {
+    const generations = this.runLog.get(conversation.id) ?? conversation.generations
+    return projectConversation(
+      { ...conversation, generations },
+      null,
+      { lastGenerationSettled: settled }
+    )
+  }
+
+  // Opens the record of one provider request. Called by the two stream
+  // helpers at the top of their streams, which is as close to the request
+  // going out as this class gets.
+  private beginTurnMetrics(conversationId: string): TurnMetricsDraft {
+    const draft: TurnMetricsDraft = { startedAt: Date.now() }
+    this.openTurnMetrics.set(conversationId, draft)
+    return draft
+  }
+
+  // The frames that describe the REQUEST rather than its prose. They have been
+  // in the stream since the frame protocol landed and nothing read them: the
+  // cost summary estimated tokens from a character count while the provider's
+  // own numbers went past unread, and `Generation.cachedTokens` was declared,
+  // stored, parsed and asserted on without one line anywhere setting it.
+  private observeMetricFrame(draft: TurnMetricsDraft, frame: ProviderFrame): void {
+    if (frame.kind === 'firstToken') {
+      // First one wins: a stream that somehow reported it twice is reporting
+      // the same first token, and the earlier reading is the true one
+      draft.firstTokenAt ??= frame.at
+      return
+    }
+    if (frame.kind === 'usage') {
+      // Assigned field by field, not spread: a provider may send usage
+      // without the cache breakdown, and spreading would overwrite a number
+      // that arrived with an explicit undefined
+      if (frame.promptTokens !== undefined) draft.promptTokens = frame.promptTokens
+      if (frame.completionTokens !== undefined) draft.completionTokens = frame.completionTokens
+      if (frame.cachedTokens !== undefined) draft.cachedTokens = frame.cachedTokens
+      return
+    }
+    if (frame.kind === 'finished' && frame.reason) {
+      draft.finishReason = frame.reason
+    }
+  }
+
+  // Closes the open turn's record and hands it to the dispatch that stores it.
+  // Returns undefined when the turn never reached a stream — a request that
+  // threw on its way out has nothing measured to report, and metrics are
+  // optional precisely so that such a turn can say nothing rather than lie
+  // about zero.
+  private takeTurnMetrics(conversationId: string, aborted = false): GenerationMetrics | undefined {
+    const draft = this.openTurnMetrics.get(conversationId)
+    if (!draft) return undefined
+    this.openTurnMetrics.delete(conversationId)
+
+    return {
+      startedAt: draft.startedAt,
+      endedAt: Date.now(),
+      ...(draft.firstTokenAt !== undefined ? { firstTokenAt: draft.firstTokenAt } : {}),
+      ...(draft.promptTokens !== undefined ? { promptTokens: draft.promptTokens } : {}),
+      ...(draft.completionTokens !== undefined ? { completionTokens: draft.completionTokens } : {}),
+      ...(draft.cachedTokens !== undefined ? { cachedTokens: draft.cachedTokens } : {}),
+      ...(draft.finishReason ? { finishReason: draft.finishReason } : {}),
+      ...(aborted ? { aborted: true } : {})
+    }
+  }
+
   private persistConversation(conversationId: string): void {
     const conversation = this.callbacks.getConversation(conversationId)
     if (conversation) {
@@ -395,8 +608,13 @@ export class RawScriptGenerationOrchestrator {
     onChunk?: (accumulated: string) => void
   ): Promise<string> {
     let accumulated = ''
+    const metrics = this.beginTurnMetrics(conversationId)
 
     for await (const frame of stream) {
+      // Above the text filter, because everything it reads is a frame the
+      // filter throws away
+      this.observeMetricFrame(metrics, frame)
+
       // Below the filter, not above it: the stream now ends with `finished` and
       // `usage` frames, and checking there would turn an abort arriving after
       // the last text delta into a thrown run instead of one that keeps the
@@ -415,11 +633,7 @@ export class RawScriptGenerationOrchestrator {
       }
 
       // Throttled save during streaming
-      const now = Date.now()
-      if (now - this.lastSaveTime > this.saveThrottleMs) {
-        this.persistConversation(conversationId)
-        this.lastSaveTime = now
-      }
+      if (this.streamSaves.due(Date.now())) this.persistConversation(conversationId)
     }
 
     return accumulated
@@ -439,6 +653,7 @@ export class RawScriptGenerationOrchestrator {
     onProgress?: (response: StreamedResponse) => void
   ): Promise<StreamedResponse> {
     const calls = new Map<number, StreamedToolCall>()
+    const metrics = this.beginTurnMetrics(conversationId)
     let text = ''
     let finishReason: string | null = null
     let finishedCleanly = false
@@ -451,6 +666,8 @@ export class RawScriptGenerationOrchestrator {
     })
 
     for await (const frame of stream) {
+      this.observeMetricFrame(metrics, frame)
+
       if (frame.kind === 'finished') {
         finishReason = frame.reason
         // Only these two mean the model stopped because it was done. A
@@ -486,11 +703,7 @@ export class RawScriptGenerationOrchestrator {
 
       onProgress?.(snapshot())
 
-      const now = Date.now()
-      if (now - this.lastSaveTime > this.saveThrottleMs) {
-        this.persistConversation(conversationId)
-        this.lastSaveTime = now
-      }
+      if (this.streamSaves.due(Date.now())) this.persistConversation(conversationId)
     }
 
     return snapshot()
@@ -515,14 +728,55 @@ export class RawScriptGenerationOrchestrator {
     try {
       return await run()
     } catch (error) {
-      this.callbacks.dispatch({
-        type: 'COMPLETE_GENERATION',
-        conversationId,
-        response: `${subject}: the request ended before the model finished.`
-      })
-      this.persistConversation(conversationId)
+      // Whatever streamed in before the throw is discarded rather than kept,
+      // unlike closeOpenGeneration below: half a section_write body stored as
+      // an ordinary generation with no tool calls on it is the one shape no
+      // reader folds out (D6).
+      if (this.openTurns.has(conversationId)) {
+        this.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: `${subject}: the request ended before the model finished.`,
+          // Marked aborted: this is the path where the stream did not reach its
+          // own end, whether the user stopped it or the connection did
+          metrics: this.takeTurnMetrics(conversationId, true)
+        })
+        this.persistConversation(conversationId)
+      }
       throw error
     }
+  }
+
+  // The prose path's counterpart to streamOrClose, for the failure paths that
+  // are not one wrapped stream: every turn on every path opens its generation
+  // with START_GENERATION, which appends one holding an empty response, so a
+  // path that returns or rethrows without a COMPLETE_GENERATION leaves that
+  // empty generation in state. The next save writes it with no response block,
+  // and the deployed parser DROPS it — the request, its prompt and its cost
+  // are simply gone from the file (see conversationParser).
+  //
+  // Only an EMPTY response is replaced. Several of these paths deliberately
+  // keep whatever streamed in before the failure — a stopped run settles as a
+  // draft still holding its half-written section — so a turn that already has
+  // prose is closed by leaving it exactly as it stands, heading and all.
+  //
+  // Both questions — is a turn open, and does it already hold prose — are
+  // answered from `openTurns`, which this class writes as it dispatches. The
+  // obvious alternative, reading the conversation back through
+  // `getConversation`, cannot answer either one reliably: that callback reads a
+  // ref React reassigns when it re-renders, and an await is not a render, so a
+  // turn opened moments ago may not be in the state it returns.
+  private closeOpenGeneration(conversationId: string, subject: string): void {
+    const open = this.openTurns.get(conversationId)
+    if (!open || open.body) return
+
+    this.dispatch({
+      type: 'COMPLETE_GENERATION',
+      conversationId,
+      response: `${subject}: the request ended before the model finished.`,
+      metrics: this.takeTurnMetrics(conversationId, true)
+    })
+    this.persistConversation(conversationId)
   }
 
   // Write the outline by tool call. A compliant model's FIRST act here is a
@@ -550,7 +804,7 @@ export class RawScriptGenerationOrchestrator {
     for (let turn = 0; turn <= MAX_TOOL_HANDSHAKES; turn++) {
       if (args.abortSignal?.aborted) throw new Error('Generation aborted')
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'START_GENERATION',
         conversationId,
         messages: args.outlineMessages,
@@ -578,7 +832,7 @@ export class RawScriptGenerationOrchestrator {
             const call = streamed.calls.find(entry => entry.name === OUTLINE_WRITE_TOOL)
             const partial = call ? toolField(call, 'title') : streamed.text
             if (!partial) return
-            this.callbacks.dispatch({
+            this.dispatch({
               type: 'UPDATE_CURRENT_GENERATION',
               conversationId,
               response: call ? `# ${partial}` : partial
@@ -595,8 +849,9 @@ export class RawScriptGenerationOrchestrator {
           : null
 
         if (rendered) {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'COMPLETE_GENERATION',
+            metrics: this.takeTurnMetrics(conversationId),
             conversationId,
             response: rendered,
             toolCalls: [{
@@ -612,14 +867,17 @@ export class RawScriptGenerationOrchestrator {
         // The call produced no usable plan — malformed arguments, no title, no
         // sections, or a stream that never finished. `response.text` is empty
         // for a tool-only reply, and a generation stored with an empty response
-        // is dropped by the deployed parser, taking its prompt with it (D1), so
-        // what happened is recorded in one non-empty line before the run fails.
+        // is dropped outright by the deployed parser — the record of the
+        // request and the prompt block written for it both go with it, and the
+        // following generation keeps its own prompt regardless (D1). So what
+        // happened is recorded in one non-empty line before the run fails.
         const reason = response.finishedCleanly
           ? `REJECTED: those ${OUTLINE_WRITE_TOOL} arguments did not describe a usable plan.`
           : `REJECTED: the ${OUTLINE_WRITE_TOOL} call did not finish ` +
             `(${response.finishReason ?? 'the stream ended without a finish reason'}).`
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: `No outline was written: ${reason}`,
           toolCalls: [{ id: call.id, name: OUTLINE_WRITE_TOOL, status: 'rejected', reason }]
@@ -644,8 +902,9 @@ export class RawScriptGenerationOrchestrator {
           const reason = response.text.trim()
             ? `the reply was cut off (${response.finishReason ?? 'the stream ended without a finish reason'})`
             : 'the model replied with neither a tool call nor text'
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'COMPLETE_GENERATION',
+            metrics: this.takeTurnMetrics(conversationId),
             conversationId,
             response: `No outline was written: ${reason}.`
           })
@@ -653,8 +912,9 @@ export class RawScriptGenerationOrchestrator {
           throw new Error('Failed to parse outline from LLM response')
         }
 
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: response.text
         })
@@ -666,8 +926,9 @@ export class RawScriptGenerationOrchestrator {
         : answerWrongTool(stray.name as string, OUTLINE_WRITE_TOOL, 'The outline is not written yet.')
       if (stray.name === GROUNDING_SELECT_TOOL) args.grounding.done = true
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         response: answer.record,
         toolCalls: [{
@@ -707,13 +968,13 @@ export class RawScriptGenerationOrchestrator {
     toolTurns: ProviderTurn[]
     abortSignal?: AbortSignal
   }): Promise<StreamedResponse> {
-    this.callbacks.dispatch({
+    this.dispatch({
       type: 'START_GENERATION',
       conversationId: args.conversationId,
       messages: args.messages
     })
 
-    this.callbacks.dispatch({
+    this.dispatch({
       type: 'SET_GENERATION_PROGRESS',
       conversationId: args.conversationId,
       isComplete: false,
@@ -742,7 +1003,7 @@ export class RawScriptGenerationOrchestrator {
         // Byte-identical to what the prose path renders while streaming, so
         // the reducer, the reading view, performance mode and the word meter
         // all keep working with no change at all
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'UPDATE_CURRENT_GENERATION',
           conversationId: args.conversationId,
           response: ensureSectionHeading(args.sectionTitle, body)
@@ -835,8 +1096,9 @@ export class RawScriptGenerationOrchestrator {
         // and the section fails rather than being written from the fragment.
         if (!response.finishedCleanly) {
           const reason = response.finishReason ?? 'the stream ended without a finish reason'
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'COMPLETE_GENERATION',
+            metrics: this.takeTurnMetrics(conversationId),
             conversationId,
             response: `No section was written for "${sectionTitle}": the reply was cut off (${reason}).`
           })
@@ -846,8 +1108,9 @@ export class RawScriptGenerationOrchestrator {
           )
         }
 
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: ensureSectionHeading(sectionTitle, response.text)
         })
@@ -869,8 +1132,9 @@ export class RawScriptGenerationOrchestrator {
             )
         if (stray.name === GROUNDING_SELECT_TOOL) args.grounding.done = true
 
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: answer.record,
           toolCalls: [{
@@ -912,8 +1176,9 @@ export class RawScriptGenerationOrchestrator {
           sectionTitle
         )
 
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: answer.record,
           toolCalls: [{
@@ -953,8 +1218,9 @@ export class RawScriptGenerationOrchestrator {
       const name = writingCall.name as WritingToolName
 
       if (response.finishedCleanly && !shouldRetrySection(wordCount)) {
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: ensureSectionHeading(sectionTitle, body),
           toolCalls: [{ id: writingCall.id, name, title: sectionTitle, status: 'accepted', wordCount }]
@@ -986,8 +1252,9 @@ export class RawScriptGenerationOrchestrator {
         // the outcome D6 forbids reached by another door.
         const last = attempts[attempts.length - 1]
         const refuseAttempt = (reason: string): void => {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'COMPLETE_GENERATION',
+            metrics: this.takeTurnMetrics(conversationId),
             conversationId,
             response: ensureSectionHeading(sectionTitle, last.body),
             toolCalls: [{
@@ -1029,8 +1296,9 @@ export class RawScriptGenerationOrchestrator {
             ? candidate
             : closest
         )
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
           conversationId,
           response: ensureSectionHeading(sectionTitle, best.body),
           toolCalls: [{
@@ -1055,13 +1323,14 @@ export class RawScriptGenerationOrchestrator {
           `(${response.finishReason ?? 'the stream ended without a finish reason'}), so the ` +
           'section body arrived incomplete. Call the tool again with the whole section.'
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         // Stored with its body even though the projection folds it out: a
         // rejected draft is evidence of what the run did, and a generation
         // written with an empty response is DROPPED by the already-deployed
-        // parser, taking its prompt with it (D1).
+        // parser, which loses the attempt and its prompt block together (D1).
         response: ensureSectionHeading(sectionTitle, body),
         toolCalls: [{ id: writingCall.id, name, title: sectionTitle, status: 'rejected', wordCount, reason }]
       })
@@ -1093,16 +1362,17 @@ export class RawScriptGenerationOrchestrator {
     }
 
     const conversationId = conversation.id
-    const generationKey = `${conversationId}-initial`
     // The requested length shapes the system prompt, the outline's section
     // count and the length the finished script is judged against
     const plan = buildLengthPlan(request.targetMinutes)
-
-    if (!this.activeGenerations.tryStart(generationKey)) return
+    // Read once, here, and held for the run: a setting changed halfway through
+    // would otherwise add or drop a stage under a run already in progress.
+    const pipeline = resolvePipeline({ reviewPass: this.options.reviewPassEnabled === true })
+    this.streamSaves = new StreamPersistence()
 
     try {
       // A fresh run (first attempt, retry or resume) owns generation state from here
-      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+      this.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
       this.callbacks.appDispatch({
         type: 'UPDATE_SCRIPT',
         scriptId: conversation.scriptId,
@@ -1114,6 +1384,10 @@ export class RawScriptGenerationOrchestrator {
       // request, so a model changed halfway through a run would otherwise
       // switch the mode mid-script — leaving the remaining sections asking for
       // tool calls of a model that cannot make them.
+      //
+      // It is a run-level fact and NOT a pipeline field: what to write next has
+      // nothing to do with how the words are asked for, which is why a
+      // conversation begun in prose and continued with tools plans identically.
       const runPlan = planGeneration(this.callbacks.getScript?.(conversation.scriptId))
       const writesByTool = runPlan.mode === 'tools'
       // The rejection budget belongs to the run, not to a section: a model
@@ -1121,12 +1395,11 @@ export class RawScriptGenerationOrchestrator {
       // over and over, once for every section of the script.
       const rejectionBudget = { remaining: SECTION_REJECTION_BUDGET }
 
-      // Retrieve examples upfront; record which ones inform this generation
+      // Grounding is a run PRECONDITION, not a round: it is local retrieval
+      // rather than a model turn, it happens once before any request, and a
+      // model-initiated second grounding_select is refused from what the run
+      // already holds rather than searched for again.
       const examples = await this.retrieveExamples(request, conversation, plan)
-      // The corpus the run is grounded in, and whether the model has already
-      // asked for it. The retrieval happened here, before the first request, so
-      // a grounding_select call is answered from what the run already has
-      // rather than searching again on the model's say-so.
       const grounding: RunGrounding = { done: false, examples }
       this.runExamples.set(conversationId, examples)
       // The tool-mode system prompt differs from the prose one only in how the
@@ -1147,10 +1420,14 @@ export class RawScriptGenerationOrchestrator {
 
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 
+      // The run claims the conversation: from here every dispatch is mirrored
+      // into this log, which is what the planner folds between rounds.
+      this.runLog.set(conversationId, [...conversation.generations])
+
       // An explicit fresh restart (story 1.8) discards the previous outline
       // and sections so nothing from the abandoned plan survives consolidation
       if (request.fresh && conversation.generations.length > 0) {
-        this.callbacks.dispatch({ type: 'GENERATIONS_DISCARDED', conversationId })
+        this.dispatch({ type: 'GENERATIONS_DISCARDED', conversationId })
         this.callbacks.saveConversation({
           ...conversation,
           generations: [],
@@ -1158,327 +1435,86 @@ export class RawScriptGenerationOrchestrator {
         })
       }
 
-      // Reuse an existing outline and completed sections when retrying/resuming
-      const resume = request.fresh ? null : findResumeState(conversation)
-      let outline: ScriptOutline
-      let outlineText: string
-
-      if (resume) {
-        outline = resume.outline
-        outlineText = resume.outlineText
-      } else {
-        // --- Phase 1: Generate outline ---
-        this.callbacks.dispatch({
-          type: 'SET_GENERATION_PHASE',
-          conversationId,
-          phase: 'generating_outline',
-          currentSectionIndex: 0,
-          totalSections: 0,
-          sectionWordCounts: []
-        })
-
-        this.callbacks.dispatch({
-          type: 'SET_GENERATION_PROGRESS',
-          conversationId,
-          isComplete: false
-        })
-
-        const outlineUserPrompt = request.prompt + '\n\n' + (writesByTool
-          ? getToolOutlineGenerationPrompt(plan)
-          : getOutlineGenerationPrompt(plan))
-        const outlineMessages: ChatMessage[] = [
-          { role: 'system', content: storedSystemPrompt },
-          { role: 'user', content: outlineUserPrompt }
-        ]
-
-        if (writesByTool) {
-          outlineText = await this.writeOutlineWithTools({
-            conversationId,
-            request,
-            outlineUserPrompt,
-            outlineMessages,
-            exampleIds,
-            examples,
-            systemPrompt,
-            grounding,
-            abortSignal
-          })
-        } else {
-          // Start a generation entry for the outline
-          this.callbacks.dispatch({
-            type: 'START_GENERATION',
-            conversationId,
-            messages: outlineMessages,
-            exampleIds: exampleIds.length > 0 ? exampleIds : undefined
-          })
-
-          const outlineStream = this.services.scriptService.generateScript(
-            { ...request, prompt: outlineUserPrompt },
-            withGenerationSystemPrompt(outlineMessages, systemPrompt),
-            examples,
-            abortSignal
-          )
-
-          outlineText = await this.streamToString(
-            outlineStream,
-            conversationId,
-            abortSignal,
-            (accumulated) => {
-              this.callbacks.dispatch({
-                type: 'UPDATE_CURRENT_GENERATION',
-                conversationId,
-                response: accumulated
-              })
-            }
-          )
-
-          this.callbacks.dispatch({
-            type: 'COMPLETE_GENERATION',
-            conversationId,
-            response: outlineText
-          })
-        }
-
-        this.persistConversation(conversationId)
-
-        // Parse the outline
-        const parsedOutline = parseOutline(outlineText)
-        if (!parsedOutline) {
-          throw new Error('Failed to parse outline from LLM response')
-        }
-        outline = parsedOutline
-
-        // --- Phase 1.5: optional outline critique (story 8.9) ---
-        // Checked against the brief before any section is written; a revised
-        // outline supersedes the original as the plan every section inherits.
-        // Gated by the same setting as the style-review pass.
-        if (this.options.reviewPassEnabled) {
-          const critiqued = await this.runOutlineCritique(
-            conversationId,
-            request,
-            plan,
-            outline,
-            outlineText,
-            abortSignal
-          )
-          outline = critiqued.outline
-          outlineText = critiqued.outlineText
-        }
-      }
-
-      if (abortSignal?.aborted) throw new Error('Generation aborted')
-
-      // --- Phase 2: Generate sections one at a time ---
-      const sectionWordCounts: number[] = []
-      let scriptContent = `# ${outline.title}`
-      let startIndex = 0
-
-      if (resume) {
-        // Keep fully generated sections; redo the last present one since it may
-        // have been cut off mid-stream, then continue with the missing ones
-        let firstMissing = outline.sections.findIndex(
-          section => !resume.sectionTexts.has(section.title)
-        )
-        if (firstMissing === -1) firstMissing = outline.sections.length
-        startIndex = Math.max(0, firstMissing - 1)
-
-        for (let i = 0; i < startIndex; i++) {
-          const section = outline.sections[i]
-          const text = resume.sectionTexts.get(section.title) ?? ''
-          sectionWordCounts.push(countWords(text))
-          scriptContent += `\n\n## ${section.title}\n${text}`
-        }
-      }
-
-      this.callbacks.dispatch({
-        type: 'SET_GENERATION_PHASE',
+      const context: RoundContext = {
         conversationId,
-        phase: 'generating_section',
-        outline,
-        currentSectionIndex: startIndex,
-        totalSections: outline.sections.length,
-        sectionWordCounts: [...sectionWordCounts]
-      })
+        conversation,
+        request,
+        plan,
+        writesByTool,
+        systemPrompt,
+        storedSystemPrompt,
+        examples,
+        exampleIds,
+        grounding,
+        rejectionBudget,
+        abortSignal
+      }
 
-      for (let i = startIndex; i < outline.sections.length; i++) {
+      // The loop. Sequencing is a derived value rather than the order of the
+      // statements it used to be, which is what makes a resume the same code
+      // path as a first attempt: nothing here asks whether this run has been
+      // here before, it asks what the conversation still needs.
+      //
+      // `settled` is false on the first fold and true after every round: the
+      // conversation's last generation belongs to a PREVIOUS run until this
+      // one has closed a generation of its own, and a body a previous run left
+      // behind may have stopped mid-sentence.
+      let settled = false
+      let reviewResult: ReviewPassResult | null = null
+      let document = this.projectRun(conversation, settled)
+
+      for (
+        let planned = planNextRound(document, pipeline);
+        planned;
+        planned = planNextRound(document, pipeline)
+      ) {
         if (abortSignal?.aborted) throw new Error('Generation aborted')
 
-        const section = outline.sections[i]
-
-        this.callbacks.dispatch({
-          type: 'SET_GENERATION_PHASE',
-          conversationId,
-          phase: 'generating_section',
-          outline,
-          currentSectionIndex: i,
-          totalSections: outline.sections.length,
-          sectionWordCounts: [...sectionWordCounts]
-        })
-
-        // Upcoming outline entries let this section plant setups (story 8.10)
-        const sectionPrompt = writesByTool
-          ? getToolSectionGenerationPrompt(
-              section.title,
-              section.description,
-              outline.sections.slice(i + 1)
-            )
-          : getSectionGenerationPrompt(
-              section.title,
-              section.description,
-              outline.sections.slice(i + 1)
-            )
-        const sectionUserMessage = `Here is the outline for the full script:\n\n${outlineText}\n\nHere is what has been written so far:\n\n${scriptContent}\n\n${sectionPrompt}`
-
-        const runSectionAttempt = async (userMessage: string): Promise<string> => {
-          const sectionMessages: ChatMessage[] = [
-            { role: 'system', content: storedSystemPrompt },
-            { role: 'user', content: request.prompt },
-            { role: 'assistant', content: outlineText },
-            { role: 'user', content: userMessage }
-          ]
-
-          this.callbacks.dispatch({
-            type: 'START_GENERATION',
-            conversationId,
-            messages: sectionMessages
-          })
-
-          this.callbacks.dispatch({
-            type: 'SET_GENERATION_PROGRESS',
-            conversationId,
-            isComplete: false,
-            sectionTitle: section.title
-          })
-
-          const sectionStream = this.services.scriptService.regenerateSection(
-            { prompt: userMessage, conversationId, sectionTitle: section.title },
-            withGenerationSystemPrompt(sectionMessages, systemPrompt),
-            abortSignal
-          )
-
-          const text = await this.streamToString(
-            sectionStream,
-            conversationId,
-            abortSignal,
-            (accumulated) => {
-              this.callbacks.dispatch({
-                type: 'UPDATE_CURRENT_GENERATION',
-                conversationId,
-                response: ensureSectionHeading(section.title, accumulated)
-              })
-            }
-          )
-
-          this.callbacks.dispatch({
-            type: 'COMPLETE_GENERATION',
-            conversationId,
-            response: ensureSectionHeading(section.title, text)
-          })
-
-          return text
+        this.currentRound = planned
+        try {
+          reviewResult = await this.runRound(planned, context, document) ?? reviewResult
+        } finally {
+          this.currentRound = undefined
         }
 
-        // On the tool path the section is written by section_write, and a body
-        // outside the window is rejected and asked for again rather than kept
-        // for being the better of two failures. A model that replies in prose
-        // regardless drops through to the prose path's own corrective retry
-        // below, which is the whole point of keeping it.
-        const written = writesByTool
-          ? await this.writeSectionWithTools({
-              conversationId,
-              sectionTitle: section.title,
-              userMessage: sectionUserMessage,
-              storedSystemPrompt,
-              systemPrompt,
-              history: [
-                { role: 'user', content: request.prompt },
-                { role: 'assistant', content: outlineText }
-              ],
-              budget: rejectionBudget,
-              grounding,
-              abortSignal
-            })
-          : null
+        settled = true
+        document = this.projectRun(conversation, settled)
 
-        let sectionText = written
-          ? (written.kind === 'written' ? written.body : written.text)
-          : await runSectionAttempt(sectionUserMessage)
-        let wordCount = countWords(sectionText)
-
-        // A section well outside the word target gets one corrective retry;
-        // the attempt closer to the target is kept
-        if (written?.kind !== 'written' && shouldRetrySection(wordCount)) {
-          this.persistConversation(conversationId)
-
-          const retryText = await runSectionAttempt(
-            `${sectionUserMessage}\n\n${buildRetryNote(wordCount)}`
-          )
-
-          sectionText = pickBetterSectionText(sectionText, retryText)
-          wordCount = countWords(sectionText)
-
-          if (sectionText !== retryText) {
-            // The first attempt won: overwrite the retry generation's stored
-            // response so consolidation-by-title lands on the kept text
-            this.callbacks.dispatch({
-              type: 'COMPLETE_GENERATION',
-              conversationId,
-              response: ensureSectionHeading(section.title, sectionText)
-            })
-          }
+        // The round-number source is the one thing that can turn this loop
+        // into a silent infinite pass: a stage that opens no generation
+        // records no round, the count stalls, and a record-gated stage is
+        // re-planned every round until maxRounds. Every handler stores a
+        // generation precisely so that cannot happen — and this says so out
+        // loud rather than spinning against a paid API if one ever stops.
+        if (document.rounds[document.rounds.length - 1]?.round !== planned.round) {
+          throw new Error(`The ${planned.kind} round recorded nothing, so the run cannot advance`)
         }
-
-        sectionWordCounts.push(wordCount)
-
-        scriptContent += '\n\n' + ensureSectionHeading(section.title, sectionText)
-
-        this.callbacks.dispatch({
-          type: 'SET_GENERATION_PHASE',
-          conversationId,
-          phase: 'generating_section',
-          outline,
-          currentSectionIndex: i + 1,
-          totalSections: outline.sections.length,
-          sectionWordCounts: [...sectionWordCounts]
-        })
-
-        this.persistConversation(conversationId)
       }
 
-      // An abort can land on a section's last request and still leave the loop
-      // ending naturally, and the review pass swallows the abort it then sees —
-      // so without this check a stopped run would be dispatched 'complete'. The
-      // loop head and the Phase 1 boundaries check the same signal; this is the
-      // one boundary that was missing.
+      // An abort can land on the last round's last frame and still leave the
+      // loop ending naturally — the plan is satisfied, so there is no next
+      // round to check the signal at the top of. Without this a stopped run
+      // would be dispatched 'complete'.
       if (abortSignal?.aborted) throw new Error('Generation aborted')
 
-      // --- Phase 2.5: optional style-review pass (story 8.5) ---
-      let reviewResult: ReviewPassResult | null = null
-      if (this.options.reviewPassEnabled) {
-        reviewResult = await this.runReviewPass(
-          conversation,
-          outline,
-          scriptContent,
-          request.targetMinutes,
-          abortSignal
-        )
-        if (reviewResult.updatedContent) {
-          scriptContent = reviewResult.updatedContent
-        }
+      const outline = document.outline
+      if (!outline) {
+        throw new Error('Failed to parse outline from LLM response')
       }
+      const scriptContent = document.fullContent
 
-      // --- Phase 3: Complete ---
-      this.callbacks.dispatch({
+      // --- Complete ---
+      this.dispatch({
         type: 'SET_GENERATION_PHASE',
         conversationId,
         phase: 'complete',
         outline,
         currentSectionIndex: outline.sections.length,
         totalSections: outline.sections.length,
-        sectionWordCounts
+        sectionWordCounts: plannedSectionWordCounts(document)
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true
@@ -1501,7 +1537,7 @@ export class RawScriptGenerationOrchestrator {
       })
 
       if (reviewResult?.ran) {
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'REVIEW_PASS_COMPLETED',
           report: {
             conversationId,
@@ -1516,15 +1552,21 @@ export class RawScriptGenerationOrchestrator {
       this.persistConversation(conversationId)
 
     } catch (error) {
+      // Whatever went wrong, the turn that was in flight is closed first: the
+      // prose outline and the prose section attempts are opened in this try
+      // and completed only on success, so a failure between the two would
+      // otherwise leave an empty generation here.
+      this.closeOpenGeneration(conversationId, 'Nothing was written')
+
       // The user stopped the generation: keep what streamed in and settle as a draft
       if (abortSignal?.aborted) {
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'SET_GENERATION_PHASE',
           conversationId,
           phase: 'idle'
         })
 
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'SET_GENERATION_PROGRESS',
           conversationId,
           isComplete: true
@@ -1542,14 +1584,14 @@ export class RawScriptGenerationOrchestrator {
 
       console.error('Script generation error:', error)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PHASE',
         conversationId,
         phase: 'error',
         error: error instanceof Error ? error.message : 'Unknown error'
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true,
@@ -1566,8 +1608,285 @@ export class RawScriptGenerationOrchestrator {
 
       throw error
     } finally {
-      this.activeGenerations.finish(generationKey)
+      this.currentRound = undefined
+      this.runLog.delete(conversationId)
     }
+  }
+
+  // One round. The planner owns WHICH round; each handler owns everything
+  // inside it — including, for a section, how many times a body may be refused
+  // and asked for again, which is state no stateless planner can see.
+  private async runRound(
+    planned: PlannedRound,
+    context: RoundContext,
+    document: ProjectedDocument
+  ): Promise<ReviewPassResult | null> {
+    switch (planned.kind) {
+      case 'outline':
+        await this.runOutlineRound(context)
+        return null
+      case 'outline-critique':
+        await this.runOutlineCritique(
+          context.conversationId,
+          context.request,
+          context.plan,
+          document.outline!,
+          document.outlineText ?? '',
+          context.abortSignal
+        )
+        return null
+      case 'section':
+        await this.runSectionRound(context, document, planned.sectionIndex ?? 0)
+        return null
+      case 'style-critique':
+        return await this.runReviewPass(
+          context.conversation,
+          document.outline!,
+          document.fullContent,
+          context.request.targetMinutes,
+          context.abortSignal
+        )
+      case 'review':
+        // Reachable only if the pipeline ever switches `review` on. It is a
+        // command today — a button the reader presses, repeatably — and
+        // reviewScript stamps the round record the gate reads, so a pipeline
+        // that did switch it on would not re-review a script reviewed by hand.
+        throw new Error('The whole-script review is a command, not a planned round')
+    }
+  }
+
+  // --- Phase 1: the plan ---
+  private async runOutlineRound(context: RoundContext): Promise<void> {
+    const { conversationId, request, plan, abortSignal } = context
+
+    this.dispatch({
+      type: 'SET_GENERATION_PHASE',
+      conversationId,
+      phase: 'generating_outline',
+      currentSectionIndex: 0,
+      totalSections: 0,
+      sectionWordCounts: []
+    })
+
+    this.dispatch({
+      type: 'SET_GENERATION_PROGRESS',
+      conversationId,
+      isComplete: false
+    })
+
+    const outlineUserPrompt = request.prompt + '\n\n' + (context.writesByTool
+      ? getToolOutlineGenerationPrompt(plan)
+      : getOutlineGenerationPrompt(plan))
+    const outlineMessages: ChatMessage[] = [
+      { role: 'system', content: context.storedSystemPrompt },
+      { role: 'user', content: outlineUserPrompt }
+    ]
+
+    let outlineText: string
+
+    if (context.writesByTool) {
+      outlineText = await this.writeOutlineWithTools({
+        conversationId,
+        request,
+        outlineUserPrompt,
+        outlineMessages,
+        exampleIds: context.exampleIds,
+        examples: context.examples,
+        systemPrompt: context.systemPrompt,
+        grounding: context.grounding,
+        abortSignal
+      })
+    } else {
+      this.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages: outlineMessages,
+        exampleIds: context.exampleIds.length > 0 ? context.exampleIds : undefined
+      })
+
+      const outlineStream = this.services.scriptService.generateScript(
+        { ...request, prompt: outlineUserPrompt },
+        withGenerationSystemPrompt(outlineMessages, context.systemPrompt),
+        context.examples,
+        abortSignal
+      )
+
+      outlineText = await this.streamToString(
+        outlineStream,
+        conversationId,
+        abortSignal,
+        (accumulated) => {
+          this.dispatch({
+            type: 'UPDATE_CURRENT_GENERATION',
+            conversationId,
+            response: accumulated
+          })
+        }
+      )
+
+      this.dispatch({
+        type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
+        conversationId,
+        response: outlineText
+      })
+    }
+
+    this.persistConversation(conversationId)
+
+    // Failing loudly rather than letting the artifact gate re-plan: a model
+    // that cannot write a parseable plan will not write one on the next of
+    // sixty-four attempts either, and every one of them is a paid request.
+    if (!parseOutline(outlineText)) {
+      throw new Error('Failed to parse outline from LLM response')
+    }
+  }
+
+  // --- Phase 2: one section ---
+  private async runSectionRound(
+    context: RoundContext,
+    document: ProjectedDocument,
+    sectionIndex: number
+  ): Promise<void> {
+    const { conversationId, request, abortSignal } = context
+    const outline = document.outline!
+    const outlineText = document.outlineText ?? ''
+    const section = outline.sections[sectionIndex]
+    // What has been written so far, folded out of the conversation rather than
+    // accumulated in a local string. The accumulator used to be built two
+    // different ways — one for a fresh run, one for a resumed one — and the
+    // review pass then swapped a third source in mid-run.
+    const scriptContent = document.fullContent || `# ${outline.title}`
+
+    this.dispatch({
+      type: 'SET_GENERATION_PHASE',
+      conversationId,
+      phase: 'generating_section',
+      outline,
+      currentSectionIndex: sectionIndex,
+      totalSections: outline.sections.length,
+      sectionWordCounts: plannedSectionWordCounts(document)
+    })
+
+    // Upcoming outline entries let this section plant setups (story 8.10)
+    const sectionPrompt = context.writesByTool
+      ? getToolSectionGenerationPrompt(
+          section.title,
+          section.description,
+          outline.sections.slice(sectionIndex + 1)
+        )
+      : getSectionGenerationPrompt(
+          section.title,
+          section.description,
+          outline.sections.slice(sectionIndex + 1)
+        )
+    const sectionUserMessage = `Here is the outline for the full script:\n\n${outlineText}\n\nHere is what has been written so far:\n\n${scriptContent}\n\n${sectionPrompt}`
+
+    const runSectionAttempt = async (userMessage: string): Promise<string> => {
+      const sectionMessages: ChatMessage[] = [
+        { role: 'system', content: context.storedSystemPrompt },
+        { role: 'user', content: request.prompt },
+        { role: 'assistant', content: outlineText },
+        { role: 'user', content: userMessage }
+      ]
+
+      this.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages: sectionMessages
+      })
+
+      this.dispatch({
+        type: 'SET_GENERATION_PROGRESS',
+        conversationId,
+        isComplete: false,
+        sectionTitle: section.title
+      })
+
+      const sectionStream = this.services.scriptService.regenerateSection(
+        { prompt: userMessage, conversationId, sectionTitle: section.title },
+        withGenerationSystemPrompt(sectionMessages, context.systemPrompt),
+        abortSignal
+      )
+
+      const text = await this.streamToString(
+        sectionStream,
+        conversationId,
+        abortSignal,
+        (accumulated) => {
+          this.dispatch({
+            type: 'UPDATE_CURRENT_GENERATION',
+            conversationId,
+            response: ensureSectionHeading(section.title, accumulated)
+          })
+        }
+      )
+
+      this.dispatch({
+        type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
+        conversationId,
+        response: ensureSectionHeading(section.title, text)
+      })
+
+      return text
+    }
+
+    // On the tool path the section is written by section_write, and a body
+    // outside the window is rejected and asked for again rather than kept
+    // for being the better of two failures. A model that replies in prose
+    // regardless drops through to the prose path's own corrective retry
+    // below, which is the whole point of keeping it.
+    const written = context.writesByTool
+      ? await this.writeSectionWithTools({
+          conversationId,
+          sectionTitle: section.title,
+          userMessage: sectionUserMessage,
+          storedSystemPrompt: context.storedSystemPrompt,
+          systemPrompt: context.systemPrompt,
+          history: [
+            { role: 'user', content: request.prompt },
+            { role: 'assistant', content: outlineText }
+          ],
+          budget: context.rejectionBudget,
+          grounding: context.grounding,
+          abortSignal
+        })
+      : null
+
+    let sectionText = written
+      ? (written.kind === 'written' ? written.body : written.text)
+      : await runSectionAttempt(sectionUserMessage)
+    const wordCount = countWords(sectionText)
+
+    // A section well outside the word target gets one corrective retry;
+    // the attempt closer to the target is kept
+    if (written?.kind !== 'written' && shouldRetrySection(wordCount)) {
+      this.persistConversation(conversationId)
+
+      const retryText = await runSectionAttempt(
+        `${sectionUserMessage}\n\n${buildRetryNote(wordCount)}`
+      )
+
+      sectionText = pickBetterSectionText(sectionText, retryText)
+
+      if (sectionText !== retryText) {
+        // The first attempt won: overwrite the retry generation's stored
+        // response so consolidation-by-title lands on the kept text.
+        //
+        // The ONLY completion here that carries no metrics, deliberately:
+        // it made no request of its own, and the metrics this generation
+        // already holds are the retry request's, which is what it cost.
+        // The reducer keeps them because the action omits them.
+        this.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: ensureSectionHeading(section.title, sectionText)
+        })
+      }
+    }
+
+    this.persistConversation(conversationId)
   }
 
   // Outline-critique step (story 8.9): one request checks the freshly
@@ -1589,7 +1908,7 @@ export class RawScriptGenerationOrchestrator {
       const critiquePrompt = buildOutlineCritiquePrompt(request.prompt, outlineText, plan)
       const critiqueMessages: ChatMessage[] = [{ role: 'user', content: critiquePrompt }]
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'START_GENERATION',
         conversationId,
         messages: critiqueMessages
@@ -1606,7 +1925,7 @@ export class RawScriptGenerationOrchestrator {
         conversationId,
         abortSignal,
         (accumulated) => {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'UPDATE_CURRENT_GENERATION',
             conversationId,
             response: accumulated
@@ -1618,8 +1937,9 @@ export class RawScriptGenerationOrchestrator {
 
       // A revision is stored as exactly the outline text, so latest-outline-
       // wins consumers (resume, regeneration) see it supersede generation 0
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         response: result.revisedOutlineText ?? critiqueText
       })
@@ -1631,6 +1951,13 @@ export class RawScriptGenerationOrchestrator {
       }
       return { outline, outlineText }
     } catch (error) {
+      // Under a record gate a failure that stores NOTHING is indistinguishable
+      // from a stage that never ran, so the round would fire again on the next
+      // resume, and again. closeOpenGeneration replaces only an empty response,
+      // so a critique that streamed something keeps it; one that failed before
+      // a word arrived is closed with a line saying so — which is the record.
+      this.closeOpenGeneration(conversationId, 'No outline critique was written')
+
       // A user abort must still end the whole run
       if (abortSignal?.aborted) throw error
 
@@ -1655,7 +1982,7 @@ export class RawScriptGenerationOrchestrator {
     const revised: ReviewRevision[] = []
 
     try {
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PHASE',
         conversationId,
         phase: 'reviewing',
@@ -1666,7 +1993,7 @@ export class RawScriptGenerationOrchestrator {
 
       // Clear the last section's title from progress so the streaming
       // critique text is not mistaken for live section content
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: false
@@ -1675,7 +2002,7 @@ export class RawScriptGenerationOrchestrator {
       const critiquePrompt = buildStyleCritiquePrompt(scriptContent)
       const critiqueMessages: ChatMessage[] = [{ role: 'user', content: critiquePrompt }]
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'START_GENERATION',
         conversationId,
         messages: critiqueMessages
@@ -1692,7 +2019,7 @@ export class RawScriptGenerationOrchestrator {
         conversationId,
         abortSignal,
         (accumulated) => {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'UPDATE_CURRENT_GENERATION',
             conversationId,
             response: accumulated
@@ -1700,8 +2027,9 @@ export class RawScriptGenerationOrchestrator {
         }
       )
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         response: critiqueText
       })
@@ -1736,15 +2064,11 @@ export class RawScriptGenerationOrchestrator {
         })
       }
 
-      const updated = this.callbacks.getConversation(conversationId)
-      const updatedContent = updated && revised.length > 0
-        ? `# ${outline.title}` +
-          consolidateSections(updated)
-            .map(section => `\n\n## ${section.title}\n${section.content}`)
-            .join('')
-        : undefined
-
-      return { ran: true, revised, updatedContent }
+      // The revised script is not returned: the loop folds the conversation
+      // again after this round, and the rewrites are generations in it. The
+      // accumulator this used to hand back was a THIRD source for the script
+      // text, swapped in mid-run over the one the sections were written from.
+      return { ran: true, revised }
     } catch (error) {
       // A user abort must still end the whole run, exactly as it does in
       // runOutlineCritique next door. Swallowing it here returns to a caller
@@ -1752,6 +2076,11 @@ export class RawScriptGenerationOrchestrator {
       // run the user stopped — the one failure a review must not report as
       // success. An ordinary review FAILURE is still swallowed: a review that
       // errors leaves a usable script, which is the whole point of the arm.
+      // And the same record-gate discipline as the outline critique next door:
+      // a style pass that stored nothing at all would be re-planned on every
+      // later resume of a script it had already judged.
+      this.closeOpenGeneration(conversationId, 'No style review was written')
+
       if (abortSignal?.aborted) throw error
 
       console.warn('Style review pass failed; keeping the generated script as-is', error)
@@ -1772,15 +2101,25 @@ export class RawScriptGenerationOrchestrator {
     abortSignal?: AbortSignal
   ): Promise<void> {
     const conversationId = conversation.id
-    const generationKey = `${conversationId}-review`
     const plan = buildLengthPlan(targetMinutes)
+    this.streamSaves = new StreamPersistence()
 
-    if (!this.activeGenerations.tryStart(generationKey)) return
+    // A COMMAND, not a planned round: the reader presses this button, and may
+    // press it again. It stamps a round record all the same, so that a
+    // pipeline which ever does switch the review on will not re-review a
+    // script the reader has already reviewed by hand — the record the button
+    // leaves satisfies that gate. The number continues the conversation's own
+    // numbering, so nothing the planner counts from is fabricated.
+    const rounds = projectConversation(conversation).rounds
+    this.currentRound = {
+      round: (rounds[rounds.length - 1]?.round ?? 0) + 1,
+      kind: 'review'
+    }
 
     try {
       // A fresh run owns generation state from here, and clears any previous
       // review report so the banner describes this pass
-      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+      this.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
 
       const outline = getLatestOutline(conversation)
       if (!outline) {
@@ -1796,7 +2135,7 @@ export class RawScriptGenerationOrchestrator {
         sections.map(section => `\n\n## ${section.title}\n${section.content}`).join('')
       const assessment = assessScriptLength(sections, plan)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PHASE',
         conversationId,
         phase: 'reviewing',
@@ -1805,7 +2144,7 @@ export class RawScriptGenerationOrchestrator {
         totalSections: outline.sections.length
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: false
@@ -1818,7 +2157,7 @@ export class RawScriptGenerationOrchestrator {
       )
       const reviewMessages: ChatMessage[] = [{ role: 'user', content: reviewPrompt }]
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'START_GENERATION',
         conversationId,
         messages: reviewMessages
@@ -1835,7 +2174,7 @@ export class RawScriptGenerationOrchestrator {
         conversationId,
         abortSignal,
         (accumulated) => {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'UPDATE_CURRENT_GENERATION',
             conversationId,
             response: accumulated
@@ -1843,8 +2182,9 @@ export class RawScriptGenerationOrchestrator {
         }
       )
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         response: reviewText
       })
@@ -1889,7 +2229,7 @@ export class RawScriptGenerationOrchestrator {
       // the length the user actually has
       const finalAssessment = assessScriptLength(finalSections, plan)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PHASE',
         conversationId,
         phase: 'complete',
@@ -1899,7 +2239,7 @@ export class RawScriptGenerationOrchestrator {
         sectionWordCounts: finalAssessment.sections.map(section => section.wordCount)
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true
@@ -1916,7 +2256,7 @@ export class RawScriptGenerationOrchestrator {
         }
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'REVIEW_PASS_COMPLETED',
         report: {
           conversationId,
@@ -1933,7 +2273,9 @@ export class RawScriptGenerationOrchestrator {
       // any sections already revised, so settle without an error phase: a
       // failed review is reported next to its own button, not as a failed
       // generation
-      this.callbacks.dispatch({
+      this.closeOpenGeneration(conversationId, 'No script review was written')
+
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true
@@ -1946,7 +2288,7 @@ export class RawScriptGenerationOrchestrator {
       console.error('Style review error:', error)
       throw error
     } finally {
-      this.activeGenerations.finish(generationKey)
+      this.currentRound = undefined
     }
   }
 
@@ -1956,16 +2298,20 @@ export class RawScriptGenerationOrchestrator {
     abortSignal?: AbortSignal
   ): Promise<void> {
     const conversationId = conversation.id
-    const generationKey = `${conversationId}-${request.sectionTitle}`
+    this.streamSaves = new StreamPersistence()
 
-    if (!this.activeGenerations.tryStart(generationKey)) return
-
+    // A COMMAND, and one that stamps NO round: a section's gate is an artifact
+    // gate, so a record here would be inert, and a record carrying a made-up
+    // round number would corrupt the numbering the planner counts from. When
+    // this is reached from inside a round — the style pass and the whole-script
+    // review both rewrite sections through it — the round already in progress
+    // stands, and these generations belong to it.
     try {
       // A fresh regeneration run owns generation state from here; without this
       // a previously completed run's state would swallow the progress updates
-      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+      this.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: false,
@@ -1976,7 +2322,7 @@ export class RawScriptGenerationOrchestrator {
       // to a single system message (story 8.13)
       const messages = buildConversationHistory(conversation, request.prompt)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'START_GENERATION',
         conversationId,
         messages
@@ -2011,7 +2357,7 @@ export class RawScriptGenerationOrchestrator {
         conversationId,
         abortSignal,
         (accumulated) => {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'UPDATE_CURRENT_GENERATION',
             conversationId,
             response: ensureSectionHeading(request.sectionTitle, accumulated)
@@ -2019,15 +2365,16 @@ export class RawScriptGenerationOrchestrator {
         }
       )
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true,
         sectionTitle: request.sectionTitle
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         response: ensureSectionHeading(request.sectionTitle, sectionText)
       })
@@ -2035,10 +2382,15 @@ export class RawScriptGenerationOrchestrator {
       this.persistConversation(conversationId)
 
     } catch (error) {
+      this.closeOpenGeneration(
+        conversationId,
+        `No section was written for "${request.sectionTitle}"`
+      )
+
       // The user stopped the regeneration: keep what streamed in and settle
       // quietly instead of surfacing an error banner
       if (abortSignal?.aborted) {
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'SET_GENERATION_PROGRESS',
           conversationId,
           isComplete: true,
@@ -2051,7 +2403,7 @@ export class RawScriptGenerationOrchestrator {
 
       console.error('Section regeneration error:', error)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true,
@@ -2059,8 +2411,6 @@ export class RawScriptGenerationOrchestrator {
       })
 
       throw error
-    } finally {
-      this.activeGenerations.finish(generationKey)
     }
   }
 
@@ -2074,15 +2424,14 @@ export class RawScriptGenerationOrchestrator {
     abortSignal?: AbortSignal
   ): Promise<void> {
     const conversationId = conversation.id
-    const generationKey = `${conversationId}-refine`
+    this.streamSaves = new StreamPersistence()
 
-    if (!this.activeGenerations.tryStart(generationKey)) return
-
+    // A command as well, stamping no round, for the same reason
     try {
       // A fresh refinement run owns generation state from here
-      this.callbacks.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
+      this.dispatch({ type: 'GENERATION_RESTARTED', conversationId })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: false
@@ -2092,7 +2441,7 @@ export class RawScriptGenerationOrchestrator {
       // to a single system message (story 8.13)
       const messages = buildConversationHistory(conversation, request.prompt)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'START_GENERATION',
         conversationId,
         messages
@@ -2125,7 +2474,7 @@ export class RawScriptGenerationOrchestrator {
         conversationId,
         abortSignal,
         (accumulated) => {
-          this.callbacks.dispatch({
+          this.dispatch({
             type: 'UPDATE_CURRENT_GENERATION',
             conversationId,
             response: accumulated
@@ -2133,13 +2482,14 @@ export class RawScriptGenerationOrchestrator {
         }
       )
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
         conversationId,
         response: responseText
       })
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true
@@ -2148,9 +2498,11 @@ export class RawScriptGenerationOrchestrator {
       this.persistConversation(conversationId)
 
     } catch (error) {
+      this.closeOpenGeneration(conversationId, 'No refinement was written')
+
       // The user stopped the refinement: keep what streamed in
       if (abortSignal?.aborted) {
-        this.callbacks.dispatch({
+        this.dispatch({
           type: 'SET_GENERATION_PROGRESS',
           conversationId,
           isComplete: true
@@ -2162,7 +2514,7 @@ export class RawScriptGenerationOrchestrator {
 
       console.error('Script refinement error:', error)
 
-      this.callbacks.dispatch({
+      this.dispatch({
         type: 'SET_GENERATION_PROGRESS',
         conversationId,
         isComplete: true,
@@ -2170,8 +2522,6 @@ export class RawScriptGenerationOrchestrator {
       })
 
       throw error
-    } finally {
-      this.activeGenerations.finish(generationKey)
     }
   }
 }

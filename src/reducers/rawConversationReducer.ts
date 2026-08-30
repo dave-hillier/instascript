@@ -1,12 +1,12 @@
-import type { RawConversation, ChatMessage, Generation, GenerationPhase, GenerationToolCall, ReviewReport, ScriptOutline } from '../types/conversation'
+import type { RawConversation, ChatMessage, Generation, GenerationMetrics, GenerationPhase, GenerationRound, GenerationToolCall, ReviewReport, ScriptOutline } from '../types/conversation'
 
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
   | { type: 'CREATE_CONVERSATION'; conversation: RawConversation }
   | { type: 'SECTION_EDITED'; conversationId: string; generation: Generation }
-  | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[] }
+  | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[]; round?: GenerationRound }
   | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number; toolCalls?: GenerationToolCall[] }
-  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number; toolCalls?: GenerationToolCall[] }
+  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; toolCalls?: GenerationToolCall[]; metrics?: GenerationMetrics }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
   | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
@@ -85,7 +85,14 @@ export const rawConversationReducer = (
                   messages: action.messages,
                   response: '',
                   timestamp: Date.now(),
-                  exampleIds: action.exampleIds
+                  exampleIds: action.exampleIds,
+                  // Stamped once, at creation, and deliberately given none of
+                  // the `?? existing` merge treatment toolCalls has below.
+                  // Calls accumulate across a generation; the round a
+                  // generation belongs to is fixed the moment it is opened,
+                  // and a merge would let a new generation silently inherit
+                  // the previous round's number.
+                  round: action.round
                 }],
                 updatedAt: Date.now()
               }
@@ -131,11 +138,25 @@ export const rawConversationReducer = (
                   {
                     ...conv.generations[conv.generations.length - 1],
                     response: action.response,
-                    cachedTokens: action.cachedTokens,
+                    // The cache-hit count predates metrics and is what files
+                    // written before them carry, so it is still stored on its
+                    // own — filled here from the metrics the closing action
+                    // brings, which is the same reading the provider gave, so
+                    // this reducer never writes a figure that disagrees with
+                    // the metrics beside it. A completion carrying no metrics
+                    // (the prose section retry) keeps what is already stored.
+                    cachedTokens:
+                      action.metrics?.cachedTokens
+                      ?? conv.generations[conv.generations.length - 1].cachedTokens,
                     // Calls accumulate over a run, so an update that carries
                     // none is silent about them rather than a claim that none
                     // were made — keep what the generation already recorded
-                    toolCalls: action.toolCalls ?? conv.generations[conv.generations.length - 1].toolCalls
+                    toolCalls: action.toolCalls ?? conv.generations[conv.generations.length - 1].toolCalls,
+                    // Same rule, for the same reason: the one dispatch that
+                    // rewrites an already-completed generation (the prose
+                    // section retry, when the first attempt won) carries no
+                    // metrics, and must not erase the request's own record
+                    metrics: action.metrics ?? conv.generations[conv.generations.length - 1].metrics
                   }
                 ],
                 updatedAt: Date.now()

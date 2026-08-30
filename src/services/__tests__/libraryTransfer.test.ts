@@ -287,3 +287,103 @@ describe('library export tool calls', () => {
     expect(parsed.conversations[0].generations[0].response).toContain('Induction')
   })
 })
+
+
+describe('round records in a library export', () => {
+  const withRound = (): RawConversation => {
+    const conversation = makeConversation('c1', 's1')
+    conversation.generations[0].round = { round: 4, kind: 'section', sectionIndex: 2 }
+    return conversation
+  }
+
+  it('round-trips a round record through export and import', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [withRound()])
+    )
+
+    expect(parsed.conversations[0].generations[0].round)
+      .toEqual({ round: 4, kind: 'section', sectionIndex: 2 })
+  })
+
+  it('imports an export written before rounds existed', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].round).toBeUndefined()
+  })
+
+  it('drops an unreadable round instead of aborting the whole import', () => {
+    const raw = JSON.parse(serializeLibraryExport([makeScript('s1')], [withRound()]))
+    raw.conversations[0].generations[0].round = { round: 4, kind: 'regrounding' }
+
+    const parsed = parseLibraryExport(JSON.stringify(raw))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].round).toBeUndefined()
+  })
+})
+
+describe('run metrics in a library export', () => {
+  const conversationWithMetrics = (): RawConversation => ({
+    ...makeConversation('c1', 's1'),
+    generations: [
+      {
+        messages: [{ role: 'user', content: 'write a script' }],
+        response: '## Induction\nBreathe.',
+        timestamp: 1700000000000,
+        metrics: {
+          startedAt: 1699999999000,
+          endedAt: 1700000000000,
+          firstTokenAt: 1699999999200,
+          promptTokens: 900,
+          completionTokens: 120,
+          cachedTokens: 768,
+          finishReason: 'stop'
+        }
+      }
+    ]
+  })
+
+  it('survives export and import intact', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [conversationWithMetrics()])
+    )
+
+    expect(parsed.conversations[0].generations[0].metrics).toEqual({
+      startedAt: 1699999999000,
+      endedAt: 1700000000000,
+      firstTokenAt: 1699999999200,
+      promptTokens: 900,
+      completionTokens: 120,
+      cachedTokens: 768,
+      finishReason: 'stop'
+    })
+  })
+
+  it('drops malformed metrics instead of failing the whole import', () => {
+    // validateMessage THROWS on a bad role, and one throw aborts the import of
+    // every script and conversation in the file. Metrics are a record ABOUT a
+    // request, so they must never be able to reach that: a nonsense record
+    // costs its own line of telemetry and nothing else.
+    const file = JSON.parse(
+      serializeLibraryExport([makeScript('s1')], [conversationWithMetrics()])
+    )
+    file.conversations[0].generations[0].metrics = { startedAt: 'ages ago', promptTokens: [] }
+
+    const parsed = parseLibraryExport(JSON.stringify(file))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].metrics).toBeUndefined()
+  })
+
+  it('imports a conversation exported before metrics existed', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].metrics).toBeUndefined()
+  })
+})
