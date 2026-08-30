@@ -1,30 +1,24 @@
 import type { RawConversation } from '../types/conversation'
-import { consolidateSections, isOutlineResponse } from '../services/conversationDocument'
-import { extractDocumentTitle } from './scriptMetrics'
+import { projectConversation } from '../services/scriptProjection'
 
 // The full consolidated script as markdown: the document title, then every
 // section in its current state — later regenerations and manual edits replace
-// earlier sections with the same title. The title comes from the most recent
-// outline unless a preferredTitle is given (the stored script title once the
-// script is complete, so manual renames carry through to the export).
+// earlier sections with the same title. Built from the same projection the
+// reading view renders, so what is exported is what was on screen. The title
+// comes from the most recent outline unless a preferredTitle is given (the
+// stored script title once the script is complete, so manual renames carry
+// through to the export).
 export function buildConsolidatedMarkdown(
   conversation: RawConversation,
   fallbackTitle?: string,
   preferredTitle?: string
 ): string {
-  let title = fallbackTitle
-  if (preferredTitle) {
-    title = preferredTitle
-  } else {
-    for (const generation of conversation.generations) {
-      if (isOutlineResponse(generation.response)) {
-        title = extractDocumentTitle(generation.response) ?? title
-      }
-    }
-  }
-
-  const sections = consolidateSections(conversation)
+  const { title: outlineTitle, sections } = projectConversation(conversation)
   if (sections.length === 0) return ''
+
+  // An empty preferred title is not a title. `??` would let '' win and drop
+  // the heading entirely, so the falsiness check the old branch had is kept.
+  const title = (preferredTitle || undefined) ?? outlineTitle ?? fallbackTitle
 
   return [
     title ? `# ${title}` : '',

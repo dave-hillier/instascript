@@ -3,8 +3,9 @@ import type { ReviewReport, ReviewRevision } from '../types/conversation'
 // Story 8.5: the optional style-review pass. Pure logic for parsing the
 // critique response, choosing which sections to revise, and describing the
 // outcome. The critique prompt itself reuses the style rules from
-// hypnosis-system.txt (see buildStyleCritiquePrompt in prompts.ts) so the
-// rules live in exactly one place.
+// style-rules.txt (see buildStyleCritiquePrompt in prompts.ts) so the rules
+// live in exactly one place — the file a script is written against is the
+// file it is judged against.
 
 // Revisions per run are capped to bound the extra cost of the pass
 export const MAX_REVIEW_REVISIONS = 2

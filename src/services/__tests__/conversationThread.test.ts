@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildThread } from '../conversationThread'
 import { getScriptRefinementPrompt, buildSectionRegenerationPrompt } from '../prompts'
-import type { RawConversation, Generation } from '../../types/conversation'
+import type { GenerationToolCall, RawConversation, Generation } from '../../types/conversation'
 
 const generation = (prompt: string, response: string): Generation => ({
   messages: [
@@ -10,6 +10,15 @@ const generation = (prompt: string, response: string): Generation => ({
   ],
   response,
   timestamp: 0
+})
+
+const toolGeneration = (
+  prompt: string,
+  response: string,
+  toolCalls: Array<Omit<GenerationToolCall, 'id'>>
+): Generation => ({
+  ...generation(prompt, response),
+  toolCalls: toolCalls.map((call, index) => ({ id: `call_${index}`, ...call }))
 })
 
 const conversationOf = (generations: Generation[]): RawConversation => ({
@@ -50,6 +59,51 @@ describe('buildThread', () => {
 
     expect(entries).toEqual([
       { id: 'gen-0', kind: 'activity', label: 'Wrote "Induction"', detail: '3 words' }
+    ])
+  })
+
+  it('marks a refused draft as refused rather than as a write', () => {
+    // Four attempts at one section must not read as four finished writes, one
+    // of them advertising the very length the run rejected
+    const entries = buildThread({
+      conversation: conversationOf([
+        toolGeneration(
+          'Now write the "Induction" section of the script.',
+          '## Induction\nToo long by half.',
+          [{ name: 'section_write', title: 'Induction', status: 'rejected', wordCount: 1202 }]
+        ),
+        toolGeneration(
+          'Now write the "Induction" section of the script.',
+          '## Induction\nThe kept draft.',
+          [{ name: 'section_write', title: 'Induction', status: 'accepted', wordCount: 552 }]
+        )
+      ])
+    })
+
+    expect(entries).toEqual([
+      { id: 'gen-0', kind: 'activity', label: 'Refused a draft of "Induction"', detail: '1202 words' },
+      { id: 'gen-1', kind: 'activity', label: 'Wrote "Induction"', detail: '552 words' }
+    ])
+  })
+
+  it('says so when a section was kept outside the length window', () => {
+    const entries = buildThread({
+      conversation: conversationOf([
+        toolGeneration(
+          'Now write the "Induction" section of the script.',
+          '## Induction\nShort, and kept anyway.',
+          [{ name: 'section_write', title: 'Induction', status: 'waived', wordCount: 320 }]
+        )
+      ])
+    })
+
+    expect(entries).toEqual([
+      {
+        id: 'gen-0',
+        kind: 'activity',
+        label: 'Wrote "Induction"',
+        detail: '320 words · kept outside the length window'
+      }
     ])
   })
 

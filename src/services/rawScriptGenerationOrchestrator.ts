@@ -7,7 +7,17 @@ import { buildScriptFs } from './scriptFs'
 import { getRecommendedExampleCount, estimateSectionContextTokens } from '../utils/contextWindow'
 import { countWords, formatScriptLength } from '../utils/scriptMetrics'
 import { parseOutline, ensureSectionHeading, consolidateSections, getLatestOutline, parseMarkdownSections } from './conversationDocument'
-import { shouldRetrySection, pickBetterSectionText, buildRetryNote } from './sectionQuality'
+import {
+  shouldRetrySection,
+  pickBetterSectionText,
+  buildRetryNote,
+  buildSectionRejection,
+  buildSectionWaiver,
+  sectionDistanceFromTarget,
+  MAX_SECTION_ATTEMPTS,
+  MAX_TOOL_HANDSHAKES,
+  SECTION_REJECTION_BUDGET
+} from './sectionQuality'
 import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 import { buildLengthPlan } from './scriptLength'
@@ -15,6 +25,23 @@ import type { LengthPlan } from './scriptLength'
 import { assessScriptLength, formatLengthBrief, parseScriptReviewResponse, selectScriptRevisions, buildScriptRevisionInstruction, describeRevisionReason, formatScriptReviewSummary, SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
 import { KeyedRunGuard } from './runLifecycle'
 import { recordExampleSelections } from './exampleCorpus'
+import { isTextFrame, isToolCallFrame } from './providerFrame'
+import type { ProviderFrame } from './providerFrame'
+import { scanPartialJsonObject } from './partialJson'
+import { WRITING_TOOLS, GROUNDING_SELECT_TOOL, OUTLINE_WRITE_TOOL, SECTION_WRITE_TOOL } from './writingTools'
+// The one rule for "this generation contributed nothing to the script", shared
+// with the projection, the replayed history and the activity thread: four
+// readers have to agree on it, so there is one copy of it
+import { isRejectedGeneration } from './scriptProjection'
+import type { WritingToolName } from './writingTools'
+import type { ProviderCallOptions, ProviderTurn } from './scriptGenerationService'
+import { planGeneration } from './serviceFactory'
+import {
+  buildToolGenerationSystemPrompt,
+  getToolSystemPrompt,
+  getToolOutlineGenerationPrompt,
+  getToolSectionGenerationPrompt
+} from './prompts'
 
 export interface RawScriptServices {
   scriptService: {
@@ -22,14 +49,15 @@ export interface RawScriptServices {
       request: GenerationRequest,
       messages?: ChatMessage[],
       examples?: ExampleScript[],
-      abortSignal?: AbortSignal
-    ): AsyncIterable<string>
+      abortSignal?: AbortSignal,
+      options?: ProviderCallOptions
+    ): AsyncIterable<ProviderFrame>
     regenerateSection(
       request: RegenerationRequest,
       messages: ChatMessage[],
-      abortSignal?: AbortSignal
-    ): AsyncIterable<string>
-    getLastRequestMessages?(): ChatMessage[]
+      abortSignal?: AbortSignal,
+      options?: ProviderCallOptions
+    ): AsyncIterable<ProviderFrame>
   }
   exampleService: {
     searchExamples(prompt: string, count: number): Promise<ExampleScript[]>
@@ -41,6 +69,11 @@ export interface RawGenerationCallbacks {
   appDispatch: (action: { type: 'UPDATE_SCRIPT'; scriptId: string; updates: Partial<Script> }) => void
   saveConversation: (conversation: RawConversation) => void
   getConversation: (conversationId: string) => RawConversation | undefined
+  // The script a conversation belongs to, when the caller can supply it. It is
+  // read for one thing: the model pinned on the script, which decides once at
+  // run start whether the run is written by tool call or as prose. A caller
+  // that cannot supply it leaves the decision to the current model setting.
+  getScript?: (scriptId: string) => Pick<Script, 'model'> | undefined
 }
 
 export interface RawGenerationOptions {
@@ -62,6 +95,162 @@ interface ResumeState {
   sectionTexts: Map<string, string>
 }
 
+// The corpus a run is grounded in, tracked for the whole run rather than per
+// request: grounding_select is a once-per-run call (D4), so the second one has
+// to be recognisable as a second one however many requests later it arrives.
+interface RunGrounding {
+  done: boolean
+  examples: ExampleScript[]
+}
+
+// One tool call as it arrives, reassembled across the fragments the provider
+// sends it in. `arguments` is a JSON document under construction, so it is only
+// ever read through the tolerant partial scanner until the call finishes.
+interface StreamedToolCall {
+  index: number
+  id: string
+  name?: string
+  arguments: string
+}
+
+// Everything one provider response carried, whichever way it answered
+interface StreamedResponse {
+  text: string
+  calls: StreamedToolCall[]
+  finishReason: string | null
+  // D6: a call may only be ACCEPTED after a clean finish. An abort landing
+  // exactly at the end of a call's arguments leaves them parseable, and a
+  // `length` finish means the provider cut the model off mid-body — in both
+  // cases the JSON can look complete while the section is not.
+  finishedCleanly: boolean
+}
+
+const toolField = (call: StreamedToolCall, field: string): string =>
+  scanPartialJsonObject(call.arguments).fields.get(field) ?? ''
+
+// The one call that writes THIS section. section_revise is deliberately not
+// accepted here: it replaces a section that has already been written, and
+// treating it as this section's section_write would file a replacement of
+// something else as the section the run is waiting for. It reaches the
+// wrong-tool handler instead, which names the call this step needs.
+const sectionCallOf = (response: StreamedResponse): StreamedToolCall | undefined =>
+  response.calls.find(call => call.name === SECTION_WRITE_TOOL)
+
+// The first call the model made that named a tool at all, for the turns where
+// no writing call arrived. A call with no name never got as far as one.
+const namedCallOf = (response: StreamedResponse): StreamedToolCall | undefined =>
+  response.calls.find(call => !!call.name)
+
+// How a non-writing call was answered: the tool result the model is sent back,
+// the status the call is recorded under, and the non-empty durable line that
+// stands as the generation's response.
+//
+// The response line is not markdown, because this generation wrote no prose —
+// but it must not be EMPTY: a generation stored with an empty response is
+// dropped, prompt and all, by the deployed parser (D1). So the turn is
+// recorded as what it was, in one line that no reader can mistake for a
+// section body.
+interface ToolAnswer {
+  content: string
+  status: 'accepted' | 'rejected'
+  record: string
+}
+
+// What the run already retrieved, handed back as the result of the model's
+// grounding_select call. Ids and titles only: the selection is structure, and
+// the exemplars themselves are already in the system prompt this request
+// carries, so restating their prose here would bloat every retry for nothing
+// (D3).
+const answerGroundingSelect = (
+  grounding: RunGrounding,
+  expectedTool: string
+): ToolAnswer => {
+  if (grounding.done) {
+    return {
+      content:
+        `REFUSED: grounding for this script is already done, and ${GROUNDING_SELECT_TOOL} is ` +
+        `called once per script. Call ${expectedTool} next.`,
+      status: 'rejected',
+      record: `Refused a second ${GROUNDING_SELECT_TOOL} call; this script was already grounded.`
+    }
+  }
+
+  const selected = grounding.examples.map((example, index) => ({
+    id: String(example.metadata?.id ?? example.metadata?.filename ?? `example-${index + 1}`),
+    title: String(example.metadata?.title ?? example.metadata?.filename ?? '')
+  }))
+
+  return {
+    content:
+      JSON.stringify({ selected }) +
+      `\nThese are the examples this script is written against; they are already in the ` +
+      `instructions you were given. Call ${expectedTool} next.`,
+    // The MODEL's call was answered — `content` is the selection it asked for.
+    // The stored status is about the SCRIPT, and this turn wrote none of it: a
+    // handshake recorded as accepted is replayed by buildConversationHistory
+    // as an assistant turn together with request messages identical to the
+    // outline request that follows, so the outline prompt would be sent twice.
+    // `rejected` is the shape every reader already folds out, so the handshake
+    // is recorded in one shape rather than taught to four readers.
+    status: 'rejected',
+    record: selected.length > 0
+      ? `Grounded in ${selected.length} corpus examples: ${selected.map(entry => entry.id).join(', ')}.`
+      : 'Grounded with no corpus examples: none were retrieved for this script.'
+  }
+}
+
+// A call arrived, but not the one this turn needs. It is answered as a refused
+// call and asked again WITH THE TOOLS STILL ATTACHED, never dropped into the
+// tool-less prose retry: a model that is calling tools has not failed to use
+// them, it has called the wrong one, and taking the tools away would answer a
+// mis-step by removing the only way it can succeed.
+const answerWrongTool = (called: string, expectedTool: string, subject: string): ToolAnswer => ({
+  content:
+    `REFUSED: ${called} is not the call this step needs. ${subject} Call ${expectedTool} instead.`,
+  status: 'rejected',
+  record: `Refused a ${called} call; ${expectedTool} is the call this step needs.`
+})
+
+// The call named a different section from the one being written. Filing its
+// body under the requested title would store one section's prose as another's,
+// so the call is refused with the title the run is actually waiting for.
+const answerWrongSection = (called: string, named: string, expected: string): ToolAnswer => ({
+  content:
+    `REFUSED: that call named the section "${named}", but the section being written is ` +
+    `"${expected}". The section was not written. Call ${SECTION_WRITE_TOOL} again with ` +
+    `title set to "${expected}".`,
+  status: 'rejected',
+  record: `Refused a ${called} call naming "${named}"; the section being written is "${expected}".`
+})
+
+// The outline a completed outline_write call describes, rendered as the same
+// markdown the prose path stores (D1). Everything downstream — parseOutline,
+// getLatestOutline, resume, the outline critique, the already-deployed parser
+// that reads conversations exported from this build — reads that markdown, so
+// the tool call is a different way of writing it, not a different thing to
+// store. Returns null for arguments that never became a usable plan.
+export function renderOutlineFromToolCall(argumentsJson: string): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(argumentsJson)
+  } catch {
+    return null
+  }
+
+  const outline = parsed as { title?: unknown; sections?: unknown }
+  const title = typeof outline.title === 'string' ? outline.title.trim() : ''
+  const sections = Array.isArray(outline.sections) ? outline.sections : []
+  if (!title || sections.length === 0) return null
+
+  const rendered = sections
+    .map(entry => entry as { title?: unknown; description?: unknown })
+    .filter(entry => typeof entry.title === 'string' && entry.title.trim())
+    .map(entry => `## ${String(entry.title).trim()}\n${String(entry.description ?? '').trim()}`)
+
+  if (rendered.length === 0) return null
+  return `# ${title}\n${rendered.join('\n')}`
+}
+
 // Inspect an existing conversation for a usable outline and already-generated
 // sections, so an interrupted or failed run can pick up where it left off
 // instead of starting over. Exported for unit testing.
@@ -71,6 +260,13 @@ export function findResumeState(conversation: RawConversation): ResumeState | nu
   let outlineIndex = -1
 
   for (let i = 0; i < conversation.generations.length; i++) {
+    // Defensive rather than load-bearing, unlike its counterpart in the section
+    // scan below: no shape a rejected generation is stored in can satisfy
+    // parseOutline today — a refused outline call and every handshake store a
+    // one-line record, and a refused section stores "## Title", which has no
+    // document heading to match. Kept so both scans answer to the same rule, so
+    // that a future refusal that does render an outline cannot resurrect one.
+    if (isRejectedGeneration(conversation.generations[i])) continue
     const parsed = parseOutline(conversation.generations[i].response)
     if (parsed) {
       outline = parsed
@@ -90,6 +286,9 @@ export function findResumeState(conversation: RawConversation): ResumeState | nu
 
   const sectionTexts = new Map<string, string>()
   for (let i = outlineIndex + 1; i < conversation.generations.length; i++) {
+    // A rejected attempt is stored with its body so nothing is silently lost,
+    // but a resume must not restore a section the run itself refused
+    if (isRejectedGeneration(conversation.generations[i])) continue
     const match = conversation.generations[i].response.match(/^##\s+(.+?)\s*\n([\s\S]*)$/)
     if (match && match[2].trim()) {
       sectionTexts.set(match[1].trim(), match[2].trim())
@@ -104,7 +303,6 @@ export class RawScriptGenerationOrchestrator {
   private callbacks: RawGenerationCallbacks
   private options: RawGenerationOptions
   private activeGenerations = new KeyedRunGuard()
-  private completedGenerations = new Set<string>()
   private lastSaveTime = 0
   private saveThrottleMs = 1000
   // The corpus a conversation's run was grounded in, so a rewrite triggered
@@ -186,20 +384,31 @@ export class RawScriptGenerationOrchestrator {
     }
   }
 
+  // Collapses a provider stream back to the prose it carried. Everything the
+  // stream reports about the request itself — first token, usage, finish
+  // reason — is deliberately ignored here: this is the path that builds the
+  // markdown a generation stores, and only text belongs in it.
   private async streamToString(
-    stream: AsyncIterable<string>,
+    stream: AsyncIterable<ProviderFrame>,
     conversationId: string,
     abortSignal?: AbortSignal,
     onChunk?: (accumulated: string) => void
   ): Promise<string> {
     let accumulated = ''
 
-    for await (const chunk of stream) {
+    for await (const frame of stream) {
+      // Below the filter, not above it: the stream now ends with `finished` and
+      // `usage` frames, and checking there would turn an abort arriving after
+      // the last text delta into a thrown run instead of one that keeps the
+      // prose it had. This ticks on prose only, which is what it did before
+      // frames existed.
+      if (!isTextFrame(frame)) continue
+
       if (abortSignal?.aborted) {
         throw new Error('Generation aborted')
       }
 
-      accumulated += chunk
+      accumulated += frame.delta
 
       if (onChunk) {
         onChunk(accumulated)
@@ -214,6 +423,664 @@ export class RawScriptGenerationOrchestrator {
     }
 
     return accumulated
+  }
+
+  // The tool-path counterpart of streamToString. It keeps everything the
+  // stream carries rather than only the prose: a run written by tool call needs
+  // the arguments, the finish reason and the text a model that ignored the
+  // tools replied with, and has to decide between them once the stream ends.
+  //
+  // `onProgress` is called on every text or tool-call frame with the response
+  // as it stands, so a caller can render a body that is still arriving.
+  private async streamResponse(
+    stream: AsyncIterable<ProviderFrame>,
+    conversationId: string,
+    abortSignal?: AbortSignal,
+    onProgress?: (response: StreamedResponse) => void
+  ): Promise<StreamedResponse> {
+    const calls = new Map<number, StreamedToolCall>()
+    let text = ''
+    let finishReason: string | null = null
+    let finishedCleanly = false
+
+    const snapshot = (): StreamedResponse => ({
+      text,
+      calls: [...calls.values()].sort((a, b) => a.index - b.index),
+      finishReason,
+      finishedCleanly
+    })
+
+    for await (const frame of stream) {
+      if (frame.kind === 'finished') {
+        finishReason = frame.reason
+        // Only these two mean the model stopped because it was done. A
+        // truncation ('length') or a stream that simply ends leaves the body
+        // half-written however well-formed its JSON happens to look.
+        finishedCleanly = frame.reason === 'stop' || frame.reason === 'tool_calls'
+        continue
+      }
+
+      if (isTextFrame(frame)) {
+        // Checked below the filter, as the prose path does: an abort arriving
+        // after the last content delta must not turn into a thrown run
+        if (abortSignal?.aborted) throw new Error('Generation aborted')
+        text += frame.delta
+      } else if (isToolCallFrame(frame)) {
+        if (abortSignal?.aborted) throw new Error('Generation aborted')
+        // Keyed on index, never on id: the id arrives with the first fragment
+        // of a call and on no fragment after it
+        const existing = calls.get(frame.index)
+        const call: StreamedToolCall = existing ?? {
+          index: frame.index,
+          id: frame.id ?? '',
+          name: frame.name,
+          arguments: ''
+        }
+        if (frame.id) call.id = frame.id
+        if (frame.name) call.name = frame.name
+        call.arguments += frame.argumentsDelta
+        calls.set(frame.index, call)
+      } else {
+        continue
+      }
+
+      onProgress?.(snapshot())
+
+      const now = Date.now()
+      if (now - this.lastSaveTime > this.saveThrottleMs) {
+        this.persistConversation(conversationId)
+        this.lastSaveTime = now
+      }
+    }
+
+    return snapshot()
+  }
+
+  // Runs one tool-path stream with the guarantee every turn on that path
+  // needs: whatever happens, the generation the turn opened is CLOSED. A
+  // stream that throws — the user stopping the run, a dropped connection —
+  // would otherwise leave the generation open holding whatever had streamed
+  // into it, stored as an ordinary generation with no tool calls on it, which
+  // is the one shape no reader folds out (D6); and an abort landing before the
+  // first delta would leave it holding the empty response the deployed parser
+  // drops, prompt and all (D1). There is no call id to record here, because
+  // the call never finished arriving, so the turn is closed with a one-line
+  // record of what happened — the same shape the outline path already uses for
+  // a reply that carried neither a call nor text.
+  private async streamOrClose(
+    conversationId: string,
+    subject: string,
+    run: () => Promise<StreamedResponse>
+  ): Promise<StreamedResponse> {
+    try {
+      return await run()
+    } catch (error) {
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: `${subject}: the request ended before the model finished.`
+      })
+      this.persistConversation(conversationId)
+      throw error
+    }
+  }
+
+  // Write the outline by tool call. A compliant model's FIRST act here is a
+  // grounding_select, because that is what its own schema tells it to do — so
+  // the turn that answers it is the normal case, not an error, and the outline
+  // arrives on the turn after. Bounded by MAX_TOOL_HANDSHAKES so a model that
+  // never gets to outline_write cannot spin against a paid API.
+  //
+  // Returns the markdown outline; throws when nothing usable was written,
+  // rather than letting an empty response stand as one.
+  private async writeOutlineWithTools(args: {
+    conversationId: string
+    request: GenerationRequest
+    outlineUserPrompt: string
+    outlineMessages: ChatMessage[]
+    exampleIds: string[]
+    examples: ExampleScript[]
+    systemPrompt: string
+    grounding: RunGrounding
+    abortSignal?: AbortSignal
+  }): Promise<string> {
+    const { conversationId } = args
+    let toolTurns: ProviderTurn[] = []
+
+    for (let turn = 0; turn <= MAX_TOOL_HANDSHAKES; turn++) {
+      if (args.abortSignal?.aborted) throw new Error('Generation aborted')
+
+      this.callbacks.dispatch({
+        type: 'START_GENERATION',
+        conversationId,
+        messages: args.outlineMessages,
+        exampleIds: args.exampleIds.length > 0 ? args.exampleIds : undefined
+      })
+
+      const stream = this.services.scriptService.generateScript(
+        { ...args.request, prompt: args.outlineUserPrompt },
+        withGenerationSystemPrompt(args.outlineMessages, args.systemPrompt),
+        args.examples,
+        args.abortSignal,
+        { tools: WRITING_TOOLS, toolTurns }
+      )
+
+      const response = await this.streamOrClose(conversationId, 'No outline was written', () =>
+        this.streamResponse(
+          stream,
+          conversationId,
+          args.abortSignal,
+          streamed => {
+            // Only the title is readable while the call streams: the section
+            // plan is a nested array, and the partial scanner deliberately
+            // reads top-level strings only. A title on its own is still worth
+            // showing — it is what the page has been waiting for.
+            const call = streamed.calls.find(entry => entry.name === OUTLINE_WRITE_TOOL)
+            const partial = call ? toolField(call, 'title') : streamed.text
+            if (!partial) return
+            this.callbacks.dispatch({
+              type: 'UPDATE_CURRENT_GENERATION',
+              conversationId,
+              response: call ? `# ${partial}` : partial
+            })
+          }
+        )
+      )
+
+      const call = response.calls.find(entry => entry.name === OUTLINE_WRITE_TOOL)
+
+      if (call) {
+        const rendered = response.finishedCleanly
+          ? renderOutlineFromToolCall(call.arguments)
+          : null
+
+        if (rendered) {
+          this.callbacks.dispatch({
+            type: 'COMPLETE_GENERATION',
+            conversationId,
+            response: rendered,
+            toolCalls: [{
+              id: call.id,
+              name: OUTLINE_WRITE_TOOL,
+              title: toolField(call, 'title'),
+              status: 'accepted'
+            }]
+          })
+          return rendered
+        }
+
+        // The call produced no usable plan — malformed arguments, no title, no
+        // sections, or a stream that never finished. `response.text` is empty
+        // for a tool-only reply, and a generation stored with an empty response
+        // is dropped by the deployed parser, taking its prompt with it (D1), so
+        // what happened is recorded in one non-empty line before the run fails.
+        const reason = response.finishedCleanly
+          ? `REJECTED: those ${OUTLINE_WRITE_TOOL} arguments did not describe a usable plan.`
+          : `REJECTED: the ${OUTLINE_WRITE_TOOL} call did not finish ` +
+            `(${response.finishReason ?? 'the stream ended without a finish reason'}).`
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: `No outline was written: ${reason}`,
+          toolCalls: [{ id: call.id, name: OUTLINE_WRITE_TOOL, status: 'rejected', reason }]
+        })
+        this.persistConversation(conversationId)
+        throw new Error('Failed to parse outline from LLM response')
+      }
+
+      const stray = namedCallOf(response)
+
+      if (!stray) {
+        // A model that answered in prose anyway is not a failed run: the
+        // markdown outline is parsed exactly as it always was, and the run
+        // carries on with whichever the model gave us.
+        //
+        // But a prose reply is judged on the same finish as a call (D6): a
+        // reply cut off at "## Awak" still parses as an outline, and storing
+        // it would silently shorten the whole script to the sections that
+        // arrived. Neither an empty reply nor a truncated one is an outline,
+        // so what happened is recorded as itself (D1) and the run fails on it.
+        if (!response.text.trim() || !response.finishedCleanly) {
+          const reason = response.text.trim()
+            ? `the reply was cut off (${response.finishReason ?? 'the stream ended without a finish reason'})`
+            : 'the model replied with neither a tool call nor text'
+          this.callbacks.dispatch({
+            type: 'COMPLETE_GENERATION',
+            conversationId,
+            response: `No outline was written: ${reason}.`
+          })
+          this.persistConversation(conversationId)
+          throw new Error('Failed to parse outline from LLM response')
+        }
+
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: response.text
+        })
+        return response.text
+      }
+
+      const answer = stray.name === GROUNDING_SELECT_TOOL
+        ? answerGroundingSelect(args.grounding, OUTLINE_WRITE_TOOL)
+        : answerWrongTool(stray.name as string, OUTLINE_WRITE_TOOL, 'The outline is not written yet.')
+      if (stray.name === GROUNDING_SELECT_TOOL) args.grounding.done = true
+
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        response: answer.record,
+        toolCalls: [{
+          id: stray.id,
+          name: stray.name as WritingToolName,
+          status: answer.status,
+          reason: answer.content
+        }]
+      })
+      this.persistConversation(conversationId)
+
+      toolTurns = [
+        {
+          role: 'assistant',
+          toolCalls: [{ id: stray.id, name: stray.name as string, arguments: stray.arguments }]
+        },
+        { role: 'tool', toolCallId: stray.id, content: answer.content }
+      ]
+    }
+
+    throw new Error(`The model never called ${OUTLINE_WRITE_TOOL}`)
+  }
+
+  // One attempt at one section on the tool path: the request goes out with the
+  // whole tool list (D4) and any rejection exchange from the previous attempt,
+  // and the body streams into the current generation as it arrives.
+  //
+  // The generation is STARTED here but deliberately not completed: only the
+  // caller, having measured the body, knows whether this attempt was accepted,
+  // rejected or waived.
+  private async runToolSectionAttempt(args: {
+    conversationId: string
+    sectionTitle: string
+    userMessage: string
+    messages: ChatMessage[]
+    sendMessages: ChatMessage[]
+    toolTurns: ProviderTurn[]
+    abortSignal?: AbortSignal
+  }): Promise<StreamedResponse> {
+    this.callbacks.dispatch({
+      type: 'START_GENERATION',
+      conversationId: args.conversationId,
+      messages: args.messages
+    })
+
+    this.callbacks.dispatch({
+      type: 'SET_GENERATION_PROGRESS',
+      conversationId: args.conversationId,
+      isComplete: false,
+      sectionTitle: args.sectionTitle
+    })
+
+    const stream = this.services.scriptService.regenerateSection(
+      {
+        prompt: args.userMessage,
+        conversationId: args.conversationId,
+        sectionTitle: args.sectionTitle
+      },
+      args.sendMessages,
+      args.abortSignal,
+      { tools: WRITING_TOOLS, toolTurns: args.toolTurns }
+    )
+
+    return this.streamResponse(
+      stream,
+      args.conversationId,
+      args.abortSignal,
+      response => {
+        const call = sectionCallOf(response)
+        const body = call ? toolField(call, 'body') : response.text
+        if (!body) return
+        // Byte-identical to what the prose path renders while streaming, so
+        // the reducer, the reading view, performance mode and the word meter
+        // all keep working with no change at all
+        this.callbacks.dispatch({
+          type: 'UPDATE_CURRENT_GENERATION',
+          conversationId: args.conversationId,
+          response: ensureSectionHeading(args.sectionTitle, body)
+        })
+      }
+    )
+  }
+
+  // Write one section by tool call, rejecting a body outside the word window
+  // and asking for it again, until it lands or the attempts run out.
+  //
+  // This replaces the old one-shot retry, which kept whichever of two attempts
+  // happened to be closer — so a section could be accepted for being the better
+  // of two failures. Here a failure is a REJECTION: it is stored as one, folded
+  // out of the document, and answered with a tool result telling the model its
+  // call did not land.
+  //
+  // Two things bound the loop, because an unbounded rewrite loop runs against a
+  // paid API inside a browser tab: MAX_SECTION_ATTEMPTS per section, and a
+  // per-run rejection budget shared by every section. When either runs out the
+  // closest attempt is accepted anyway and recorded as WAIVED (D5) — the user
+  // chose having the script over not having it, and the waiver stays visible
+  // rather than reading as a clean acceptance.
+  //
+  // A model that answers in prose despite being offered the tools is not
+  // failing: it is a model the tool path cannot drive, so the section falls
+  // back to the prose path's own corrective retry, which the caller runs.
+  private async writeSectionWithTools(args: {
+    conversationId: string
+    sectionTitle: string
+    userMessage: string
+    storedSystemPrompt: string
+    systemPrompt: string
+    history: ChatMessage[]
+    budget: { remaining: number }
+    grounding: RunGrounding
+    abortSignal?: AbortSignal
+  }): Promise<{ kind: 'written'; body: string } | { kind: 'prose'; text: string }> {
+    const { conversationId, sectionTitle } = args
+    const attempts: Array<{
+      call: StreamedToolCall
+      body: string
+      wordCount: number
+      // D6, carried per attempt: the waiver chooses among attempts, so it has
+      // to know which of them actually arrived whole
+      finishedCleanly: boolean
+    }> = []
+
+    let toolTurns: ProviderTurn[] = []
+    // Writing attempts and handshake turns are counted apart: answering a
+    // grounding_select or refusing the wrong tool must not spend the section's
+    // attempts, and must not be able to spin either.
+    let attempt = 0
+    let handshakes = 0
+
+    for (;;) {
+      if (args.abortSignal?.aborted) throw new Error('Generation aborted')
+
+      const messages: ChatMessage[] = [
+        { role: 'system', content: args.storedSystemPrompt },
+        ...args.history,
+        { role: 'user', content: args.userMessage }
+      ]
+
+      const response = await this.streamOrClose(
+        conversationId,
+        `No section was written for "${sectionTitle}"`,
+        () => this.runToolSectionAttempt({
+          conversationId,
+          sectionTitle,
+          userMessage: args.userMessage,
+          messages,
+          sendMessages: withGenerationSystemPrompt(messages, args.systemPrompt),
+          toolTurns,
+          abortSignal: args.abortSignal
+        })
+      )
+
+      const call = sectionCallOf(response)
+      const stray = call ? undefined : namedCallOf(response)
+
+      if (!call && !stray) {
+        // Nothing was called at all: this is a model answering in prose despite
+        // being offered the tools, which the caller's prose retry handles.
+        //
+        // A prose reply is judged on the same finish a call is (D6). A reply
+        // the provider truncated is a fragment of a section, and storing it
+        // would file half a section as the section — so it is recorded as what
+        // happened, in a line with no heading that no reader reads as a body,
+        // and the section fails rather than being written from the fragment.
+        if (!response.finishedCleanly) {
+          const reason = response.finishReason ?? 'the stream ended without a finish reason'
+          this.callbacks.dispatch({
+            type: 'COMPLETE_GENERATION',
+            conversationId,
+            response: `No section was written for "${sectionTitle}": the reply was cut off (${reason}).`
+          })
+          this.persistConversation(conversationId)
+          throw new Error(
+            `The section "${sectionTitle}" was never written: the reply was cut off (${reason})`
+          )
+        }
+
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: ensureSectionHeading(sectionTitle, response.text)
+        })
+        return { kind: 'prose', text: response.text }
+      }
+
+      // A call arrived that was not this section's section_write — a compliant
+      // model's opening grounding_select, a second one, or any other tool.
+      // Answered here and asked again with the tools still attached; falling
+      // through to the prose retry would strand a tool-calling model, and
+      // taking the call's text as a body would file an empty section.
+      if (stray) {
+        const answer = stray.name === GROUNDING_SELECT_TOOL
+          ? answerGroundingSelect(args.grounding, SECTION_WRITE_TOOL)
+          : answerWrongTool(
+              stray.name as string,
+              SECTION_WRITE_TOOL,
+              `The section being written is "${sectionTitle}".`
+            )
+        if (stray.name === GROUNDING_SELECT_TOOL) args.grounding.done = true
+
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: answer.record,
+          toolCalls: [{
+            id: stray.id,
+            name: stray.name as WritingToolName,
+            status: answer.status,
+            reason: answer.content
+          }]
+        })
+        this.persistConversation(conversationId)
+
+        handshakes += 1
+        if (handshakes > MAX_TOOL_HANDSHAKES) {
+          throw new Error(
+            `The model kept calling tools other than ${SECTION_WRITE_TOOL} for the section ` +
+            `"${sectionTitle}"`
+          )
+        }
+
+        toolTurns = [
+          {
+            role: 'assistant',
+            toolCalls: [{ id: stray.id, name: stray.name as string, arguments: stray.arguments }]
+          },
+          { role: 'tool', toolCallId: stray.id, content: answer.content }
+        ]
+        continue
+      }
+
+      const writingCall = call as StreamedToolCall
+      const namedTitle = toolField(writingCall, 'title').trim()
+
+      // MAJOR: the body is filed under the title the CALL names, so a call
+      // naming another section is refused rather than stored as this one.
+      if (namedTitle !== sectionTitle) {
+        const answer = answerWrongSection(
+          writingCall.name as string,
+          namedTitle || '(none)',
+          sectionTitle
+        )
+
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: answer.record,
+          toolCalls: [{
+            id: writingCall.id,
+            name: writingCall.name as WritingToolName,
+            title: namedTitle || undefined,
+            status: 'rejected',
+            reason: answer.content
+          }]
+        })
+        this.persistConversation(conversationId)
+
+        handshakes += 1
+        if (handshakes > MAX_TOOL_HANDSHAKES) {
+          throw new Error(
+            `The model kept writing a section other than "${sectionTitle}"`
+          )
+        }
+
+        toolTurns = [
+          {
+            role: 'assistant',
+            toolCalls: [{
+              id: writingCall.id,
+              name: writingCall.name as string,
+              arguments: writingCall.arguments
+            }]
+          },
+          { role: 'tool', toolCallId: writingCall.id, content: answer.content }
+        ]
+        continue
+      }
+
+      attempt += 1
+      const body = toolField(writingCall, 'body')
+      const wordCount = countWords(body)
+      const name = writingCall.name as WritingToolName
+
+      if (response.finishedCleanly && !shouldRetrySection(wordCount)) {
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: ensureSectionHeading(sectionTitle, body),
+          toolCalls: [{ id: writingCall.id, name, title: sectionTitle, status: 'accepted', wordCount }]
+        })
+        return { kind: 'written', body }
+      }
+
+      attempts.push({ call: writingCall, body, wordCount, finishedCleanly: response.finishedCleanly })
+
+      if (attempt >= MAX_SECTION_ATTEMPTS || args.budget.remaining <= 0) {
+        // The waiver lands in THIS generation, which is still open: the kept
+        // body has to be the last one stored for its title, because every
+        // reader that is not the projection — consolidation, the review pass,
+        // the export of a conversation written before tool calls — resolves a
+        // repeated section by taking the last.
+        //
+        // Only cleanly-finished, non-empty attempts are candidates (D6). The
+        // waiver D5 grants is for a section that will not land in the WORD
+        // WINDOW — the user chose "better to have the script than not" about a
+        // section that is the wrong length, not about a half-sentence that
+        // never arrived. So an aborted or 'length'-truncated body is not a
+        // thing there is any version of having: with no clean attempt to
+        // waive, the section fails through the error path instead.
+        //
+        // Every exit from here closes THIS generation first. It is still open
+        // and the refused body has already been streamed into it, so throwing
+        // past it would leave that body stored as an ordinary generation with
+        // no tool calls on it — unmarked, and folded out by nobody, which is
+        // the outcome D6 forbids reached by another door.
+        const last = attempts[attempts.length - 1]
+        const refuseAttempt = (reason: string): void => {
+          this.callbacks.dispatch({
+            type: 'COMPLETE_GENERATION',
+            conversationId,
+            response: ensureSectionHeading(sectionTitle, last.body),
+            toolCalls: [{
+              id: last.call.id,
+              name: (last.call.name ?? SECTION_WRITE_TOOL) as WritingToolName,
+              title: sectionTitle,
+              status: 'rejected',
+              wordCount: last.wordCount,
+              reason
+            }]
+          })
+          this.persistConversation(conversationId)
+        }
+
+        if (args.abortSignal?.aborted) {
+          refuseAttempt('REJECTED: the run was stopped before this section was written.')
+          throw new Error('Generation aborted')
+        }
+
+        const candidates = attempts.filter(entry => entry.finishedCleanly && entry.wordCount > 0)
+        if (candidates.length === 0) {
+          // `response` is the last attempt's, so both wordings describe the
+          // attempt whose body this generation is holding
+          refuseAttempt(
+            last.finishedCleanly
+              ? 'REJECTED: that call finished carrying no section body at all.'
+              : 'REJECTED: the call did not finish ' +
+                `(${response.finishReason ?? 'the stream ended without a finish reason'}), so the ` +
+                'section body arrived incomplete.'
+          )
+          throw new Error(
+            `The section "${sectionTitle}" was never written: no attempt finished, so there is ` +
+            'no complete body to keep'
+          )
+        }
+
+        const best = candidates.reduce((closest, candidate) =>
+          sectionDistanceFromTarget(candidate.wordCount) < sectionDistanceFromTarget(closest.wordCount)
+            ? candidate
+            : closest
+        )
+        this.callbacks.dispatch({
+          type: 'COMPLETE_GENERATION',
+          conversationId,
+          response: ensureSectionHeading(sectionTitle, best.body),
+          toolCalls: [{
+            id: best.call.id,
+            name: (best.call.name ?? SECTION_WRITE_TOOL) as WritingToolName,
+            title: sectionTitle,
+            status: 'waived',
+            wordCount: best.wordCount,
+            // Every candidate finished cleanly, and a cleanly finished body
+            // inside the window was accepted and returned long before here —
+            // so a waived body is always one that missed the window
+            reason: buildSectionWaiver(best.wordCount, attempts.length)
+          }]
+        })
+        this.persistConversation(conversationId)
+        return { kind: 'written', body: best.body }
+      }
+
+      const reason = response.finishedCleanly
+        ? buildSectionRejection(wordCount)
+        : 'REJECTED: the call did not finish ' +
+          `(${response.finishReason ?? 'the stream ended without a finish reason'}), so the ` +
+          'section body arrived incomplete. Call the tool again with the whole section.'
+
+      this.callbacks.dispatch({
+        type: 'COMPLETE_GENERATION',
+        conversationId,
+        // Stored with its body even though the projection folds it out: a
+        // rejected draft is evidence of what the run did, and a generation
+        // written with an empty response is DROPPED by the already-deployed
+        // parser, taking its prompt with it (D1).
+        response: ensureSectionHeading(sectionTitle, body),
+        toolCalls: [{ id: writingCall.id, name, title: sectionTitle, status: 'rejected', wordCount, reason }]
+      })
+
+      args.budget.remaining -= 1
+      // Only the failed attempt is replayed, not every one before it: the model
+      // needs to see the call it just made and why it was refused, and carrying
+      // three discarded drafts of the same section would cost more context than
+      // the section itself.
+      toolTurns = [
+        {
+          role: 'assistant',
+          toolCalls: [{ id: writingCall.id, name, arguments: writingCall.arguments }]
+        },
+        { role: 'tool', toolCallId: writingCall.id, content: reason }
+      ]
+
+      this.persistConversation(conversationId)
+    }
   }
 
   async generateScript(
@@ -242,10 +1109,34 @@ export class RawScriptGenerationOrchestrator {
         updates: { status: 'in-progress' }
       })
 
+      // How this run will be written, decided once and pinned for its whole
+      // length: the provider classes re-read the model setting on every
+      // request, so a model changed halfway through a run would otherwise
+      // switch the mode mid-script — leaving the remaining sections asking for
+      // tool calls of a model that cannot make them.
+      const runPlan = planGeneration(this.callbacks.getScript?.(conversation.scriptId))
+      const writesByTool = runPlan.mode === 'tools'
+      // The rejection budget belongs to the run, not to a section: a model
+      // systematically writing long would otherwise pay the per-section cap
+      // over and over, once for every section of the script.
+      const rejectionBudget = { remaining: SECTION_REJECTION_BUDGET }
+
       // Retrieve examples upfront; record which ones inform this generation
       const examples = await this.retrieveExamples(request, conversation, plan)
+      // The corpus the run is grounded in, and whether the model has already
+      // asked for it. The retrieval happened here, before the first request, so
+      // a grounding_select call is answered from what the run already has
+      // rather than searching again on the model's say-so.
+      const grounding: RunGrounding = { done: false, examples }
       this.runExamples.set(conversationId, examples)
-      const systemPrompt = buildGenerationSystemPrompt(plan, examples)
+      // The tool-mode system prompt differs from the prose one only in how the
+      // words are asked for; the style rules underneath are the same file.
+      const systemPrompt = writesByTool
+        ? buildToolGenerationSystemPrompt(plan, examples)
+        : buildGenerationSystemPrompt(plan, examples)
+      // Examples are sent, never stored, so what a generation records is the
+      // lean system prompt for the mode the run is in
+      const storedSystemPrompt = writesByTool ? getToolSystemPrompt(plan) : getSystemPrompt(plan)
       const exampleIds = examples
         .map(example => String(example.metadata?.id ?? example.metadata?.filename ?? ''))
         .filter(Boolean)
@@ -292,45 +1183,61 @@ export class RawScriptGenerationOrchestrator {
           isComplete: false
         })
 
-        const outlineUserPrompt = request.prompt + '\n\n' + getOutlineGenerationPrompt(plan)
+        const outlineUserPrompt = request.prompt + '\n\n' + (writesByTool
+          ? getToolOutlineGenerationPrompt(plan)
+          : getOutlineGenerationPrompt(plan))
         const outlineMessages: ChatMessage[] = [
-          { role: 'system', content: getSystemPrompt(plan) },
+          { role: 'system', content: storedSystemPrompt },
           { role: 'user', content: outlineUserPrompt }
         ]
 
-        // Start a generation entry for the outline
-        this.callbacks.dispatch({
-          type: 'START_GENERATION',
-          conversationId,
-          messages: outlineMessages,
-          exampleIds: exampleIds.length > 0 ? exampleIds : undefined
-        })
+        if (writesByTool) {
+          outlineText = await this.writeOutlineWithTools({
+            conversationId,
+            request,
+            outlineUserPrompt,
+            outlineMessages,
+            exampleIds,
+            examples,
+            systemPrompt,
+            grounding,
+            abortSignal
+          })
+        } else {
+          // Start a generation entry for the outline
+          this.callbacks.dispatch({
+            type: 'START_GENERATION',
+            conversationId,
+            messages: outlineMessages,
+            exampleIds: exampleIds.length > 0 ? exampleIds : undefined
+          })
 
-        const outlineStream = this.services.scriptService.generateScript(
-          { ...request, prompt: outlineUserPrompt },
-          withGenerationSystemPrompt(outlineMessages, systemPrompt),
-          examples,
-          abortSignal
-        )
+          const outlineStream = this.services.scriptService.generateScript(
+            { ...request, prompt: outlineUserPrompt },
+            withGenerationSystemPrompt(outlineMessages, systemPrompt),
+            examples,
+            abortSignal
+          )
 
-        outlineText = await this.streamToString(
-          outlineStream,
-          conversationId,
-          abortSignal,
-          (accumulated) => {
-            this.callbacks.dispatch({
-              type: 'UPDATE_CURRENT_GENERATION',
-              conversationId,
-              response: accumulated
-            })
-          }
-        )
+          outlineText = await this.streamToString(
+            outlineStream,
+            conversationId,
+            abortSignal,
+            (accumulated) => {
+              this.callbacks.dispatch({
+                type: 'UPDATE_CURRENT_GENERATION',
+                conversationId,
+                response: accumulated
+              })
+            }
+          )
 
-        this.callbacks.dispatch({
-          type: 'COMPLETE_GENERATION',
-          conversationId,
-          response: outlineText
-        })
+          this.callbacks.dispatch({
+            type: 'COMPLETE_GENERATION',
+            conversationId,
+            response: outlineText
+          })
+        }
 
         this.persistConversation(conversationId)
 
@@ -409,16 +1316,22 @@ export class RawScriptGenerationOrchestrator {
         })
 
         // Upcoming outline entries let this section plant setups (story 8.10)
-        const sectionPrompt = getSectionGenerationPrompt(
-          section.title,
-          section.description,
-          outline.sections.slice(i + 1)
-        )
+        const sectionPrompt = writesByTool
+          ? getToolSectionGenerationPrompt(
+              section.title,
+              section.description,
+              outline.sections.slice(i + 1)
+            )
+          : getSectionGenerationPrompt(
+              section.title,
+              section.description,
+              outline.sections.slice(i + 1)
+            )
         const sectionUserMessage = `Here is the outline for the full script:\n\n${outlineText}\n\nHere is what has been written so far:\n\n${scriptContent}\n\n${sectionPrompt}`
 
         const runSectionAttempt = async (userMessage: string): Promise<string> => {
           const sectionMessages: ChatMessage[] = [
-            { role: 'system', content: getSystemPrompt(plan) },
+            { role: 'system', content: storedSystemPrompt },
             { role: 'user', content: request.prompt },
             { role: 'assistant', content: outlineText },
             { role: 'user', content: userMessage }
@@ -465,12 +1378,36 @@ export class RawScriptGenerationOrchestrator {
           return text
         }
 
-        let sectionText = await runSectionAttempt(sectionUserMessage)
+        // On the tool path the section is written by section_write, and a body
+        // outside the window is rejected and asked for again rather than kept
+        // for being the better of two failures. A model that replies in prose
+        // regardless drops through to the prose path's own corrective retry
+        // below, which is the whole point of keeping it.
+        const written = writesByTool
+          ? await this.writeSectionWithTools({
+              conversationId,
+              sectionTitle: section.title,
+              userMessage: sectionUserMessage,
+              storedSystemPrompt,
+              systemPrompt,
+              history: [
+                { role: 'user', content: request.prompt },
+                { role: 'assistant', content: outlineText }
+              ],
+              budget: rejectionBudget,
+              grounding,
+              abortSignal
+            })
+          : null
+
+        let sectionText = written
+          ? (written.kind === 'written' ? written.body : written.text)
+          : await runSectionAttempt(sectionUserMessage)
         let wordCount = countWords(sectionText)
 
         // A section well outside the word target gets one corrective retry;
         // the attempt closer to the target is kept
-        if (shouldRetrySection(wordCount)) {
+        if (written?.kind !== 'written' && shouldRetrySection(wordCount)) {
           this.persistConversation(conversationId)
 
           const retryText = await runSectionAttempt(
@@ -507,6 +1444,13 @@ export class RawScriptGenerationOrchestrator {
 
         this.persistConversation(conversationId)
       }
+
+      // An abort can land on a section's last request and still leave the loop
+      // ending naturally, and the review pass swallows the abort it then sees —
+      // so without this check a stopped run would be dispatched 'complete'. The
+      // loop head and the Phase 1 boundaries check the same signal; this is the
+      // one boundary that was missing.
+      if (abortSignal?.aborted) throw new Error('Generation aborted')
 
       // --- Phase 2.5: optional style-review pass (story 8.5) ---
       let reviewResult: ReviewPassResult | null = null
@@ -802,9 +1746,15 @@ export class RawScriptGenerationOrchestrator {
 
       return { ran: true, revised, updatedContent }
     } catch (error) {
-      if (!abortSignal?.aborted) {
-        console.warn('Style review pass failed; keeping the generated script as-is', error)
-      }
+      // A user abort must still end the whole run, exactly as it does in
+      // runOutlineCritique next door. Swallowing it here returns to a caller
+      // that goes on to dispatch 'complete' and an isComplete progress for a
+      // run the user stopped — the one failure a review must not report as
+      // success. An ordinary review FAILURE is still swallowed: a review that
+      // errors leaves a usable script, which is the whole point of the arm.
+      if (abortSignal?.aborted) throw error
+
+      console.warn('Style review pass failed; keeping the generated script as-is', error)
       return { ran: false, revised }
     }
   }
@@ -1068,8 +2018,6 @@ export class RawScriptGenerationOrchestrator {
           })
         }
       )
-
-      this.completedGenerations.add(generationKey)
 
       this.callbacks.dispatch({
         type: 'SET_GENERATION_PROGRESS',

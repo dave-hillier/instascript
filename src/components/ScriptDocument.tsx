@@ -1,11 +1,17 @@
 import type { FormEvent } from 'react'
 import { BookmarkPlus, Check, Pencil, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
+import type { GenerationToolCallStatus } from '../types/conversation'
+import { sectionStatusNote } from '../services/scriptProjection'
 
 export interface DocumentSection {
   id: string
   title: string
   content: string
   wordCount: number
+  // The verdict the writing tool reached on this body. Absent when the section
+  // was written and kept without incident, which is every ordinary section.
+  status?: GenerationToolCallStatus
+  statusReason?: string
 }
 
 interface ScriptDocumentProps {
@@ -103,6 +109,16 @@ export const ScriptDocument = ({
                 </div>
               )}
             </header>
+            {/* A section kept despite failing the length window says so where
+                it is read: a note on the section, not an error, but never
+                silent — a waived section must not read as a clean one. Whether
+                a note is due, and its wording, is sectionStatusNote's decision
+                so it can be tested without a DOM. */}
+            {sectionStatusNote(section) && (
+              <p className="section-waiver" role="note">
+                {sectionStatusNote(section)}
+              </p>
+            )}
             {instructionTarget === section.title && canEditSections && (
               <form
                 className="regenerate-form"

@@ -10,6 +10,7 @@ import {
 } from '../briefQuestions'
 import { buildBriefQuestionsPrompt } from '../prompts'
 import type { ChatMessage, RegenerationRequest } from '../../types/conversation'
+import { textFrames } from './fixtures/streamFake'
 
 const wellFormedReply = [
   'Q: What trigger should the script plant?',
@@ -334,11 +335,12 @@ function stubService(reply: string | Error) {
 
   return {
     seen,
-    async *regenerateSection(request: RegenerationRequest, messages: ChatMessage[]) {
+    regenerateSection(request: RegenerationRequest, messages: ChatMessage[]) {
       seen.push({ request, messages })
       if (reply instanceof Error) throw reply
-      yield reply.slice(0, 10)
-      yield reply.slice(10)
+      // Split so the caller has to accumulate, and delivered as provider
+      // frames because that is what a provider stream carries
+      return textFrames(reply.slice(0, 10), reply.slice(10))
     }
   }
 }

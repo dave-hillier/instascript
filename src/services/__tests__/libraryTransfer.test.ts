@@ -229,3 +229,61 @@ describe('the requested length survives a library round trip', () => {
     expect(parseLibraryExport(serialized).scripts[0].targetMinutes).toBeUndefined()
   })
 })
+
+describe('library export tool calls', () => {
+  const withToolCalls = (): RawConversation => {
+    const conversation = makeConversation('c1', 's1')
+    conversation.generations[0].toolCalls = [
+      { id: 'call_1', name: 'section_write', title: 'Induction', status: 'rejected', wordCount: 212, reason: 'under 400 words' },
+      { id: 'call_2', name: 'section_write', title: 'Induction', status: 'accepted', wordCount: 512 }
+    ]
+    return conversation
+  }
+
+  it('round-trips tool calls through export and import', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [withToolCalls()])
+    )
+
+    expect(parsed.conversations[0].generations[0].toolCalls)
+      .toEqual(withToolCalls().generations[0].toolCalls)
+  })
+
+  it('imports an export written before tool calls existed', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].toolCalls).toBeUndefined()
+  })
+
+  it('drops a malformed tool call instead of aborting the whole import', () => {
+    // Unlike a malformed message, an unreadable tool call must never take the
+    // import down with it: the prose is intact in the response
+    const conversation = withToolCalls()
+    const raw = JSON.parse(serializeLibraryExport([makeScript('s1')], [conversation]))
+    raw.conversations[0].generations[0].toolCalls = [
+      { id: 'call_1', name: 'section_write', status: 'accepted', wordCount: 512 },
+      { id: 'call_2', name: 'a_tool_from_the_future', status: 'accepted' },
+      'not an object'
+    ]
+
+    const parsed = parseLibraryExport(JSON.stringify(raw))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].toolCalls).toEqual([
+      { id: 'call_1', name: 'section_write', status: 'accepted', wordCount: 512 }
+    ])
+  })
+
+  it('drops a toolCalls field that is not a list, leaving the generation intact', () => {
+    const raw = JSON.parse(serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')]))
+    raw.conversations[0].generations[0].toolCalls = { id: 'call_1' }
+
+    const parsed = parseLibraryExport(JSON.stringify(raw))
+
+    expect(parsed.conversations[0].generations[0].toolCalls).toBeUndefined()
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+  })
+})

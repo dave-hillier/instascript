@@ -1,12 +1,12 @@
-import type { RawConversation, ChatMessage, Generation, GenerationPhase, ReviewReport, ScriptOutline } from '../types/conversation'
+import type { RawConversation, ChatMessage, Generation, GenerationPhase, GenerationToolCall, ReviewReport, ScriptOutline } from '../types/conversation'
 
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
   | { type: 'CREATE_CONVERSATION'; conversation: RawConversation }
   | { type: 'SECTION_EDITED'; conversationId: string; generation: Generation }
   | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[] }
-  | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
-  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
+  | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number; toolCalls?: GenerationToolCall[] }
+  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number; toolCalls?: GenerationToolCall[] }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
   | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
@@ -105,7 +105,11 @@ export const rawConversationReducer = (
                   {
                     ...conv.generations[conv.generations.length - 1],
                     response: action.response,
-                    cachedTokens: action.cachedTokens
+                    cachedTokens: action.cachedTokens,
+                    // Calls accumulate over a run, so an update that carries
+                    // none is silent about them rather than a claim that none
+                    // were made — keep what the generation already recorded
+                    toolCalls: action.toolCalls ?? conv.generations[conv.generations.length - 1].toolCalls
                   }
                 ],
                 updatedAt: Date.now()
@@ -127,7 +131,11 @@ export const rawConversationReducer = (
                   {
                     ...conv.generations[conv.generations.length - 1],
                     response: action.response,
-                    cachedTokens: action.cachedTokens
+                    cachedTokens: action.cachedTokens,
+                    // Calls accumulate over a run, so an update that carries
+                    // none is silent about them rather than a claim that none
+                    // were made — keep what the generation already recorded
+                    toolCalls: action.toolCalls ?? conv.generations[conv.generations.length - 1].toolCalls
                   }
                 ],
                 updatedAt: Date.now()

@@ -15,6 +15,7 @@ import {
   OPENROUTER_MODELS,
   OPENAI_UTILITY_MODELS,
   OPENROUTER_UTILITY_MODELS,
+  supportsToolCalling,
   type ModelOption
 } from '../services/modelPresets'
 import { testApiConnection } from '../services/connectionTest'
@@ -32,13 +33,17 @@ type ModelFieldProps = {
   allowCustom: boolean
   value: string
   onChange: (model: string) => void
+  // Rendered under the field as a live status message when the chosen model is
+  // known not to support something the role needs
+  warning?: string
 }
 
 // One model picker: a preset list plus, where the provider allows any model
 // id, a free-text field. A value outside the presets is a custom model, so
 // the two controls need no extra state to stay in step.
-const ModelField = ({ id, label, help, options, allowCustom, value, onChange }: ModelFieldProps) => {
+const ModelField = ({ id, label, help, options, allowCustom, value, onChange, warning }: ModelFieldProps) => {
   const isPreset = options.some(option => option.value === value)
+  const describedBy = `${id}-help`
 
   return (
     <>
@@ -47,7 +52,7 @@ const ModelField = ({ id, label, help, options, allowCustom, value, onChange }: 
         id={id}
         value={isPreset ? value : CUSTOM_MODEL}
         onChange={event => onChange(event.target.value === CUSTOM_MODEL ? '' : event.target.value)}
-        aria-describedby={`${id}-help`}
+        aria-describedby={describedBy}
       >
         {options.map(option => (
           <option key={option.value} value={option.value}>{option.label}</option>
@@ -68,6 +73,12 @@ const ModelField = ({ id, label, help, options, allowCustom, value, onChange }: 
           />
           <p id={`${id}-custom-help`}>Enter any OpenRouter model ID</p>
         </>
+      )}
+
+      {warning && (
+        <p id={`${id}-warning`} className="model-warning" role="status">
+          {warning}
+        </p>
       )}
 
       <p id={`${id}-help`}>{help}</p>
@@ -383,6 +394,15 @@ export const SettingsModal = ({
   }
 
   const modelOptions = tempApiProvider === 'openai' ? OPENAI_MODELS : OPENROUTER_MODELS
+  // Generation drives the model with tool calls, so a model whose API has no
+  // tools parameter cannot write a script here at all. It is a warning rather
+  // than a block: the capability table cannot be complete, and providerStatus
+  // keeps its one hard block for the one condition that is certain — a missing
+  // key. Refusing a configuration on an incomplete table would turn a working
+  // setup away.
+  const toolCallingWarning = supportsToolCalling(tempModel) === false
+    ? `${tempModel} does not support tool calling. Generation writes a script by calling tools, so choose another generation model.`
+    : undefined
   const utilityModelOptions = tempApiProvider === 'openai'
     ? OPENAI_UTILITY_MODELS
     : OPENROUTER_UTILITY_MODELS
@@ -502,6 +522,7 @@ export const SettingsModal = ({
                 allowCustom={tempApiProvider === 'openrouter'}
                 value={tempModel}
                 onChange={setTempModel}
+                warning={toolCallingWarning}
               />
 
               <ModelField

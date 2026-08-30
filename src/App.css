@@ -386,6 +386,17 @@ main form label.briefing-toggle input[type="checkbox"] {
   animation: breathe 5s ease-in-out infinite;
 }
 
+/* Outranks the shared `[role="status"]` block, which centres its measure and
+   reserves trailing space meant for the script page's generation status — both
+   wrong inside a left-aligned settings form */
+dialog form p.model-warning {
+  max-width: none;
+  margin: 0.25rem 0 0.75rem;
+  color: var(--danger);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
 /* Outranks the shared `[role="status"]` block, which would otherwise centre
    this in a narrower measure than the questions it sits above */
 .briefing p.briefing-notice {
@@ -1076,6 +1087,18 @@ article p {
   font-weight: 300;
   line-height: 1.85;
   margin: 0 0 1.5em;
+}
+
+/* The waiver note on a section the run kept without it passing the length
+   window: UI type rather than reading type, so it reads as an annotation
+   beside the prose instead of a line of the script. Quiet, and still there. */
+.section-waiver {
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  margin: 0 0 1.25rem;
 }
 
 /* Pacing mark between sections, in place of a rule */

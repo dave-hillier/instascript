@@ -57,6 +57,34 @@ describe('buildConsolidatedMarkdown', () => {
     )
   })
 
+  it('exports tool-call generations, skipping rejected attempts', () => {
+    const conversation: RawConversation = {
+      id: 'conv_1',
+      scriptId: 'script_1',
+      createdAt: 1,
+      updatedAt: 1,
+      generations: [
+        {
+          messages: [],
+          response: '# The Drifting Shore\n## Induction\nplan',
+          timestamp: 1,
+          toolCalls: [{ id: 'call_0', name: 'outline_write', title: 'The Drifting Shore', status: 'accepted' }]
+        },
+        {
+          messages: [],
+          response: '## Induction\nBreathe in…',
+          timestamp: 2,
+          toolCalls: [
+            { id: 'call_1', name: 'section_write', title: 'Induction', status: 'rejected', wordCount: 40 },
+            { id: 'call_2', name: 'section_write', title: 'Induction', status: 'accepted', wordCount: 420 }
+          ]
+        }
+      ]
+    }
+
+    expect(buildConsolidatedMarkdown(conversation)).toBe('# The Drifting Shore\n\n## Induction\nBreathe in…')
+  })
+
   it('falls back to the provided title when no outline exists', () => {
     const conversation = makeConversation(['## Induction\nBreathe.'])
     expect(buildConsolidatedMarkdown(conversation, 'My Script')).toBe(

@@ -1,4 +1,7 @@
-
+// The tool-name union lives with the tool declarations so the stored record
+// and the schemas sent to the model can never name different tools. This is a
+// type-only import, so it adds nothing to the runtime graph.
+import type { WritingToolName } from '../services/writingTools'
 
 export interface GenerationRequest {
   prompt: string
@@ -68,12 +71,53 @@ export interface ChatMessage {
   content: string
 }
 
+// One writing tool call the model made during a generation, kept as the
+// durable record of what it did and how it was judged.
+//
+// It deliberately carries STRUCTURE, NOT PROSE. The section body lives in
+// `Generation.response`, which stays the single rendered projection of the
+// run and the only place the text is stored; storing the body here as well
+// would roughly double the size of every conversation file, and conversations
+// persist to a ~5MB localStorage budget wherever OPFS is unavailable. So the
+// call records who wrote what and whether it was kept, and `response` records
+// what was written — never both.
+//
+// Everything on it must be plain structured-cloneable data (no class
+// instances, no functions): `duplicateRawConversation` copies generations
+// with `structuredClone`.
+export interface GenerationToolCall {
+  // The provider's tool_call_id, so a call can be matched to the tool result
+  // that answered it
+  id: string
+  name: WritingToolName
+  // The section (or outline) title the call names, where the call has one
+  title?: string
+  // Whether the body was kept, sent back to be rewritten, or kept despite
+  // failing the length window because the attempt budget ran out
+  status: GenerationToolCallStatus
+  // The measured body length, in words, that the status was decided on
+  wordCount?: number
+  // Why: the rejection's complaint, the waiver's justification, or for a
+  // section_revise the reason the section was rewritten
+  reason?: string
+}
+
+// `waived` is the length-waiver outcome: the section never landed inside the
+// word window within its attempt budget, so the closest attempt was accepted
+// anyway. It is a distinct status rather than an `accepted` with a note so
+// that it stays visible instead of quietly reading as a clean acceptance.
+export type GenerationToolCallStatus = 'accepted' | 'rejected' | 'waived'
+
 export interface Generation {
   messages: ChatMessage[] // Complete messages array sent to OpenAI
   response: string // Assistant response received
   timestamp: number
   cachedTokens?: number // From OpenAI response for monitoring cache hits
   exampleIds?: string[] // Ids of the corpus examples that informed this generation
+  // The writing tool calls this generation is made of, when it was written by
+  // tool call rather than as prose. Absent on every generation stored before
+  // the tools existed, and on any generation that made no call.
+  toolCalls?: GenerationToolCall[]
 }
 
 export interface RawConversation {

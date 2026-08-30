@@ -4,9 +4,11 @@ import type { RawScriptServices, RawGenerationCallbacks } from '../rawScriptGene
 import type { RawConversationAction } from '../../reducers/rawConversationReducer'
 import type { RawConversation, Generation, ChatMessage } from '../../types/conversation'
 import type { ExampleScript } from '../exampleSearchService'
+import type { ProviderFrame } from '../providerFrame'
 import { SECTION_TARGET_WORDS } from '../sectionQuality'
 import { getOutlineGenerationPrompt, getSystemPrompt, buildStructureBlock } from '../prompts'
 import { buildScriptFs } from '../scriptFs'
+import { textFrames, framesFromStrings } from './fixtures/streamFake'
 
 const makeGeneration = (response: string): Generation => ({
   messages: [],
@@ -107,6 +109,71 @@ describe('findResumeState', () => {
   })
 })
 
+// The markdown tests above are the stored-conversation contract and are left
+// exactly as they were. These add the one thing tool-call authoring changes:
+// a generation can now be a REJECTED attempt, which is stored with its body so
+// nothing is lost, and must not come back as though it had been written.
+describe('findResumeState and rejected attempts', () => {
+  const rejectedSection = (title: string, body: string): Generation => ({
+    messages: [],
+    response: `## ${title}\n${body}`,
+    timestamp: 0,
+    toolCalls: [{
+      id: 'call_1',
+      name: 'section_write',
+      title,
+      status: 'rejected',
+      wordCount: 40,
+      reason: 'REJECTED: that body measured 40 words, which is too short.'
+    }]
+  })
+
+  const acceptedSection = (title: string, body: string): Generation => ({
+    messages: [],
+    response: `## ${title}\n${body}`,
+    timestamp: 0,
+    toolCalls: [{ id: 'call_2', name: 'section_write', title, status: 'accepted', wordCount: 550 }]
+  })
+
+  it('does not restore a section the run itself rejected', () => {
+    const conversation: RawConversation = {
+      ...makeConversation([outlineText]),
+      generations: [
+        makeGeneration(outlineText),
+        rejectedSection('Induction', 'A draft the run refused.'),
+        acceptedSection('Deepener', 'Ten steps down.')
+      ]
+    }
+
+    const resume = findResumeState(conversation)
+    expect(resume?.sectionTexts.has('Induction')).toBe(false)
+    expect(resume?.sectionTexts.get('Deepener')).toBe('Ten steps down.')
+  })
+
+  it('still restores a waived section, which was accepted out-of-window and kept', () => {
+    const waived: Generation = {
+      messages: [],
+      response: '## Induction\nA long but kept body.',
+      timestamp: 0,
+      toolCalls: [{
+        id: 'call_3',
+        name: 'section_write',
+        title: 'Induction',
+        status: 'waived',
+        wordCount: 900,
+        reason: 'Kept at 900 words after 4 attempts.'
+      }]
+    }
+    const conversation: RawConversation = {
+      ...makeConversation([outlineText]),
+      generations: [makeGeneration(outlineText), waived, acceptedSection('Deepener', 'Ten steps down.')]
+    }
+
+    expect(findResumeState(conversation)?.sectionTexts.get('Induction'))
+      .toBe('A long but kept body.')
+  })
+})
+
 describe('generateScript resume (story 1.8)', () => {
   // A body at the section word target, so no quality retry runs
   const sectionBody = (label: string) =>
@@ -122,13 +189,11 @@ describe('generateScript resume (story 1.8)', () => {
       scriptService: {
         generateScript: () => {
           outlineCalls++
-          return (async function* () { yield outlineText })()
+          return textFrames(outlineText)
         },
         regenerateSection: (request) => {
           sectionCalls.push(request.sectionTitle)
-          return (async function* () {
-            yield `## ${request.sectionTitle}\n${sectionBody(request.sectionTitle)}`
-          })()
+          return textFrames(`## ${request.sectionTitle}\n${sectionBody(request.sectionTitle)}`)
         }
       },
       exampleService: {
@@ -248,15 +313,13 @@ describe('examples reach every request that writes prose', () => {
       scriptService: {
         generateScript: (_request, messages) => {
           sent.push({ label: 'outline', messages: messages ?? [] })
-          return (async function* () { yield outlineText })()
+          return textFrames(outlineText)
         },
         regenerateSection: (request, messages) => {
           sent.push({ label: request.sectionTitle, messages })
           const attempt = (attempts.get(request.sectionTitle) ?? 0) + 1
           attempts.set(request.sectionTitle, attempt)
-          return (async function* () {
-            yield `## ${request.sectionTitle}\n${sectionText(request.sectionTitle, attempt)}`
-          })()
+          return textFrames(`## ${request.sectionTitle}\n${sectionText(request.sectionTitle, attempt)}`)
         }
       },
       exampleService: {
@@ -477,7 +540,7 @@ describe('examples reach every request that writes prose', () => {
 })
 
 describe('regenerateSection abort handling', () => {
-  const setup = (stream: (signal?: AbortSignal) => AsyncIterable<string>) => {
+  const setup = (stream: (signal?: AbortSignal) => AsyncIterable<ProviderFrame>) => {
     const dispatched: RawConversationAction[] = []
     const conversation = makeConversation([outlineText, '## Induction\nOld text.'])
 
@@ -514,7 +577,7 @@ describe('regenerateSection abort handling', () => {
       yield 'This chunk arrives after the abort.'
     }
 
-    const { dispatched, conversation, orchestrator } = setup(() => abortedStream())
+    const { dispatched, conversation, orchestrator } = setup(() => framesFromStrings(abortedStream()))
 
     await expect(
       orchestrator.regenerateSection(
@@ -541,7 +604,7 @@ describe('regenerateSection abort handling', () => {
       throw new Error('Provider exploded')
     }
 
-    const { dispatched, conversation, orchestrator } = setup(() => failingStream())
+    const { dispatched, conversation, orchestrator } = setup(() => framesFromStrings(failingStream()))
 
     await expect(
       orchestrator.regenerateSection(
@@ -580,10 +643,10 @@ describe('the script structure reaches the rewrite and refinement requests', () 
 
     const services: RawScriptServices = {
       scriptService: {
-        generateScript: () => (async function* () { yield outlineText })(),
+        generateScript: () => textFrames(outlineText),
         regenerateSection: (request, messages) => {
           sent.push(messages)
-          return (async function* () { yield `## ${request.sectionTitle}\nNew text.` })()
+          return textFrames(`## ${request.sectionTitle}\nNew text.`)
         }
       },
       exampleService: { searchExamples: async () => [] }

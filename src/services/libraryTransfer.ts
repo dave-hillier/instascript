@@ -6,6 +6,7 @@
 import type { Script } from '../types/script'
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
 import { sanitizeSelectionCounts } from './exampleCorpus'
+import { sanitizeGenerationToolCalls } from './conversationParser'
 
 export const LIBRARY_EXPORT_FORMAT = 'instascript-library'
 export const LIBRARY_EXPORT_VERSION = 1
@@ -123,7 +124,13 @@ const validateGeneration = (value: unknown, conversationId: string): Generation 
     response: typeof value.response === 'string' ? value.response : '',
     timestamp: typeof value.timestamp === 'number' ? value.timestamp : Date.now(),
     cachedTokens: typeof value.cachedTokens === 'number' ? value.cachedTokens : undefined,
-    exampleIds: Array.isArray(value.exampleIds) ? value.exampleIds.filter(isNonEmptyString) : undefined
+    exampleIds: Array.isArray(value.exampleIds) ? value.exampleIds.filter(isNonEmptyString) : undefined,
+    // Deliberately drop-not-throw, unlike the message validation above: a
+    // malformed message means the generation's request is unreadable, but a
+    // malformed tool call only costs the structure around prose that is
+    // intact in `response`. Throwing here would abort the whole import over
+    // a record nothing needs, so an unrecognised entry is simply dropped.
+    toolCalls: sanitizeGenerationToolCalls(value.toolCalls)
   }
 }
 

@@ -66,3 +66,74 @@ describe('rawConversationReducer CONVERSATIONS_CLEARED (story 5.5)', () => {
     expect(next.conversations).toEqual([])
   })
 })
+
+describe('rawConversationReducer generation tool calls', () => {
+  const started = (): RawConversationState => rawConversationReducer(
+    {
+      conversations: [{ ...makeConversation('conv_a'), generations: [] }],
+      currentGeneration: null,
+      generationMachine: null,
+      reviewReport: null
+    },
+    { type: 'START_GENERATION', conversationId: 'conv_a', messages: [{ role: 'user', content: 'write a script' }] }
+  )
+
+  const latestOf = (state: RawConversationState) => {
+    const generations = state.conversations[0].generations
+    return generations[generations.length - 1]
+  }
+
+  it('records tool calls on the generation in progress', () => {
+    const next = rawConversationReducer(started(), {
+      type: 'UPDATE_CURRENT_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Opening\n\nSome text.',
+      toolCalls: [{ id: 'call_1', name: 'section_write', title: 'Opening', status: 'accepted', wordCount: 480 }]
+    })
+
+    expect(latestOf(next).toolCalls).toEqual([
+      { id: 'call_1', name: 'section_write', title: 'Opening', status: 'accepted', wordCount: 480 }
+    ])
+  })
+
+  it('keeps recorded calls when a later update says nothing about them', () => {
+    const withCall = rawConversationReducer(started(), {
+      type: 'UPDATE_CURRENT_GENERATION',
+      conversationId: 'conv_a',
+      response: 'partial',
+      toolCalls: [{ id: 'call_1', name: 'section_write', status: 'rejected', wordCount: 212 }]
+    })
+
+    const next = rawConversationReducer(withCall, {
+      type: 'UPDATE_CURRENT_GENERATION',
+      conversationId: 'conv_a',
+      response: 'partial and more'
+    })
+
+    expect(latestOf(next).toolCalls).toHaveLength(1)
+  })
+
+  it('carries the final set of calls through completion', () => {
+    const next = rawConversationReducer(started(), {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: '## Opening\n\nSome text.',
+      toolCalls: [
+        { id: 'call_1', name: 'section_write', status: 'rejected', wordCount: 212, reason: 'under 400 words' },
+        { id: 'call_2', name: 'section_write', status: 'accepted', wordCount: 512 }
+      ]
+    })
+
+    expect(latestOf(next).toolCalls?.map(call => call.status)).toEqual(['rejected', 'accepted'])
+  })
+
+  it('leaves a generation that made no calls without the field', () => {
+    const next = rawConversationReducer(started(), {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: 'plain prose'
+    })
+
+    expect(latestOf(next).toolCalls).toBeUndefined()
+  })
+})

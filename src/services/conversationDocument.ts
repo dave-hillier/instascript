@@ -1,4 +1,4 @@
-import type { RawConversation, ScriptOutline, OutlineSection } from '../types/conversation'
+import type { Generation, RawConversation, ScriptOutline, OutlineSection } from '../types/conversation'
 
 // Pure helpers for reading the consolidated document state out of a raw
 // conversation: generation 0 (or a later retry) holds the outline, and
@@ -48,6 +48,15 @@ export function isOutlineResponse(text: string): boolean {
   return /^#(?!#)/.test(text.trimStart())
 }
 
+// A generation every one of whose calls was rejected contributed nothing to
+// the script: its body was sent back to be rewritten. It lives here, in the
+// lowest module both folds already depend on, so the projection and the
+// consolidation below cannot drift about which drafts count.
+export const isRejectedGeneration = (generation: Generation): boolean =>
+  !!generation.toolCalls &&
+  generation.toolCalls.length > 0 &&
+  generation.toolCalls.every(call => call.status === 'rejected')
+
 export function parseMarkdownSections(text: string): DocumentSection[] {
   const lines = text.split('\n')
   const sections: DocumentSection[] = []
@@ -88,10 +97,20 @@ export function getLatestOutline(conversation: RawConversation): ScriptOutline |
 
 // The current state of every section: later generations (regenerations and
 // refinements) replace earlier sections with the same title.
+//
+// This is the second fold of a conversation, next to projectConversation's:
+// that one builds the document a reader sees, this one the section text the
+// prompts, the review pass and the filesystem export work from. They must
+// agree about what is in the script, so both skip a wholly rejected
+// generation. Without that a run that ends on a refusal — an abort or a
+// failure between a rejection and its rewrite — leaves a refused draft as the
+// last generation for its title, and this fold would hand it to the review
+// pass as the section's prose and write it back as script content.
 export function consolidateSections(conversation: RawConversation): DocumentSection[] {
   const consolidated: DocumentSection[] = []
 
   for (const generation of conversation.generations) {
+    if (isRejectedGeneration(generation)) continue
     if (isOutlineResponse(generation.response)) continue
 
     for (const section of parseMarkdownSections(generation.response)) {

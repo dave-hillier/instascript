@@ -1,4 +1,6 @@
-import hypnosisSystemPrompt from '../prompts/hypnosis-system.txt?raw'
+import hypnosisBasePrompt from '../prompts/hypnosis-system.txt?raw'
+import styleRulesPrompt from '../prompts/style-rules.txt?raw'
+import toolGuidancePrompt from '../prompts/tool-guidance.txt?raw'
 import sectionRegenerationPrompt from '../prompts/section-regeneration.txt?raw'
 import outlineGenerationPrompt from '../prompts/outline-generation.txt?raw'
 import sectionGenerationPrompt from '../prompts/section-generation.txt?raw'
@@ -16,6 +18,7 @@ import exampleTitlePrompt from '../prompts/example-title.txt?raw'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversation, ChatMessage, OutlineSection } from '../types/conversation'
 import { getLatestOutline, consolidateSections } from './conversationDocument'
+import { isRejectedGeneration } from './scriptProjection'
 import { SECTION_TARGET_WORDS } from './sectionQuality'
 import { buildLengthPlan } from './scriptLength'
 import type { LengthPlan } from './scriptLength'
@@ -106,12 +109,83 @@ function applyLengthPlan(template: string, plan: LengthPlan): string {
     .replace(/\{sectionWords\}/g, String(plan.sectionWords))
 }
 
+// The style rules live in their own file so generation and the style-review
+// pass can share one copy without either depending on where the rules sit in
+// the system prompt. The system prompt is the base followed by the rules,
+// separated by the blank line that used to divide them inside the one file.
+const hypnosisSystemPrompt = `${hypnosisBasePrompt}\n${styleRulesPrompt}`
+
 export function getSystemPrompt(plan: LengthPlan = buildLengthPlan()): string {
   return withStyleInstructions(applyLengthPlan(hypnosisSystemPrompt, plan))
 }
 
 export function getOutlineGenerationPrompt(plan: LengthPlan = buildLengthPlan()): string {
   return applyLengthPlan(outlineGenerationPrompt, plan)
+}
+
+// --- tool-mode prompts ---------------------------------------------------
+//
+// The tool path asks for the same script from the same model in the same
+// voice; only how the words are delivered changes. So the tool-mode system
+// prompt deliberately does NOT fork the style rules: it reads them from
+// style-rules.txt through the same constant the prose prompt does, which is
+// exactly why they were extracted into their own file — a script has to be
+// judged by the style-review pass against the file it was written against, and
+// a second copy of the rules would drift silently.
+//
+// What the tool guidance replaces is only the format half of the prose system
+// prompt: the "# title on the first line", "sections begin with ##" and "no
+// preamble" instructions are obsolete when the heading comes from the outline
+// title and the body arrives as a tool argument.
+const toolSystemPrompt = `${toolGuidancePrompt}\n${styleRulesPrompt}`
+
+export function getToolSystemPrompt(plan: LengthPlan = buildLengthPlan()): string {
+  return withStyleInstructions(applyLengthPlan(toolSystemPrompt, plan))
+}
+
+// The one system message a tool-mode run is sent with, built the same way its
+// prose counterpart is so the cached prefix and the example block behave
+// identically.
+export function buildToolGenerationSystemPrompt(
+  plan: LengthPlan,
+  examples: ExampleScript[]
+): string {
+  if (examples.length === 0) return getToolSystemPrompt(plan)
+  return getToolSystemPrompt(plan) + formatExamplesForPrompt(examples)
+}
+
+// The outline instruction for the tool path. The prose template's whole second
+// half is a worked example of the markdown format, which the tool schema now
+// states far more precisely, so what is left is the planning advice.
+export function getToolOutlineGenerationPrompt(plan: LengthPlan = buildLengthPlan()): string {
+  return applyLengthPlan(
+    'Given the user\'s brief, plan the script and write the plan by calling `outline_write`.\n\n' +
+    'Plan about {sectionCount} sections following a coherent arc (e.g. induction, deepening, ' +
+    'escalation, transformation, conditioning, return), adapted to the brief. Use more or fewer ' +
+    'only where the brief clearly needs it.\n\n' +
+    'Each section will be written at roughly {sectionWords} words, so the finished script runs ' +
+    'about {targetMinutes} minutes spoken ({totalWords} words). Give each section enough distinct ' +
+    'material to fill that on its own, and make sure no two sections cover the same ground: each ' +
+    'one must move the arc somewhere the previous section did not.\n\n' +
+    'Call `outline_write` once and write nothing else.',
+    plan
+  )
+}
+
+// The per-section instruction for the tool path. The prose template's format
+// requirements ("do NOT include the ## header", "no preamble") are dropped:
+// the heading comes from the outline title and the body is a tool argument, so
+// there is no place for either mistake to happen.
+export function getToolSectionGenerationPrompt(
+  sectionTitle: string,
+  sectionDescription: string,
+  upcomingSections: OutlineSection[] = []
+): string {
+  return `Now write the "${sectionTitle}" section by calling \`section_write\` with that exact title.\n\n` +
+    `This section should be: ${sectionDescription}\n` +
+    formatUpcomingSections(upcomingSections) +
+    `\nWrite approximately ${SECTION_TARGET_WORDS} words of body, continuous with the sections ` +
+    'before it and following the style rules from the system prompt.'
 }
 
 // The outline entries for the sections still to be written, phrased so the
@@ -249,11 +323,13 @@ export function buildSectionRegenerationPromptFromConversation(
   })
 }
 
-// The numbered style rules as written in hypnosis-system.txt — the single
-// source of truth shared by generation and the style-review pass (story 8.5)
+// The numbered style rules as written in style-rules.txt — the single source
+// of truth shared by generation, which carries them in the system prompt, and
+// the style-review pass that judges the result against them (story 8.5). The
+// rules are cited by number in the critique's verdicts, so the two passes must
+// read the same file: a second copy would drift silently.
 export function getStyleRules(): string {
-  const index = hypnosisSystemPrompt.indexOf('## Style rules')
-  return (index >= 0 ? hypnosisSystemPrompt.slice(index) : hypnosisSystemPrompt).trim()
+  return styleRulesPrompt.trim()
 }
 
 // The critique request for the style-review pass: the consolidated script
@@ -502,6 +578,13 @@ export function normaliseConversationHistory(messages: ChatMessage[]): ChatMessa
 // Flattens every generation's request messages and response into the history
 // for a follow-up request (refinement or section regeneration), appending the
 // new instruction as a user turn and normalising to a single system message.
+//
+// A generation the run refused outright is left out entirely, prompt and
+// response alike: replaying it would hand the model a draft it was told to
+// rewrite as though it were its own kept output, and every later pass — the
+// reviews, each user refinement — would read the script the run rejected. The
+// test is the one in scriptProjection, shared so the history and the document
+// can never disagree about which drafts count.
 export function buildConversationHistory(
   conversation: RawConversation,
   instruction: string
@@ -509,6 +592,7 @@ export function buildConversationHistory(
   const flattened: ChatMessage[] = []
 
   for (const generation of conversation.generations) {
+    if (isRejectedGeneration(generation)) continue
     flattened.push(...generation.messages)
     if (generation.response) {
       flattened.push({ role: 'assistant', content: generation.response })

@@ -12,7 +12,8 @@ import { loadStoredConversations, saveStoredConversation, createRawConversation,
 import { ensureSectionHeading } from '../services/conversationDocument'
 import { RawScriptGenerationOrchestrator, type RawScriptServices, type RawGenerationCallbacks } from '../services/rawScriptGenerationOrchestrator'
 import { buildSectionRegenerationPromptFromConversation, getScriptRefinementPrompt } from '../services/prompts'
-import { isReviewPassEnabled } from '../services/config'
+import { isReviewPassEnabled, getModel } from '../services/config'
+import { findRunScript, type PendingRunPin } from '../services/serviceFactory'
 import { RunLifecycle } from '../services/runLifecycle'
 
 type ConversationProviderProps = {
@@ -29,7 +30,7 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   const [isLoaded, setIsLoaded] = useState(false)
   const { scriptService, exampleService } = useServices()
-  const { dispatch: appDispatch } = useAppContext()
+  const { state: appState, dispatch: appDispatch } = useAppContext()
   const pendingConversationRef = useRef<RawConversation | null>(null)
   // The single-active-run invariant lives in RunLifecycle (services/runLifecycle):
   // starting a new run first aborts and awaits the previous one so its
@@ -40,6 +41,21 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
   // in long-running async callbacks (streaming can take seconds)
   const conversationsRef = useRef(state.conversations)
   conversationsRef.current = state.conversations
+  // Same reason as conversationsRef: a run reads the script it is writing to
+  // find the model pinned on it, and that lookup happens inside callbacks that
+  // outlive the render they were built in
+  const scriptsRef = useRef(appState.scripts)
+  scriptsRef.current = appState.scripts
+  // The model pin for a script whose record has not reached this provider yet.
+  // A run can be started in the same event that creates its script — the page
+  // dispatches ADD_SCRIPT and then awaits the run without returning to React —
+  // so no render has happened, scriptsRef still holds the state from before the
+  // script existed, and the lookup above would miss it. Assigning the ref
+  // during render cannot help: there is no render to assign in. What is
+  // available is this: the caller creates the conversation in that same event,
+  // one step after stamping the new script with getModel(), so the setting read
+  // here is the model that went onto the script.
+  const pendingRunPinRef = useRef<PendingRunPin | null>(null)
 
   const stopGeneration = useCallback(() => {
     runLifecycleRef.current.stop()
@@ -50,7 +66,14 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
     appDispatch,
     saveConversation: saveStoredConversation,
     getConversation: (conversationId: string) =>
-      conversationsRef.current.find(c => c.id === conversationId)
+      conversationsRef.current.find(c => c.id === conversationId),
+    // The run's model pin: the orchestrator asks for the script a conversation
+    // belongs to so the mode decision is made from the model that script was
+    // started on rather than from whatever the setting says at this moment.
+    // A script too new to be in state is answered from the pin captured when
+    // its conversation was created, which is that same model.
+    getScript: (scriptId: string) =>
+      findRunScript(scriptId, scriptsRef.current, pendingRunPinRef.current)
   }), [dispatch, appDispatch])
 
   // Direct script generation without job processing
@@ -245,8 +268,13 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   const createConversation = useCallback((scriptId: string): RawConversation => {
     const conversation = createRawConversation(scriptId)
-    
+
     pendingConversationRef.current = conversation
+    // Captured now, while the creating event is still running, so a run that
+    // starts before the script record is rendered still plans from the model
+    // that script was pinned to rather than from the setting as it stands
+    // several awaits later. A script already in scriptsRef outranks this.
+    pendingRunPinRef.current = { scriptId, model: getModel() }
     dispatch({ type: 'CREATE_CONVERSATION', conversation })
     return conversation
   }, [])
