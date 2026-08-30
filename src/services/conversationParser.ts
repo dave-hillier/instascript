@@ -3,6 +3,9 @@ import type {
   RawConversation,
   Generation,
   ChatMessage,
+  CritiqueFinding,
+  CritiqueRecord,
+  CritiqueSpan,
   GenerationToolCall,
   GenerationMetrics,
   GenerationRound,
@@ -13,6 +16,8 @@ import {
   OUTLINE_WRITE_TOOL,
   SECTION_WRITE_TOOL,
   SECTION_REVISE_TOOL,
+  CRITIQUE_RECORD_TOOL,
+  CRITIQUE_STAGES,
   type WritingToolName
 } from './writingTools'
 
@@ -20,7 +25,8 @@ const TOOL_NAMES: readonly string[] = [
   GROUNDING_SELECT_TOOL,
   OUTLINE_WRITE_TOOL,
   SECTION_WRITE_TOOL,
-  SECTION_REVISE_TOOL
+  SECTION_REVISE_TOOL,
+  CRITIQUE_RECORD_TOOL
 ]
 
 const isWritingToolName = (value: unknown): value is WritingToolName =>
@@ -113,6 +119,87 @@ export const sanitizeGenerationMetrics = (value: unknown): GenerationMetrics | u
   }
 }
 
+// Reads a stored critique record back, on exactly the terms the tool calls
+// above are read on: drop, never throw. A critique is a judgement ABOUT the
+// script, and the script itself is in `response`, so a record this build
+// cannot make sense of is worth less than the conversation it would otherwise
+// take down with it.
+//
+// The stage and the verdict are the admission test: a record naming neither
+// says nothing, and a stage this build has never heard of is a judgement it
+// cannot place. Each finding is admitted on its own — a malformed one is
+// dropped and the rest survive, because findings are independent claims.
+//
+// Fields are rebuilt in the order they are declared on CritiqueRecord,
+// CritiqueFinding and CritiqueSpan so that a reparsed record serializes back
+// to byte-identical YAML — a file that changed every time it was opened would
+// churn storage for nothing.
+const sanitizeCritiqueSpans = (value: unknown): CritiqueSpan[] | undefined => {
+  if (!Array.isArray(value)) return undefined
+  const spans: CritiqueSpan[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
+    const record = entry as Record<string, unknown>
+    // The quote is the whole of a span's claim; without it the context and the
+    // occurrence describe nothing findable.
+    if (typeof record.quote !== 'string' || record.quote.length === 0) continue
+    if (typeof record.before !== 'string' || typeof record.after !== 'string') continue
+    if (typeof record.occurrence !== 'number' || !Number.isInteger(record.occurrence)) continue
+    if (record.occurrence < 0) continue
+    spans.push({
+      quote: record.quote,
+      before: record.before,
+      after: record.after,
+      occurrence: record.occurrence
+    })
+  }
+  return spans.length > 0 ? spans : undefined
+}
+
+export const sanitizeGenerationCritique = (value: unknown): CritiqueRecord | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+
+  const stage = CRITIQUE_STAGES.find(candidate => candidate === record.stage)
+  if (!stage) return undefined
+  if (record.verdict !== 'pass' && record.verdict !== 'revise') return undefined
+
+  const findings: CritiqueFinding[] = []
+  for (const entry of Array.isArray(record.findings) ? record.findings : []) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
+    const finding = entry as Record<string, unknown>
+    if (typeof finding.section !== 'string' || finding.section.length === 0) continue
+    if (typeof finding.reason !== 'string' || finding.reason.length === 0) continue
+
+    const rules = Array.isArray(finding.rules)
+      ? finding.rules.filter(
+          (rule): rule is number => typeof rule === 'number' && Number.isInteger(rule)
+        )
+      : []
+    const spans = sanitizeCritiqueSpans(finding.spans)
+    // `revisions` is meaningless without the spans it was recorded for, so it
+    // is kept exactly when they are — the pairing the record promises.
+    const revisions =
+      spans && typeof finding.revisions === 'number' && Number.isFinite(finding.revisions)
+        ? finding.revisions
+        : undefined
+
+    findings.push({
+      section: finding.section,
+      ...(rules.length > 0 ? { rules } : {}),
+      ...(spans ? { spans } : {}),
+      ...(spans ? { revisions: revisions ?? 0 } : {}),
+      reason: finding.reason
+    })
+  }
+
+  // A revising verdict whose every finding was dropped is no longer a
+  // judgement anything can act on, but it is still evidence that the pass ran
+  // and did not approve — which is what the round gate reads. It is kept with
+  // an empty list rather than discarded.
+  return { stage, verdict: record.verdict, findings }
+}
+
 const ROUND_KINDS: readonly string[] = [
   'outline',
   'outline-critique',
@@ -164,6 +251,7 @@ interface YamlBlock {
   exampleIds?: string[]
   toolCalls?: unknown
   metrics?: unknown
+  critique?: unknown
   round?: unknown
 }
 
@@ -251,6 +339,7 @@ export function parseConversationFromYamlMarkdown(content: string): RawConversat
               : undefined,
             toolCalls,
             metrics: sanitizeGenerationMetrics(parsed.metrics),
+            critique: sanitizeGenerationCritique(parsed.critique),
             round: sanitizeGenerationRound(parsed.round)
           })
 
@@ -308,6 +397,7 @@ export function serializeConversationToYamlMarkdown(conversation: RawConversatio
     // generation
     const metrics = sanitizeGenerationMetrics(generation.metrics)
     // Same round trip, same reason
+    const critique = sanitizeGenerationCritique(generation.critique)
     const round = sanitizeGenerationRound(generation.round)
     
     if (userMessage) {
@@ -343,6 +433,12 @@ export function serializeConversationToYamlMarkdown(conversation: RawConversatio
         // generation is kept, and never a reason on their own to keep a
         // generation that wrote nothing.
         ...(metrics ? { metrics } : {}),
+        // Optional on the same terms, and also not part of the admission test:
+        // a critique is a judgement about the script, so it is worth keeping
+        // when its generation is kept and is never on its own a reason to keep
+        // one. Every critique round already stores a non-empty response line,
+        // so no record is stranded by that.
+        ...(critique ? { critique } : {}),
         // Optional and, like metrics, deliberately not part of the admission
         // test above: a round says why a generation was made, never that one
         // should be kept

@@ -9,6 +9,7 @@ import type { ProviderCallOptions } from '../scriptGenerationService'
 import type { ExampleScript } from '../exampleSearchService'
 import type { ProviderFrame } from '../providerFrame'
 import {
+  CRITIQUE_RECORD_TOOL,
   GROUNDING_SELECT_TOOL,
   OUTLINE_WRITE_TOOL,
   SECTION_REVISE_TOOL,
@@ -23,8 +24,13 @@ import {
   SECTION_MAX_WORDS
 } from '../sectionQuality'
 import { projectConversation, isRejectedGeneration } from '../scriptProjection'
-import { buildConversationHistory } from '../prompts'
+import { buildConversationHistory, styleRuleNumbers } from '../prompts'
 import { STYLE_REVIEW_SECTION_TITLE } from '../critiquePass'
+import { reanchorSpan, SPAN_CONTEXT_CHARS } from '../span'
+import {
+  parseConversationFromYamlMarkdown,
+  serializeConversationToYamlMarkdown
+} from '../conversationParser'
 import { textFrames, toolCallFrames } from './fixtures/streamFake'
 
 // End-to-end coverage of the tool-writing path: the real orchestrator, the
@@ -1355,5 +1361,267 @@ describe('the rounds a tool-written run records', () => {
     // The refusal turn and the outline that followed it are one round
     expect(generations[0].round).toEqual({ round: 1, kind: 'outline' })
     expect(generations[1].round).toEqual({ round: 1, kind: 'outline' })
+  })
+})
+
+// The style pass on the tool path. It judges the script and RECORDS what it
+// found; it rewrites nothing, and a quote it did not read off the section is
+// refused through the same tool-result handshake a mis-sized body gets.
+describe('the style pass records a critique rather than rewriting sections', () => {
+  const SECTIONS = ['Induction', 'Awakening']
+
+  // The body every section is written with here, so a test can quote out of it
+  const BODY = words(SECTION_TARGET_WORDS)
+
+  const critiqueArguments = (findings: unknown[], verdict = 'revise'): string =>
+    JSON.stringify({ stage: 'style', verdict, findings })
+
+  // Runs a whole tool-written run with the style pass on, answering the
+  // critique request with `replies` in order and everything else normally.
+  const runWithCritiques = async (replies: Array<Reply | null>) => {
+    let critiqueTurn = 0
+    const harness = createHarness({
+      sectionTitles: SECTIONS,
+      reviewPassEnabled: true,
+      body: () => BODY,
+      sectionReply: sectionTitle => {
+        if (sectionTitle !== STYLE_REVIEW_SECTION_TITLE) return null
+        const reply = replies[critiqueTurn] ?? replies[replies.length - 1]
+        critiqueTurn += 1
+        return reply
+      }
+    })
+
+    await harness.orchestrator.generateScript(
+      { prompt: 'A deep rest script' },
+      harness.conversation
+    )
+    return { harness, critiqueTurns: () => critiqueTurn }
+  }
+
+  const critiqueCalls = (harness: Harness) =>
+    generationsOf(harness)
+      .flatMap(generation => generation.toolCalls ?? [])
+      .filter(call => call.name === CRITIQUE_RECORD_TOOL)
+
+  it('offers the tools on the critique request, so the critique can be a call at all', async () => {
+    const { harness } = await runWithCritiques([
+      { call: { name: CRITIQUE_RECORD_TOOL, args: critiqueArguments([], 'pass'), id: 'call_c1' } }
+    ])
+
+    const request = harness.sections.find(entry => entry.sectionTitle === STYLE_REVIEW_SECTION_TITLE)
+    expect(request?.options?.tools).toEqual(WRITING_TOOLS)
+  })
+
+  it('accepts an approving critique and stops, leaving the script untouched', async () => {
+    const { harness, critiqueTurns } = await runWithCritiques([
+      { call: { name: CRITIQUE_RECORD_TOOL, args: critiqueArguments([], 'pass'), id: 'call_c1' } }
+    ])
+
+    expect(critiqueTurns()).toBe(1)
+    expect(critiqueCalls(harness).map(call => call.status)).toEqual(['accepted'])
+    // Every planned section written exactly once: nothing was rewritten
+    for (const title of SECTIONS) {
+      expect(callsFor(harness, title)).toHaveLength(1)
+    }
+    const last = generationsOf(harness).slice(-1)[0]
+    expect(last.response).toContain('approved the script')
+  })
+
+  it('pins a verbatim quote to the section it names', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness } = await runWithCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([
+            { section: 'Induction', rules: [6], spans: [quote], reason: 'Ocean imagery.' }
+          ]),
+          id: 'call_c1'
+        }
+      }
+    ])
+
+    expect(critiqueCalls(harness).map(call => call.status)).toEqual(['accepted'])
+    const report = harness.actions.find(action => action.type === 'REVIEW_PASS_COMPLETED')
+    expect(report && report.type === 'REVIEW_PASS_COMPLETED' && report.report.revised).toEqual([
+      { sectionTitle: 'Induction', ruleNumbers: [6], reason: 'Ocean imagery.' }
+    ])
+    // The pinned quote is read back to the model in the stored generation
+    expect(generationsOf(harness).slice(-1)[0].response).toContain(`"${quote}"`)
+  })
+
+  it('carries the finding into the reading view, and back out of a reload', async () => {
+    // The seam the whole model half of the feature hangs on. A finding that
+    // is accepted but never written onto the generation lives for the length
+    // of one function call: nothing draws it, nothing lists it, and a reload
+    // reads a document that was never told the pass happened.
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness } = await runWithCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([
+            { section: 'Induction', rules: [6], spans: [quote], reason: 'Ocean imagery.' }
+          ]),
+          id: 'call_c1'
+        }
+      }
+    ])
+
+    const stored = harness.getState().conversations[0]
+    const document = projectConversation(stored)
+    expect(document.findings).toEqual([
+      {
+        stage: 'style',
+        section: 'Induction',
+        rules: [6],
+        spans: [{
+          quote,
+          before: '',
+          after: BODY.slice(quote.length, quote.length + SPAN_CONTEXT_CHARS),
+          occurrence: 0
+        }],
+        revisions: 0,
+        reason: 'Ocean imagery.'
+      }
+    ])
+    // and it points at words that are really in the section it names
+    const marked = document.sections.find(section => section.title === 'Induction')!
+    const span = document.findings![0].spans![0]
+    expect(reanchorSpan(marked.content, span)).toMatchObject({ state: 'anchored' })
+
+    // The reload: the same conversation through the file it is stored as
+    const reloaded = parseConversationFromYamlMarkdown(
+      serializeConversationToYamlMarkdown(stored)
+    )
+    expect(reloaded).not.toBeNull()
+    expect(projectConversation(reloaded!).findings).toEqual(document.findings)
+  })
+
+  it('refuses a quote that is not in the section, names the fault, and asks again', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness, critiqueTurns } = await runWithCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([
+            { section: 'Induction', spans: ['a sentence the section never contained'], reason: 'x' }
+          ]),
+          id: 'call_c1'
+        }
+      },
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([{ section: 'Induction', spans: [quote], reason: 'x' }]),
+          id: 'call_c2'
+        }
+      }
+    ])
+
+    expect(critiqueTurns()).toBe(2)
+    const calls = critiqueCalls(harness)
+    expect(calls.map(call => call.status)).toEqual(['rejected', 'accepted'])
+    expect(calls[0].reason).toContain('was not found in "Induction"')
+
+    // The refusal went back as a TOOL RESULT on the retry, not as prose
+    const retry = harness.sections.filter(
+      entry => entry.sectionTitle === STYLE_REVIEW_SECTION_TITLE
+    )[1]
+    const turns = retry.options?.toolTurns ?? []
+    expect(turns.map(turn => turn.role)).toEqual(['assistant', 'tool'])
+    expect(turns[1].role === 'tool' && turns[1].content).toContain('was not found')
+  })
+
+  // The stage is the model's claim about which pass it is answering, and a
+  // claim is not evidence. Recorded unchecked, a style pass that calls itself a
+  // review is stored as a review, and the reading view then tells the reader a
+  // finding came from a pass that never ran.
+  it('refuses a critique that names a stage other than the pass that is running', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness } = await runWithCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: JSON.stringify({
+            stage: 'review',
+            verdict: 'revise',
+            findings: [{ section: 'Induction', spans: [quote], reason: 'x' }]
+          }),
+          id: 'call_c1'
+        }
+      },
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([{ section: 'Induction', spans: [quote], reason: 'x' }]),
+          id: 'call_c2'
+        }
+      }
+    ])
+
+    const calls = critiqueCalls(harness)
+    expect(calls.map(call => call.status)).toEqual(['rejected', 'accepted'])
+    expect(calls[0].reason).toContain('this is the style pass')
+
+    // And what was finally recorded is the pass that actually ran
+    const findings = projectConversation(harness.getState().conversations[0]).findings ?? []
+    expect(findings.map(finding => finding.stage)).toEqual(['style'])
+  })
+
+  it('refuses a rule number no style rule carries', async () => {
+    const invented = Math.max(...styleRuleNumbers()) + 13
+    const { harness } = await runWithCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([
+            { section: 'Induction', rules: [invented], reason: 'Breaks a rule I made up.' }
+          ]),
+          id: 'call_c1'
+        }
+      },
+      { call: { name: CRITIQUE_RECORD_TOOL, args: critiqueArguments([], 'pass'), id: 'call_c2' } }
+    ])
+
+    const calls = critiqueCalls(harness)
+    expect(calls.map(call => call.status)).toEqual(['rejected', 'accepted'])
+    expect(calls[0].reason).toContain('must name a style rule')
+  })
+
+  it('gives up after MAX_TOOL_HANDSHAKES refusals without failing the finished script', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { harness, critiqueTurns } = await runWithCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: critiqueArguments([{ section: 'Induction', spans: ['never in the body'], reason: 'x' }]),
+          id: 'call_c1'
+        }
+      }
+    ])
+
+    expect(critiqueTurns()).toBe(MAX_TOOL_HANDSHAKES + 1)
+    expect(critiqueCalls(harness).every(call => call.status === 'rejected')).toBe(true)
+    // The run still completes: a review that cannot land leaves a usable script
+    expect(harness.scriptUpdates[harness.scriptUpdates.length - 1].status).toBe('complete')
+    expect(harness.actions.some(action => action.type === 'REVIEW_PASS_COMPLETED')).toBe(false)
+    vi.restoreAllMocks()
+  })
+
+  it('still reads a prose critique, as findings that quote nothing', async () => {
+    const { harness } = await runWithCritiques([
+      { prose: 'VERDICT: Induction | compliant\nVERDICT: Awakening | violates 9 | Negations.' }
+    ])
+
+    const report = harness.actions.find(action => action.type === 'REVIEW_PASS_COMPLETED')
+    expect(report && report.type === 'REVIEW_PASS_COMPLETED' && report.report.revised).toEqual([
+      { sectionTitle: 'Awakening', ruleNumbers: [9], reason: 'Negations.' }
+    ])
+    expect(critiqueCalls(harness)).toHaveLength(0)
+    for (const title of SECTIONS) {
+      expect(callsFor(harness, title)).toHaveLength(1)
+    }
   })
 })

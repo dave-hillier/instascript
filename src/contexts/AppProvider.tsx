@@ -4,6 +4,7 @@ import type { Script } from '../types/script'
 import { AppContext } from './AppContext'
 import type { AppContextType, AppAction, AppState } from './AppContext'
 import { parseScriptFromYamlMarkdown, serializeScriptToYamlMarkdown, migrateScriptsToYamlMarkdown } from '../services/scriptParser'
+import { pruneMarks } from '../services/markStore'
 
 const appReducer = (state: AppState, action: AppAction): AppState => {
   switch (action.type) {
@@ -156,6 +157,13 @@ export const AppProvider = ({ children }: AppProviderProps) => {
   useEffect(() => {
     if (isLoaded) {
       setStoredScripts(state.scripts)
+      // A deleted script's reader marks go with it. Marks are keyed by script
+      // id and nothing else refers to them, so a script removed here would
+      // otherwise leave its flags in storage for good — and the library is the
+      // only place that knows which scripts still exist. Guarded on isLoaded
+      // so the empty state before the first load is never mistaken for an
+      // empty library.
+      pruneMarks(state.scripts.map(script => script.id))
     }
   }, [state.scripts, isLoaded])
 

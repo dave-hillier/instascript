@@ -18,4 +18,5 @@ You write this script by CALLING TOOLS, never by replying with the script as a m
 * Write the plan with `outline_write`, then write each planned section with `section_write`, one call per section, in outline order.
 * A section body is prose only. Do not write a `##` heading, a title line, a preamble, or any meta-commentary into it — the heading is taken from the outline title the call names.
 * Replace an already-written section with `section_revise`, never with a second `section_write`.
+* A pass that JUDGES the script records what it found with `critique_record` and changes nothing. A critique marks the script for a reader, who decides what to act on; do not rewrite a section you have just marked, and do not deliver a critique as prose.
 * A call that is rejected comes back as a tool result stating what was wrong with it. That section is not written until a later call is accepted, so answer a rejection by calling the tool again with the whole section rewritten as asked, rather than by explaining it.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { rawConversationReducer } from '../rawConversationReducer'
 import type { RawConversationState } from '../rawConversationReducer'
-import type { RawConversation } from '../../types/conversation'
+import type { CritiqueRecord, RawConversation } from '../../types/conversation'
 
 const makeConversation = (id: string): RawConversation => ({
   id,
@@ -292,5 +292,74 @@ describe('the round a generation belongs to', () => {
 
     expect(state.conversations[0].generations[0].round)
       .toEqual({ round: 2, kind: 'outline-critique' })
+  })
+})
+
+// The seam a critique reaches the application through.
+describe('the critique a judging pass recorded', () => {
+  // A conversation with no generations yet, so index 0 is the one the test
+  // just opened
+  const baseState = (): RawConversationState => ({
+    conversations: [{ ...makeConversation('conv_a'), generations: [] }],
+    currentGeneration: null,
+    generationMachine: null,
+    reviewReport: null
+  })
+
+  it('writes the critique a judging pass recorded onto the generation that closed it', () => {
+    // The generation is where a critique lives: the serializer, the parser
+    // and the projection's findings fold all read it from there, so a
+    // completion that dropped it would leave the pass with nothing to show.
+    const critique: CritiqueRecord = {
+      stage: 'style',
+      verdict: 'revise',
+      findings: [{
+        section: 'Induction',
+        rules: [6],
+        spans: [{ quote: 'the tide of your breath', before: '', after: '', occurrence: 0 }],
+        revisions: 0,
+        reason: 'Ocean imagery.'
+      }]
+    }
+
+    let state = rawConversationReducer(baseState(), {
+      type: 'START_GENERATION',
+      conversationId: 'conv_a',
+      messages: [{ role: 'user', content: 'judge the script' }]
+    })
+    state = rawConversationReducer(state, {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: 'The style pass marked 1 section.',
+      critique
+    })
+
+    expect(state.conversations[0].generations[0].critique).toEqual(critique)
+  })
+
+  // Same rule the metrics and the tool calls beside it follow: the one
+  // dispatch that rewrites an already-closed generation carries no critique,
+  // and must not erase the judgement the pass recorded.
+  it('keeps a recorded critique when a later completion carries none', () => {
+    const critique: CritiqueRecord = { stage: 'style', verdict: 'pass', findings: [] }
+
+    let state = rawConversationReducer(baseState(), {
+      type: 'START_GENERATION',
+      conversationId: 'conv_a',
+      messages: [{ role: 'user', content: 'judge the script' }]
+    })
+    state = rawConversationReducer(state, {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: 'The style pass approved the script.',
+      critique
+    })
+    state = rawConversationReducer(state, {
+      type: 'COMPLETE_GENERATION',
+      conversationId: 'conv_a',
+      response: 'The style pass approved the script.'
+    })
+
+    expect(state.conversations[0].generations[0].critique).toEqual(critique)
   })
 })

@@ -2,12 +2,18 @@ import { describe, it, expect } from 'vitest'
 import {
   projectConversation,
   parseSections,
+  sectionRevisions,
   sectionSlug,
   sectionStatusNote
 } from '../scriptProjection'
 import { consolidateSections } from '../conversationDocument'
 import { parseOutlineCritiqueResponse } from '../outlineCritique'
-import type { Generation, GenerationToolCall, RawConversation } from '../../types/conversation'
+import type {
+  CritiqueRecord,
+  Generation,
+  GenerationToolCall,
+  RawConversation
+} from '../../types/conversation'
 
 // The seam has two branches and one conversation can contain both, so the
 // tests are written per generation kind and then interleaved.
@@ -69,7 +75,14 @@ describe('sectionSlug', () => {
 
 describe('projectConversation: markdown generations', () => {
   it('projects nothing for a conversation with no generations', () => {
-    const empty = { title: undefined, outline: undefined, sections: [], rounds: [], fullContent: '' }
+    const empty = {
+      title: undefined,
+      outline: undefined,
+      sections: [],
+      rounds: [],
+      findings: [],
+      fullContent: ''
+    }
     expect(projectConversation(undefined)).toEqual(empty)
     expect(projectConversation(conversationOf())).toEqual(empty)
   })
@@ -235,7 +248,9 @@ describe('projectConversation: tool-call generations', () => {
 
     expect(document.title).toBe('The Garden')
     expect(document.sections).toEqual([
-      { id: 'section_arrival', title: 'Arrival', content: 'The revised words.', wordCount: 3 }
+      // revisions counts the ONE replacement: the first generation is the
+      // plan, which folds as an outline and writes no section at all.
+      { id: 'section_arrival', title: 'Arrival', content: 'The revised words.', wordCount: 3, revisions: 1 }
     ])
   })
 })
@@ -289,6 +304,143 @@ describe('projectConversation: the live splice', () => {
       .sections[0].content).toBe('The stored words.')
     expect(projectConversation(conversation, { conversationId: 'conversation_1', isComplete: true, sectionTitle: 'Arrival' })
       .sections[0].content).toBe('The stored words.')
+  })
+})
+
+describe('projectConversation: how many times a body has been replaced', () => {
+  // The number a span records when it is pinned, and compares against when it
+  // asks whether the passage it quoted was repaired or was never there. It is
+  // derived from the stored conversation alone, so a reload cannot change it.
+
+  it('leaves a section that has only ever been written once at zero', () => {
+    const document = projectConversation(conversationOf(
+      toolGeneration('## Arrival\nThe first words.', [
+        { name: 'section_write', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ])
+    ))
+
+    expect(document.sections[0].revisions).toBeUndefined()
+    expect(sectionRevisions(document.sections[0])).toBe(0)
+  })
+
+  it('counts a revise as one replacement', () => {
+    const document = projectConversation(conversationOf(
+      toolGeneration('## Arrival\nThe first words.', [
+        { name: 'section_write', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ]),
+      toolGeneration('## Arrival\nThe revised words.', [
+        { name: 'section_revise', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ])
+    ))
+
+    expect(sectionRevisions(document.sections[0])).toBe(1)
+  })
+
+  it('does not count attempts that were sent back to be rewritten', () => {
+    // Three refusals and one acceptance are ONE arrival of a body, not four.
+    // A span pinned afterwards must not read the refusals as repairs.
+    const document = projectConversation(conversationOf(
+      toolGeneration('## Arrival\nToo short.', [
+        { name: 'section_write', title: 'Arrival', status: 'rejected', wordCount: 2 }
+      ]),
+      toolGeneration('## Arrival\nToo short again.', [
+        { name: 'section_write', title: 'Arrival', status: 'rejected', wordCount: 3 }
+      ]),
+      toolGeneration('## Arrival\nThe written words.', [
+        { name: 'section_write', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ])
+    ))
+
+    expect(sectionRevisions(document.sections[0])).toBe(0)
+  })
+
+  it('counts a waived body, which really did replace the one before it', () => {
+    const document = projectConversation(conversationOf(
+      toolGeneration('## Arrival\nThe first words.', [
+        { name: 'section_write', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ]),
+      toolGeneration('## Arrival\nShort.', [
+        { name: 'section_revise', title: 'Arrival', status: 'waived', wordCount: 1, reason: 'kept at 1 word' }
+      ])
+    ))
+
+    expect(sectionRevisions(document.sections[0])).toBe(1)
+    expect(document.sections[0].status).toBe('waived')
+  })
+
+  it('counts a manual edit, which arrives as plain markdown with no call at all', () => {
+    // ConversationProvider.editSection appends exactly this. A passage the
+    // reader deleted by hand has to settle a span just as a rewrite does.
+    const document = projectConversation(conversationOf(
+      toolGeneration('## Arrival\nThe first words.', [
+        { name: 'section_write', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ]),
+      markdownGeneration('## Arrival\nWords the reader typed themselves.')
+    ))
+
+    expect(sectionRevisions(document.sections[0])).toBe(1)
+  })
+
+  it('counts a body a single generation wrote once, however many headings it rendered', () => {
+    // The unclaimed-prose sweep folds the headings no call named. It must not
+    // fold the named one a second time and count a replacement that the one
+    // generation never made.
+    const document = projectConversation(conversationOf(
+      toolGeneration('## Arrival\nThe first words.\n\n## Emergence\nThe ending.', [
+        { name: 'section_revise', title: 'Arrival', status: 'accepted', wordCount: 3 }
+      ])
+    ))
+
+    expect(document.sections.map(section => sectionRevisions(section))).toEqual([0, 0])
+  })
+})
+
+describe('projectConversation: the body a generation is still streaming', () => {
+  const streaming = (sectionTitle: string) => ({
+    conversationId: 'conversation_1',
+    isComplete: false,
+    sectionTitle
+  })
+
+  it('marks the spliced section live', () => {
+    // Half-arrived prose has lost every phrase not yet written, so a reader of
+    // the projection needs to know not to judge this body. It needs telling,
+    // too: the generation being streamed folds as markdown like any other, so
+    // its replacement count has ALREADY moved while the body is a fragment,
+    // and isLive is the only thing standing between that and a span deciding
+    // its passage was repaired.
+    const document = projectConversation(
+      conversationOf(
+        toolGeneration('## Arrival\nThe first words.', [
+          { name: 'section_write', title: 'Arrival', status: 'accepted', wordCount: 3 }
+        ]),
+        markdownGeneration('## Arrival\nThe words arriving')
+      ),
+      streaming('Arrival')
+    )
+
+    expect(document.sections[0].isLive).toBe(true)
+    expect(sectionRevisions(document.sections[0])).toBe(1)
+  })
+
+  it('marks an appended streaming section live too', () => {
+    const document = projectConversation(
+      conversationOf(
+        markdownGeneration('## Arrival\nThe stored words.'),
+        markdownGeneration('## Emergence\nThe ending arri')
+      ),
+      streaming('Emergence')
+    )
+
+    expect(document.sections.map(section => section.isLive)).toEqual([undefined, true])
+  })
+
+  it('leaves every section unmarked when nothing is streaming', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Arrival\nThe stored words.')
+    ))
+
+    expect(document.sections[0].isLive).toBeUndefined()
   })
 })
 
@@ -744,5 +896,100 @@ describe('truncation suspicion is for prose a stream might have cut off', () => 
     ))
 
     expect(document.sections[0].truncationSuspect).toBe(true)
+  })
+})
+
+describe('the critiques a conversation carries', () => {
+  const critiqueGeneration = (critique: CritiqueRecord): Generation => ({
+    messages: [],
+    response: 'The style pass marked 1 section.',
+    timestamp: 0,
+    round: { round: 2, kind: 'style-critique' },
+    critique
+  })
+
+  const findingOf = (section: string, reason = 'Ocean imagery.') => ({ section, reason })
+
+  it('folds no findings out of a conversation that was never judged', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nBreathe out.')
+    ))
+
+    expect(document.findings).toEqual([])
+  })
+
+  it('carries a recorded finding into the document, stamped with the pass that made it', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nBreathe out.'),
+      critiqueGeneration({
+        stage: 'style',
+        verdict: 'revise',
+        findings: [{
+          section: 'Induction',
+          rules: [6],
+          spans: [{ quote: 'Breathe out.', before: '', after: '', occurrence: 0 }],
+          revisions: 0,
+          reason: 'Ocean imagery.'
+        }]
+      })
+    ))
+
+    expect(document.findings).toEqual([{
+      stage: 'style',
+      section: 'Induction',
+      rules: [6],
+      spans: [{ quote: 'Breathe out.', before: '', after: '', occurrence: 0 }],
+      revisions: 0,
+      reason: 'Ocean imagery.'
+    }])
+  })
+
+  it('carries an approving critique as no findings at all', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nBreathe out.'),
+      critiqueGeneration({ stage: 'style', verdict: 'pass', findings: [] })
+    ))
+
+    expect(document.findings).toEqual([])
+  })
+
+  it('lets a later critique of the same stage replace the earlier one whole', () => {
+    // The second pass judged the script as it stands now. A finding it did not
+    // repeat is a finding it did not make, so nothing is merged forward.
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nBreathe out.'),
+      critiqueGeneration({
+        stage: 'style',
+        verdict: 'revise',
+        findings: [findingOf('Induction'), findingOf('Deepening', 'Negations.')]
+      }),
+      critiqueGeneration({
+        stage: 'style',
+        verdict: 'revise',
+        findings: [findingOf('Deepening', 'Still negations.')]
+      })
+    ))
+
+    expect(document.findings?.map(finding => finding.section)).toEqual(['Deepening'])
+    expect(document.findings?.[0].reason).toBe('Still negations.')
+  })
+
+  it('keeps the two passes apart, so a style mark does not clear an outline mark', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration('## Induction\nBreathe out.'),
+      critiqueGeneration({
+        stage: 'outline',
+        verdict: 'revise',
+        findings: [findingOf('Emergence', 'The plan never brings them back.')]
+      }),
+      critiqueGeneration({
+        stage: 'style',
+        verdict: 'revise',
+        findings: [findingOf('Induction')]
+      })
+    ))
+
+    expect(document.findings?.map(finding => `${finding.stage}:${finding.section}`))
+      .toEqual(['outline:Emergence', 'style:Induction'])
   })
 })

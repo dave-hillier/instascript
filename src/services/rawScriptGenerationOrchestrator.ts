@@ -1,4 +1,4 @@
-import type { RawConversation, Generation, GenerationRequest, GenerationRound, RegenerationRequest, RefinementRequest, ChatMessage, GenerationMetrics, ReviewRevision, ScriptOutline } from '../types/conversation'
+import type { CritiqueRecord, RawConversation, Generation, GenerationRequest, GenerationRound, RegenerationRequest, RefinementRequest, ChatMessage, GenerationMetrics, ReviewRevision, ScriptOutline } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
 import type { RawConversationAction } from '../reducers/rawConversationReducer'
 import type { Script } from '../types/script'
@@ -18,7 +18,16 @@ import {
   MAX_TOOL_HANDSHAKES,
   SECTION_REJECTION_BUDGET
 } from './sectionQuality'
-import { parseCritiqueResponse, selectViolationsToRevise, buildRevisionInstruction, STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
+import {
+  acceptCritique,
+  findingsFromVerdicts,
+  parseCritiqueResponse,
+  parseCritiqueToolCall,
+  renderCritique,
+  reviewRevisionsFromFindings,
+  STYLE_REVIEW_SECTION_TITLE
+} from './critiquePass'
+import type { CritiqueSectionBody } from './critiquePass'
 import { parseOutlineCritiqueResponse, OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 import { buildLengthPlan } from './scriptLength'
 import type { LengthPlan } from './scriptLength'
@@ -27,15 +36,15 @@ import { recordExampleSelections } from './exampleCorpus'
 import { isTextFrame, isToolCallFrame } from './providerFrame'
 import type { ProviderFrame } from './providerFrame'
 import { scanPartialJsonObject } from './partialJson'
-import { WRITING_TOOLS, GROUNDING_SELECT_TOOL, OUTLINE_WRITE_TOOL, SECTION_WRITE_TOOL } from './writingTools'
+import { WRITING_TOOLS, GROUNDING_SELECT_TOOL, OUTLINE_WRITE_TOOL, SECTION_WRITE_TOOL, CRITIQUE_RECORD_TOOL } from './writingTools'
 // The one rule for "this generation contributed nothing to the script", shared
 // with the projection, the replayed history and the activity thread: four
 // readers have to agree on it, so there is one copy of it
-import { projectConversation } from './scriptProjection'
+import { projectConversation, sectionRevisions } from './scriptProjection'
 import type { ProjectedDocument } from './scriptProjection'
 import { planNextRound, resolvePipeline } from './roundPlan'
 import type { PlannedRound } from './roundPlan'
-import type { WritingToolName } from './writingTools'
+import type { WritingToolName, CritiqueStage } from './writingTools'
 import type { ProviderCallOptions, ProviderTurn } from './scriptGenerationService'
 import { planGeneration } from './serviceFactory'
 import {
@@ -86,7 +95,12 @@ export interface RawGenerationOptions {
 interface ReviewPassResult {
   // True when the critique request completed, so the outcome can be reported
   ran: boolean
-  revised: ReviewRevision[]
+  // The sections the pass MARKED. It no longer rewrites any of them — the
+  // report says what was found, and the reader decides what to act on.
+  marked: ReviewRevision[]
+  // The critique exactly as it was accepted, which is what belongs on the
+  // conversation. See runReviewPass for why it does not get there yet.
+  critique?: CritiqueRecord
 }
 
 // The corpus a run is grounded in, tracked for the whole run rather than per
@@ -296,6 +310,18 @@ const plannedSectionWordCounts = (document: ProjectedDocument): number[] => {
 // all — no prose, no tool call. It is deliberately a plain sentence rather
 // than a REJECTED line: nothing was refused here, the model simply answered
 // with nothing, and the generation exists to say that a request was made.
+// How much streamed material earns one progress notification.
+//
+// Every notification re-reads the whole partially-arrived arguments buffer to
+// recover the body inside it (toolField below), which is linear in what has
+// arrived so far — so notifying on each of the hundreds of fragments a
+// provider cuts a long body into is quadratic in that body's length, and one
+// section at the top of the word window spends seconds scanning to render
+// frames arriving far faster than anyone reads. Two hundred characters is
+// about thirty words: finer than prose is read, and a thirtieth of the work.
+// The tail is always notified, so what a reader last saw is the whole body.
+const PROGRESS_STEP_CHARS = 200
+
 const EMPTY_TURN_RECORD = 'The request finished without writing anything.'
 
 // How often a stream is allowed to write the conversation to storage while it
@@ -644,8 +670,10 @@ export class RawScriptGenerationOrchestrator {
   // the arguments, the finish reason and the text a model that ignored the
   // tools replied with, and has to decide between them once the stream ends.
   //
-  // `onProgress` is called on every text or tool-call frame with the response
-  // as it stands, so a caller can render a body that is still arriving.
+  // `onProgress` is called with the response as it stands, so a caller can
+  // render a body that is still arriving: on the first frame that carries
+  // anything, every PROGRESS_STEP_CHARS after that, and once more when the
+  // stream ends holding material the last notification did not include.
   private async streamResponse(
     stream: AsyncIterable<ProviderFrame>,
     conversationId: string,
@@ -665,6 +693,17 @@ export class RawScriptGenerationOrchestrator {
       finishedCleanly
     })
 
+    // How much has arrived since the last notification, and whether there has
+    // been one (see PROGRESS_STEP_CHARS)
+    let unnotified = 0
+    let notified = false
+
+    const notify = (): void => {
+      unnotified = 0
+      notified = true
+      onProgress?.(snapshot())
+    }
+
     for await (const frame of stream) {
       this.observeMetricFrame(metrics, frame)
 
@@ -682,6 +721,7 @@ export class RawScriptGenerationOrchestrator {
         // after the last content delta must not turn into a thrown run
         if (abortSignal?.aborted) throw new Error('Generation aborted')
         text += frame.delta
+        unnotified += frame.delta.length
       } else if (isToolCallFrame(frame)) {
         if (abortSignal?.aborted) throw new Error('Generation aborted')
         // Keyed on index, never on id: the id arrives with the first fragment
@@ -697,14 +737,19 @@ export class RawScriptGenerationOrchestrator {
         if (frame.name) call.name = frame.name
         call.arguments += frame.argumentsDelta
         calls.set(frame.index, call)
+        unnotified += frame.argumentsDelta.length
       } else {
         continue
       }
 
-      onProgress?.(snapshot())
+      if (!notified || unnotified >= PROGRESS_STEP_CHARS) notify()
 
       if (this.streamSaves.due(Date.now())) this.persistConversation(conversationId)
     }
+
+    // The last stretch, so what a caller rendered last is the WHOLE body and
+    // not the body up to the final step boundary
+    if (unnotified > 0) notify()
 
     return snapshot()
   }
@@ -1547,7 +1592,7 @@ export class RawScriptGenerationOrchestrator {
           type: 'REVIEW_PASS_COMPLETED',
           report: {
             conversationId,
-            revised: reviewResult.revised,
+            revised: reviewResult.marked,
             // The sections as reviewed, so the summary retires itself once the
             // script is restructured under it
             structure: parseMarkdownSections(scriptContent).map(section => section.title)
@@ -1647,9 +1692,8 @@ export class RawScriptGenerationOrchestrator {
       case 'style-critique':
         return await this.runReviewPass(
           context.conversation,
-          document.outline!,
-          document.fullContent,
-          context.request.targetMinutes,
+          document,
+          context.writesByTool,
           context.abortSignal
         )
       case 'review':
@@ -1972,20 +2016,42 @@ export class RawScriptGenerationOrchestrator {
     }
   }
 
-  // Style-review pass (story 8.5): one critique request checks the finished
-  // script against the style rules, then up to MAX_REVIEW_REVISIONS violating
-  // sections are regenerated once each through the ordinary
-  // section-regeneration path with the violation as the instruction. A
-  // failed or stopped review never fails the completed generation.
+  // Style-review pass (story 8.5). One request judges the finished script
+  // against the style rules and RECORDS what it found. It rewrites nothing.
+  //
+  // It used to rewrite up to MAX_REVIEW_REVISIONS violating sections on its
+  // own authority, before the reader had seen either the violation or the
+  // words it replaced. It now marks instead: the critique names the sections
+  // at fault, cites the rules, and quotes the passages, and the reader decides
+  // what to act on. Quoting the passage is what makes disagreeing with the
+  // finding possible, and the old loop had already spent that disagreement.
+  //
+  // The critique arrives as a critique_record CALL, refused and asked again
+  // through the tool-result path the section loop already uses and bounded by
+  // the same MAX_TOOL_HANDSHAKES: a quote the model did not read off the
+  // section verbatim is sent back with the fault named, and so is a citation
+  // of a rule number the list does not carry. A model that answers in prose
+  // anyway is not a failed pass — its VERDICT lines still become findings,
+  // without spans, exactly as they always did.
+  //
+  // A failed or stopped review never fails the completed generation.
   private async runReviewPass(
     conversation: RawConversation,
-    outline: ScriptOutline,
-    scriptContent: string,
-    targetMinutes?: number,
+    document: ProjectedDocument,
+    writesByTool: boolean,
     abortSignal?: AbortSignal
   ): Promise<ReviewPassResult> {
     const conversationId = conversation.id
-    const revised: ReviewRevision[] = []
+    const outline = document.outline!
+    // Every span is measured against the body the reader is looking at, and
+    // the replacement count is recorded beside it so a later reader can tell a
+    // passage that was rewritten from one that was never there.
+    const bodies = new Map<string, CritiqueSectionBody>(
+      document.sections.map(section => [
+        section.title,
+        { body: section.content, revisions: sectionRevisions(section) }
+      ])
+    )
 
     try {
       this.dispatch({
@@ -2005,76 +2071,162 @@ export class RawScriptGenerationOrchestrator {
         isComplete: false
       })
 
-      const critiquePrompt = buildStyleCritiquePrompt(scriptContent)
+      const critiquePrompt = buildStyleCritiquePrompt(document.fullContent)
       const critiqueMessages: ChatMessage[] = [{ role: 'user', content: critiquePrompt }]
+      let toolTurns: ProviderTurn[] = []
 
-      this.dispatch({
-        type: 'START_GENERATION',
-        conversationId,
-        messages: critiqueMessages
-      })
-
-      const critiqueStream = this.services.scriptService.regenerateSection(
-        { prompt: critiquePrompt, conversationId, sectionTitle: STYLE_REVIEW_SECTION_TITLE },
-        critiqueMessages,
-        abortSignal
-      )
-
-      const critiqueText = await this.streamToString(
-        critiqueStream,
-        conversationId,
-        abortSignal,
-        (accumulated) => {
-          this.dispatch({
-            type: 'UPDATE_CURRENT_GENERATION',
-            conversationId,
-            response: accumulated
-          })
-        }
-      )
-
-      this.dispatch({
-        type: 'COMPLETE_GENERATION',
-        metrics: this.takeTurnMetrics(conversationId),
-        conversationId,
-        response: critiqueText
-      })
-
-      this.persistConversation(conversationId)
-
-      const verdicts = parseCritiqueResponse(critiqueText)
-      const violations = selectViolationsToRevise(
-        verdicts,
-        outline.sections.map(section => section.title)
-      )
-
-      for (const violation of violations) {
+      for (let turn = 0; turn <= MAX_TOOL_HANDSHAKES; turn++) {
         if (abortSignal?.aborted) throw new Error('Generation aborted')
 
-        const current = this.callbacks.getConversation(conversationId) ?? conversation
-        const prompt = buildSectionRegenerationPromptFromConversation(
-          current,
-          violation.sectionTitle,
-          buildRevisionInstruction(violation)
-        )
-
-        await this.regenerateSection(
-          { prompt, conversationId, sectionTitle: violation.sectionTitle, targetMinutes },
-          current,
-          abortSignal
-        )
-
-        revised.push({
-          sectionTitle: violation.sectionTitle,
-          ruleNumbers: violation.ruleNumbers
+        this.dispatch({
+          type: 'START_GENERATION',
+          conversationId,
+          messages: critiqueMessages
         })
+
+        const critiqueStream = this.services.scriptService.regenerateSection(
+          { prompt: critiquePrompt, conversationId, sectionTitle: STYLE_REVIEW_SECTION_TITLE },
+          critiqueMessages,
+          abortSignal,
+          writesByTool ? { tools: WRITING_TOOLS, toolTurns } : undefined
+        )
+
+        const response = await this.streamResponse(
+          critiqueStream,
+          conversationId,
+          abortSignal,
+          streamed => {
+            this.dispatch({
+              type: 'UPDATE_CURRENT_GENERATION',
+              conversationId,
+              response: streamed.text
+            })
+          }
+        )
+
+        const call = response.calls.find(entry => entry.name === CRITIQUE_RECORD_TOOL)
+
+        if (call && response.finishedCleanly) {
+          const outcome = this.acceptCritiqueCall(conversationId, bodies, call, 'style')
+          if (outcome.ok) {
+            const marked = reviewRevisionsFromFindings(outcome.critique.findings)
+            return { ran: true, marked, critique: outcome.critique }
+          }
+
+          // Refused, and asked again with the tools still attached — the same
+          // handshake a section of the wrong length gets. Nothing about the
+          // refused critique is stored: a finding that could not be pinned is
+          // not a finding, and half-recording it is what the whole design is
+          // against.
+          toolTurns = [
+            {
+              role: 'assistant',
+              toolCalls: [{ id: call.id, name: CRITIQUE_RECORD_TOOL, arguments: call.arguments }]
+            },
+            { role: 'tool', toolCallId: call.id, content: outcome.reason }
+          ]
+          continue
+        }
+
+        const stray = namedCallOf(response)
+        if (stray && stray.name !== CRITIQUE_RECORD_TOOL) {
+          const answer = stray.name === GROUNDING_SELECT_TOOL
+            ? answerGroundingSelect({ done: true, examples: [] }, CRITIQUE_RECORD_TOOL)
+            : answerWrongTool(
+                stray.name as string,
+                CRITIQUE_RECORD_TOOL,
+                'This pass judges the script; it does not write it.'
+              )
+
+          this.dispatch({
+            type: 'COMPLETE_GENERATION',
+            metrics: this.takeTurnMetrics(conversationId),
+            conversationId,
+            response: answer.record,
+            toolCalls: [{
+              id: stray.id,
+              name: stray.name as WritingToolName,
+              status: answer.status,
+              reason: answer.content
+            }]
+          })
+          this.persistConversation(conversationId)
+
+          toolTurns = [
+            {
+              role: 'assistant',
+              toolCalls: [{ id: stray.id, name: stray.name as string, arguments: stray.arguments }]
+            },
+            { role: 'tool', toolCallId: stray.id, content: answer.content }
+          ]
+          continue
+        }
+
+        if (call && !response.finishedCleanly) {
+          // A critique cut off mid-arguments is not a critique: its findings
+          // list may be missing the entries that never arrived, and a verdict
+          // read off a fragment would claim the pass judged what it never saw.
+          const reason =
+            `REFUSED: the ${CRITIQUE_RECORD_TOOL} call did not finish ` +
+            `(${response.finishReason ?? 'the stream ended without a finish reason'}), so the ` +
+            'critique arrived incomplete. Record the whole critique again.'
+          this.dispatch({
+            type: 'COMPLETE_GENERATION',
+            metrics: this.takeTurnMetrics(conversationId),
+            conversationId,
+            response: `No critique was recorded: ${reason}`,
+            toolCalls: [{ id: call.id, name: CRITIQUE_RECORD_TOOL, status: 'rejected', reason }]
+          })
+          this.persistConversation(conversationId)
+
+          toolTurns = [
+            {
+              role: 'assistant',
+              toolCalls: [{ id: call.id, name: CRITIQUE_RECORD_TOOL, arguments: call.arguments }]
+            },
+            { role: 'tool', toolCallId: call.id, content: reason }
+          ]
+          continue
+        }
+
+        // Prose. The older line-oriented verdicts are still read, so a model
+        // that cannot call tools — and the mock provider — still produce a
+        // usable pass. What they cannot produce is a SPAN: a VERDICT line
+        // names a section and a rule and points at no passage, and inventing
+        // one here would be indistinguishable from a quote actually read off
+        // the body. The weaker record is the honest one.
+        //
+        // A reply with nothing in it is still recorded as one non-empty line,
+        // because a generation stored with an empty response is dropped
+        // outright by the deployed parser, prompt block and all (D1).
+        const verdicts = parseCritiqueResponse(response.text)
+        const findings = findingsFromVerdicts(
+          verdicts,
+          outline.sections.map(section => section.title)
+        )
+        const critique: CritiqueRecord = {
+          stage: 'style',
+          verdict: findings.length === 0 ? 'pass' : 'revise',
+          findings
+        }
+
+        // Read off the prose BEFORE the turn is closed, because the critique
+        // is stored on the generation that closing action writes — a prose
+        // pass records its verdict exactly as a tool call's does, minus the
+        // spans it had no way to quote.
+        this.dispatch({
+          type: 'COMPLETE_GENERATION',
+          metrics: this.takeTurnMetrics(conversationId),
+          conversationId,
+          response: response.text.trim() ? response.text : EMPTY_TURN_RECORD,
+          critique
+        })
+        this.persistConversation(conversationId)
+
+        return { ran: true, marked: reviewRevisionsFromFindings(findings), critique }
       }
 
-      // The revised script is not returned: the loop folds the conversation
-      // again after this round, and the rewrites are generations in it. The
-      // accumulator this used to hand back was a THIRD source for the script
-      // text, swapped in mid-run over the one the sections were written from.
-      return { ran: true, revised }
+      throw new Error(`The model never recorded a ${CRITIQUE_RECORD_TOOL}`)
     } catch (error) {
       // A user abort must still end the whole run, exactly as it does in
       // runOutlineCritique next door. Swallowing it here returns to a caller
@@ -2090,8 +2242,100 @@ export class RawScriptGenerationOrchestrator {
       if (abortSignal?.aborted) throw error
 
       console.warn('Style review pass failed; keeping the generated script as-is', error)
-      return { ran: false, revised }
+      return { ran: false, marked: [] }
     }
+  }
+
+  // One critique_record call, judged and stored. Accepting it closes the
+  // generation with the critique read back as prose, so what the pass decided
+  // is in the transcript and not only in the record; refusing it closes the
+  // generation with the refusal, because a generation stored with an empty
+  // response is dropped outright by the deployed parser and would take its
+  // prompt block with it (D1).
+  //
+  // The accepted record is written ONTO the generation, by the same action
+  // that closes it, because the generation is the only place a critique
+  // survives: the serializer, the parser, the library importer and the
+  // projection's findings fold all read it from there. Returning it to the
+  // caller and no more would leave every finding alive for the length of one
+  // call and gone from the reading view the moment the run ended.
+  private acceptCritiqueCall(
+    conversationId: string,
+    bodies: ReadonlyMap<string, CritiqueSectionBody>,
+    call: StreamedToolCall,
+    // The stage of the pass actually running. The model names a stage in its
+    // own arguments and that claim is not evidence: a style pass that calls
+    // itself a review is recorded as a review, and the reading view then tells
+    // the reader a finding came from a pass that never ran. The running pass
+    // knows which it is, so a claim that disagrees is refused like any other.
+    stage: CritiqueStage
+  ): { ok: true; critique: CritiqueRecord } | { ok: false; reason: string } {
+    const args = parseCritiqueToolCall(call.arguments)
+    if (!args) {
+      const reason =
+        `REFUSED: those ${CRITIQUE_RECORD_TOOL} arguments did not describe a critique. Call it ` +
+        'again with a stage, a verdict of "pass" or "revise", and the findings.'
+      this.dispatch({
+        type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
+        conversationId,
+        response: `No critique was recorded: ${reason}`,
+        toolCalls: [{ id: call.id, name: CRITIQUE_RECORD_TOOL, status: 'rejected', reason }]
+      })
+      this.persistConversation(conversationId)
+      return { ok: false, reason }
+    }
+
+    if (args.stage !== stage) {
+      const reason =
+        `REFUSED: this is the ${stage} pass, but the call named stage "${args.stage}". ` +
+        `Call ${CRITIQUE_RECORD_TOOL} again with stage "${stage}".`
+      this.dispatch({
+        type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
+        conversationId,
+        response: `No critique was recorded: ${reason}`,
+        toolCalls: [{ id: call.id, name: CRITIQUE_RECORD_TOOL, status: 'rejected', reason }]
+      })
+      this.persistConversation(conversationId)
+      return { ok: false, reason }
+    }
+
+    const accepted = acceptCritique(bodies, stage, args.verdict, args.findings)
+    if (!accepted.ok) {
+      this.dispatch({
+        type: 'COMPLETE_GENERATION',
+        metrics: this.takeTurnMetrics(conversationId),
+        conversationId,
+        response: `No critique was recorded: ${accepted.reason}`,
+        toolCalls: [{
+          id: call.id,
+          name: CRITIQUE_RECORD_TOOL,
+          status: 'rejected',
+          reason: accepted.reason
+        }]
+      })
+      this.persistConversation(conversationId)
+      return { ok: false, reason: accepted.reason }
+    }
+
+    this.dispatch({
+      type: 'COMPLETE_GENERATION',
+      metrics: this.takeTurnMetrics(conversationId),
+      conversationId,
+      response: renderCritique(accepted.critique),
+      critique: accepted.critique,
+      toolCalls: [{
+        id: call.id,
+        name: CRITIQUE_RECORD_TOOL,
+        status: 'accepted',
+        reason: accepted.critique.verdict === 'pass'
+          ? 'The style pass approved the script.'
+          : `The style pass marked ${accepted.critique.findings.length} section(s).`
+      }]
+    })
+    this.persistConversation(conversationId)
+    return { ok: true, critique: accepted.critique }
   }
 
   // On-demand whole-script review (story 8.14): judges the finished script as

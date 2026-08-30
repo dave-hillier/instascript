@@ -281,7 +281,15 @@ export const ConversationProvider = ({ children }: ConversationProviderProps) =>
 
   // Duplicates the source script's conversation (story 4.3): the copy gets
   // its own id and deep-copied generations, and is saved immediately since
-  // no generation run will save it
+  // no generation run will save it.
+  //
+  // The copy carries the model's findings, because they are part of the
+  // conversation and describe how these very bodies were written. It carries
+  // none of the reader's marks, because those live in localStorage keyed by
+  // script id and the copy has a new one (M3). That is the behaviour we want
+  // rather than an accident of where they are stored: a mark is about a body,
+  // and the duplicate exists precisely so its bodies can diverge from the ones
+  // the marks were pinned to.
   const duplicateConversation = useCallback((sourceScriptId: string, newScriptId: string): RawConversation => {
     const source = conversationsRef.current.find(conv => conv.scriptId === sourceScriptId)
     const conversation = duplicateRawConversation(source, newScriptId)

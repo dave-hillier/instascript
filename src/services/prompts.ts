@@ -332,6 +332,38 @@ export function getStyleRules(): string {
   return styleRulesPrompt.trim()
 }
 
+// The numbers the style rules actually carry, read off the one list rather
+// than restated. A critique cites rules by number, and a citation of "rule 27"
+// against a list of fourteen is a fabricated criterion rather than a
+// judgement — once recorded it is indistinguishable from a real one, so the
+// acceptance rules refuse it. Reading the numbers here, from the same file the
+// script is written and judged against, is what keeps the number meaning one
+// thing everywhere: adding a rule to the file adds it here, and nothing has to
+// be kept in step by hand.
+export function styleRuleNumbers(): readonly number[] {
+  const numbers: number[] = []
+  for (const line of getStyleRules().split('\n')) {
+    const match = line.match(/^\s*(\d+)\.\s+\S/)
+    if (!match) continue
+    const value = Number(match[1])
+    if (!numbers.includes(value)) numbers.push(value)
+  }
+  return numbers
+}
+
+// Whether a cited number names a style rule.
+export function isStyleRuleNumber(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && styleRuleNumbers().includes(value)
+}
+
+// The rules as a range the refusal can quote back, e.g. "1-14". Built from the
+// numbers themselves so it cannot claim a range the file does not carry.
+export function styleRuleRange(): string {
+  const numbers = styleRuleNumbers()
+  if (numbers.length === 0) return 'none'
+  return `${Math.min(...numbers)}-${Math.max(...numbers)}`
+}
+
 // The critique request for the style-review pass: the consolidated script
 // plus the system prompt's own style rules, asking for one strict
 // line-oriented verdict per section

@@ -690,3 +690,146 @@ describe('sanitizeGenerationRound', () => {
     }
   })
 })
+
+describe('the critique a judging generation recorded', () => {
+  const critiqueConversation = (critique: unknown): RawConversation => ({
+    id: 'conv_critique',
+    scriptId: 'script_critique',
+    createdAt: 1000,
+    updatedAt: 3000,
+    generations: [
+      {
+        messages: [{ role: 'user', content: 'review this script' }],
+        response: 'The style pass marked 1 section.',
+        timestamp: 1700,
+        critique: critique as RawConversation['generations'][number]['critique']
+      }
+    ]
+  })
+
+  const fullCritique = {
+    stage: 'style' as const,
+    verdict: 'revise' as const,
+    findings: [{
+      section: 'Deepening',
+      rules: [6],
+      spans: [{ quote: 'drift down and down', before: 'Let yourself ', after: '.', occurrence: 1 }],
+      revisions: 2,
+      reason: 'Ocean imagery.'
+    }]
+  }
+
+  it('round-trips a critique through serialize and parse', () => {
+    const parsed = parseConversationFromYamlMarkdown(
+      serializeConversationToYamlMarkdown(critiqueConversation(fullCritique))
+    )
+
+    expect(parsed!.generations[0].critique).toEqual(fullCritique)
+  })
+
+  it('round-trips an approving critique, which is what makes an approval durable', () => {
+    const approval = { stage: 'style' as const, verdict: 'pass' as const, findings: [] }
+    const parsed = parseConversationFromYamlMarkdown(
+      serializeConversationToYamlMarkdown(critiqueConversation(approval))
+    )
+
+    expect(parsed!.generations[0].critique).toEqual(approval)
+  })
+
+  it('is stable across serialize -> parse -> serialize, with and without a critique', () => {
+    for (const critique of [undefined, fullCritique]) {
+      const once = serializeConversationToYamlMarkdown(critiqueConversation(critique))
+      const twice = serializeConversationToYamlMarkdown(parseConversationFromYamlMarkdown(once)!)
+      expect(twice).toBe(once)
+    }
+  })
+
+  // These read RAW YAML rather than round-tripping, because the serializer
+  // sanitizes on the way out too: a file written by a newer build, or hand
+  // edited, is what the read side actually has to survive.
+  const yamlWithCritique = (critique: string): string => [
+    '---',
+    'type: conversation',
+    'id: conv_critique',
+    'scriptId: script_critique',
+    'createdAt: 1000',
+    'updatedAt: 3000',
+    '---',
+    '---',
+    'type: prompt',
+    'timestamp: 1700',
+    'role: user',
+    '---',
+    'review this script',
+    '',
+    '---',
+    'type: response',
+    'timestamp: 1700',
+    'role: assistant',
+    critique,
+    '---',
+    'The style pass marked 1 section.',
+    ''
+  ].join('\n')
+
+  it('drops a record that names no stage this build knows, keeping the generation', () => {
+    const parsed = parseConversationFromYamlMarkdown(yamlWithCritique(
+      'critique:\n  stage: reading\n  verdict: pass\n  findings: []'
+    ))
+
+    expect(parsed!.generations).toHaveLength(1)
+    expect(parsed!.generations[0].response).toBe('The style pass marked 1 section.')
+    expect(parsed!.generations[0].critique).toBeUndefined()
+  })
+
+  it('drops a malformed finding and keeps the rest of the critique', () => {
+    const parsed = parseConversationFromYamlMarkdown(yamlWithCritique([
+      'critique:',
+      '  stage: style',
+      '  verdict: revise',
+      '  findings:',
+      '    - section: ""',
+      '      reason: no section',
+      '    - section: Deepening',
+      '      reason: Ocean imagery.',
+      '    - section: Awakening'
+    ].join('\n')))
+
+    expect(parsed!.generations[0].critique!.findings).toEqual([
+      { section: 'Deepening', reason: 'Ocean imagery.' }
+    ])
+  })
+
+  it('drops a span with no quote, since the context alone finds nothing', () => {
+    const parsed = parseConversationFromYamlMarkdown(yamlWithCritique([
+      'critique:',
+      '  stage: style',
+      '  verdict: revise',
+      '  findings:',
+      '    - section: Deepening',
+      '      spans:',
+      '        - before: "Let yourself "',
+      '          after: "."',
+      '          occurrence: 0',
+      '      revisions: 2',
+      '      reason: Ocean imagery.'
+    ].join('\n')))
+
+    const finding = parsed!.generations[0].critique!.findings[0]
+    expect(finding.spans).toBeUndefined()
+    // revisions goes with the spans it was recorded for: on its own it is a
+    // number about nothing
+    expect(finding.revisions).toBeUndefined()
+  })
+
+  it('reads a conversation written by a build that never heard of a critique', () => {
+    const serialized = serializeConversationToYamlMarkdown(critiqueConversation(fullCritique))
+    const withoutField = serialized.replace(/^critique:\n(?: {2}.*\n)*/gm, '')
+
+    const parsed = parseConversationFromYamlMarkdown(withoutField)
+
+    expect(parsed!.generations).toHaveLength(1)
+    expect(parsed!.generations[0].critique).toBeUndefined()
+    expect(parsed!.generations[0].response).toBe('The style pass marked 1 section.')
+  })
+})

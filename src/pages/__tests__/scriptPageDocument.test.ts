@@ -89,7 +89,15 @@ describe('getScriptDocument', () => {
         id: 'section_arrival',
         title: 'Arrival',
         content: 'The words arriving now',
-        wordCount: 4
+        wordCount: 4,
+        // The stored body was REPLACED once by the one now streaming, and a
+        // span pinned to it records that count: it is how a passage that was
+        // rewritten is later told apart from one that was never there.
+        revisions: 1,
+        // and while it is still arriving nothing may judge it — half the
+        // prose has not been written yet, so a mark placed against it would
+        // report passages gone that are merely late
+        isLive: true
       }
     ])
     expect(document.isGenerating).toBe(true)

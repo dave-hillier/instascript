@@ -5,13 +5,17 @@ import {
   OUTLINE_WRITE,
   SECTION_WRITE,
   SECTION_REVISE,
+  CRITIQUE_RECORD,
   GROUNDING_SELECT_TOOL,
   OUTLINE_WRITE_TOOL,
   SECTION_WRITE_TOOL,
-  SECTION_REVISE_TOOL
+  SECTION_REVISE_TOOL,
+  CRITIQUE_RECORD_TOOL,
+  CRITIQUE_STAGES
 } from '../writingTools'
 import type { ToolSpec } from '../writingTools'
 import { SECTION_TARGET_WORDS, SECTION_MIN_WORDS, SECTION_MAX_WORDS } from '../sectionQuality'
+import { SPAN_MIN_CHARS, SPAN_QUOTE_MAX } from '../span'
 
 // The wire type leaves `parameters` as an open record, so the tests read it
 // back through the JSON Schema shape we actually emit.
@@ -22,6 +26,7 @@ interface JsonSchema {
   required?: string[]
   items?: JsonSchema
   description?: string
+  enum?: string[]
 }
 
 const schemaOf = (tool: ToolSpec): JsonSchema => tool.function.parameters as unknown as JsonSchema
@@ -40,12 +45,13 @@ const expectClosedObjectSchema = (schema: JsonSchema, required: string[]): void 
 }
 
 describe('the writing tools', () => {
-  it('offers the four tools in pipeline order', () => {
+  it('offers the five tools in pipeline order, with the critique last', () => {
     expect(WRITING_TOOLS.map(tool => tool.function.name)).toEqual([
       GROUNDING_SELECT_TOOL,
       OUTLINE_WRITE_TOOL,
       SECTION_WRITE_TOOL,
-      SECTION_REVISE_TOOL
+      SECTION_REVISE_TOOL,
+      CRITIQUE_RECORD_TOOL
     ])
   })
 
@@ -131,5 +137,44 @@ describe('section_revise', () => {
 
   it('is only for a section that already exists', () => {
     expect(SECTION_REVISE.function.description).toMatch(/never for a section that has not been written/)
+  })
+})
+
+describe('critique_record', () => {
+  const schema = schemaOf(CRITIQUE_RECORD)
+  const properties = schema.properties as Record<string, JsonSchema>
+  const finding = (properties.findings.items) as JsonSchema
+  const findingProperties = finding.properties as Record<string, JsonSchema>
+
+  it('requires a stage, a verdict and the findings', () => {
+    expect(schema.required).toEqual(['stage', 'verdict', 'findings'])
+    expect(schema.additionalProperties).toBe(false)
+  })
+
+  it('offers exactly the stages a critique can judge', () => {
+    expect(properties.stage.enum).toEqual([...CRITIQUE_STAGES])
+    expect(properties.verdict.enum).toEqual(['pass', 'revise'])
+  })
+
+  it('makes only the section and the reason mandatory on a finding', () => {
+    // A finding about a section that is not written yet can quote nothing, and
+    // an outline critique cites no numbered style rule — so requiring either
+    // would make an honest finding impossible to record.
+    expect(finding.required).toEqual(['section', 'reason'])
+    expect(finding.additionalProperties).toBe(false)
+    expect(Object.keys(findingProperties)).toEqual(['section', 'rules', 'spans', 'reason'])
+  })
+
+  it('tells the model the span must be the section\'s own characters', () => {
+    const description = CRITIQUE_RECORD.function.description ?? ''
+    expect(description).toContain('CHARACTER FOR CHARACTER')
+    expect(description).toMatch(/do not rewrite a section/i)
+    expect(findingProperties.spans.description).toContain('CHARACTER FOR CHARACTER')
+  })
+
+  it('states the span length bounds the acceptance rules enforce', () => {
+    const description = CRITIQUE_RECORD.function.description ?? ''
+    expect(description).toContain(String(SPAN_MIN_CHARS))
+    expect(description).toContain(String(SPAN_QUOTE_MAX))
   })
 })

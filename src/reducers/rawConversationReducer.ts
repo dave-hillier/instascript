@@ -1,4 +1,4 @@
-import type { RawConversation, ChatMessage, Generation, GenerationMetrics, GenerationPhase, GenerationRound, GenerationToolCall, ReviewReport, ScriptOutline } from '../types/conversation'
+import type { CritiqueRecord, RawConversation, ChatMessage, Generation, GenerationMetrics, GenerationPhase, GenerationRound, GenerationToolCall, ReviewReport, ScriptOutline } from '../types/conversation'
 
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
@@ -6,7 +6,7 @@ export type RawConversationAction =
   | { type: 'SECTION_EDITED'; conversationId: string; generation: Generation }
   | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[]; round?: GenerationRound }
   | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number; toolCalls?: GenerationToolCall[] }
-  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; toolCalls?: GenerationToolCall[]; metrics?: GenerationMetrics }
+  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; toolCalls?: GenerationToolCall[]; metrics?: GenerationMetrics; critique?: CritiqueRecord }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
   | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
@@ -156,7 +156,20 @@ export const rawConversationReducer = (
                     // rewrites an already-completed generation (the prose
                     // section retry, when the first attempt won) carries no
                     // metrics, and must not erase the request's own record
-                    metrics: action.metrics ?? conv.generations[conv.generations.length - 1].metrics
+                    metrics: action.metrics ?? conv.generations[conv.generations.length - 1].metrics,
+                    // What a judging pass decided, on the generation that
+                    // recorded it. This is the ONLY way a critique reaches the
+                    // conversation: everything downstream — the serializer,
+                    // the parser, the library importer and the projection's
+                    // findings fold — reads it off the generation, so without
+                    // it a model's findings exist for the length of one
+                    // function call and are never drawn or reloaded.
+                    //
+                    // Same `?? existing` rule as its neighbours, for the same
+                    // reason: a completion carrying no critique is silent
+                    // about one rather than a claim that the pass decided
+                    // nothing.
+                    critique: action.critique ?? conv.generations[conv.generations.length - 1].critique
                   }
                 ],
                 updatedAt: Date.now()

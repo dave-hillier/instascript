@@ -1,7 +1,10 @@
-import type { FormEvent } from 'react'
+import { Fragment, type FormEvent } from 'react'
 import { BookmarkPlus, Check, Pencil, RotateCcw, ScanSearch, SlidersHorizontal, X } from 'lucide-react'
 import type { GenerationToolCallStatus } from '../types/conversation'
 import { sectionStatusNote } from '../services/scriptProjection'
+import { readBodySelection } from '../services/markStore'
+import { MarksPanel } from './MarksPanel'
+import type { SectionMark, SectionMarkView } from '../services/sectionMarkView'
 
 export interface DocumentSection {
   id: string
@@ -34,6 +37,26 @@ interface ScriptDocumentProps {
   onCancelEdit: () => void
   onEditSubmit: (event: FormEvent, sectionTitle: string) => void
   // Provenance and whole-script actions, shown once the script is finished
+  // Marks, decided in services/sectionMarkView and only rendered here: which
+  // passages are highlighted, what covers each stretch of text, and what each
+  // mark offers. Keyed by section title, as the projection keys sections.
+  markViews: Record<string, SectionMarkView>
+  marks: SectionMark[]
+  focusedMarkId: string | null
+  // The run element to bring into view, when the reader asked to be shown one
+  focusedRunKey: string | null
+  onFocusMark: (markId: string | null) => void
+  // The reader selected words in a section body. What they selected is read
+  // from the element that raised the event, never found by a global query.
+  onPassageSelected: (sectionTitle: string, selection: string) => void
+  // Why the last selection could not be marked, when it could not be
+  selectionNote: string | null
+  onSpendMark: (mark: SectionMark) => void
+  onDismissMark: (mark: SectionMark) => void
+  onRelabelMark: (mark: SectionMark, label: string) => void
+  onAnnotateMark: (mark: SectionMark, note: string) => void
+  dismissedCount: number
+  onRestoreDismissed: () => void
   informingExamples: { id: string; title: string }[]
   showScriptActions: boolean
   onReviewScript: () => void
@@ -61,13 +84,47 @@ export const ScriptDocument = ({
   onStartEdit,
   onCancelEdit,
   onEditSubmit,
+  markViews,
+  marks,
+  focusedMarkId,
+  focusedRunKey,
+  onFocusMark,
+  onPassageSelected,
+  selectionNote,
+  onSpendMark,
+  onDismissMark,
+  onRelabelMark,
+  onAnnotateMark,
+  dismissedCount,
+  onRestoreDismissed,
   informingExamples,
   showScriptActions,
   onReviewScript,
   onPromoteToExample,
   promotedFolder,
   reviewError
-}: ScriptDocumentProps) => (
+}: ScriptDocumentProps) => {
+  // Ref callback on the one run the reader asked to be shown, in the manner
+  // PerformanceMode follows the spoken paragraph: the element hands itself in,
+  // nothing is looked up, and nothing about the page is changed but where it
+  // is scrolled to.
+  const showMarkedPassage = (element: HTMLElement | null): void => {
+    if (!element) return
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    element.scrollIntoView({ block: 'center', behavior: prefersReducedMotion ? 'auto' : 'smooth' })
+  }
+
+  // The selection is read from the element the handler is on, so a drag that
+  // began outside this body cannot be pinned to words inside it.
+  const reportSelection = (
+    event: { currentTarget: HTMLElement },
+    sectionTitle: string
+  ): void => {
+    const selected = readBodySelection(event.currentTarget)
+    if (selected) onPassageSelected(sectionTitle, selected)
+  }
+
+  return (
   <section className="document-pane" aria-label="Script">
     {/* With titles hidden (story 2.5) the header stays in the DOM: the
         heading is visually hidden via CSS and the section actions reveal
@@ -171,14 +228,58 @@ export const ScriptDocument = ({
                 </div>
               </form>
             ) : (
-              <div>
-                {section.content
-                  .split('\n')
-                  .map((line, lineIndex) => ({ text: line, key: `line-${lineIndex}` }))
-                  .filter(({ text }) => !text.startsWith('## ') && text.trim())
-                  .map(({ text, key }) => (
-                    <p key={key}>{text}</p>
-                  ))}
+              /* Selecting words here is how a passage gets flagged. The
+                 handlers read the selection off this element and change
+                 nothing; every decision about what is drawn was made by
+                 sectionMarkView before the render began. */
+              <div
+                className="section-body"
+                onMouseUp={event => reportSelection(event, section.title)}
+                onKeyUp={event => reportSelection(event, section.title)}
+                onClick={event => reportSelection(event, section.title)}
+              >
+                {(markViews[section.title]?.paragraphs ?? []).map(paragraph => (
+                  <p key={paragraph.key}>
+                    {paragraph.runs.map(run =>
+                      run.markIds.length === 0 ? (
+                        <Fragment key={run.key}>{run.text}</Fragment>
+                      ) : (
+                        <mark
+                          key={run.key}
+                          id={run.key}
+                          data-mark-tone={run.tone}
+                          data-mark-focused={run.focused || undefined}
+                          ref={run.key === focusedRunKey ? showMarkedPassage : undefined}
+                        >
+                          {/* A <mark> is neither focusable nor interactive, so
+                              an aria-describedby pointing at the panel entry is
+                              not surfaced; what covers this passage is said in
+                              words instead, visually hidden. The wording is
+                              sectionMarkView's decision. */}
+                          <span className="sr-only">{run.announcement}</span>
+                          {run.text}
+                        </mark>
+                      )
+                    )}
+                  </p>
+                ))}
+                {/* Marking a passage must not be a mouse-only gesture. This
+                    button carries no handler of its own on purpose: the
+                    selection has to be read from the body element, and the
+                    click bubbling to the body's own handler is what hands that
+                    element in as currentTarget — nothing is looked up. The
+                    mousedown default is suppressed so pressing it does not
+                    clear the selection it is about to mark. */}
+                <p className="mark-selection">
+                  <button
+                    type="button"
+                    onMouseDown={event => event.preventDefault()}
+                    aria-label={`Mark the words selected in the ${section.title} section`}
+                  >
+                    <BookmarkPlus size={14} aria-hidden="true" />
+                    Mark selection
+                  </button>
+                </p>
               </div>
             )}
           </section>
@@ -199,6 +300,26 @@ export const ScriptDocument = ({
         </p>
       )}
     </article>
+
+    {/* Why a selection could not be marked, in the reader's own terms: a
+        passage too short to be found again, or one the body repeats */}
+    {selectionNote && (
+      <p className="selection-note" role="status">
+        {selectionNote}
+      </p>
+    )}
+
+    <MarksPanel
+      marks={marks}
+      focusedMarkId={focusedMarkId}
+      onFocusMark={onFocusMark}
+      onSpend={onSpendMark}
+      onDismiss={onDismissMark}
+      onRelabel={onRelabelMark}
+      onAnnotate={onAnnotateMark}
+      dismissedCount={dismissedCount}
+      onRestoreDismissed={onRestoreDismissed}
+    />
 
     {!isGenerating && (informingExamples.length > 0 || showScriptActions) && (
       <footer className="script-utility">
@@ -258,4 +379,5 @@ export const ScriptDocument = ({
       </p>
     )}
   </section>
-)
+  )
+}

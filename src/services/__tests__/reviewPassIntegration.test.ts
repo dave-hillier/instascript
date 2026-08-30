@@ -8,6 +8,10 @@ import { OUTLINE_CRITIQUE_SECTION_TITLE } from '../outlineCritique'
 import { buildLengthPlan } from '../scriptLength'
 import { parseOutline, consolidateSections } from '../conversationDocument'
 import { projectConversation } from '../scriptProjection'
+import {
+  parseConversationFromYamlMarkdown,
+  serializeConversationToYamlMarkdown
+} from '../conversationParser'
 import { SECTION_MAX_WORDS } from '../sectionQuality'
 import { rawConversationReducer } from '../../reducers/rawConversationReducer'
 import type { RawConversationState, RawConversationAction } from '../../reducers/rawConversationReducer'
@@ -157,12 +161,16 @@ const styleCritiqueGeneration = (generations: Generation[]): Generation | undefi
 const scriptReviewGeneration = (generations: Generation[]): Generation | undefined =>
   generations.find(generation => firstMessageOf(generation).includes('The brief was:'))
 
-// Each review pass dispatches its report, so the number of rewrites a test
-// provoked can be counted off the run instead of written down as a literal
+// The rewrites a test provoked, counted off the run instead of written down as
+// a literal. Only the whole-script review rewrites anything now — the style
+// pass marks and stops — and the two are told apart by the prebuilt summary
+// only the whole-script review sets (see ReviewReport.summary).
 const revisionsReported = (actions: RawConversationAction[]): number =>
   actions.reduce(
     (total, action) =>
-      action.type === 'REVIEW_PASS_COMPLETED' ? total + action.report.revised.length : total,
+      action.type === 'REVIEW_PASS_COMPLETED' && action.report.summary !== undefined
+        ? total + action.report.revised.length
+        : total,
     0
   )
 
@@ -171,7 +179,7 @@ const findGeneration = (generations: Generation[], phrase: string): Generation |
     firstMessageOf(generation).includes(phrase) || lastMessageOf(generation).includes(phrase))
 
 describe('style-review pass integration', () => {
-  it('critiques the finished script, revises violating sections and reports the outcome', async () => {
+  it('critiques the finished script, MARKS what it finds, and rewrites nothing', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { orchestrator, conversation, getState, actions, scriptUpdates } = createHarness(true)
 
@@ -185,18 +193,18 @@ describe('style-review pass integration', () => {
     const critiqueGeneration = styleCritiqueGeneration(finalConversation.generations)
     expect(critiqueGeneration).toBeDefined()
 
-    // The mock critique flags two sections, both revised via regeneration
+    // The mock critique flags two sections. They are MARKED, not rewritten:
+    // the report names them and the script is left exactly as it was written.
     const report = getState().reviewReport as ReviewReport
     expect(report).not.toBeNull()
     expect(report.conversationId).toBe(conversation.id)
     expect(report.revised).toHaveLength(2)
     expect(report.revised.map(entry => entry.ruleNumbers)).toEqual([[6], [9]])
 
-    // Outline + outline critique + one generation per planned section + style
-    // critique + one revision per flagged section, and nothing else. The total
-    // is derived from the run rather than written down, because a rejection
-    // loop moves it; nothing in this run provokes a rejection, so each section
-    // must be written exactly once and the total must come out exactly.
+    // Outline + outline critique + one generation per planned section + the
+    // style critique, and nothing else. The count is the assertion that the
+    // pass stopped rewriting: the old loop added one regeneration per flagged
+    // section, so a rewrite here would show up as two extra generations.
     const critique = outlineCritiqueGeneration(finalConversation.generations)
     expect(critique).toBeDefined()
     const planned = parseOutline((critique as Generation).response)?.sections ?? []
@@ -204,15 +212,28 @@ describe('style-review pass integration', () => {
     for (const section of planned) {
       expect(writingGenerations(finalConversation.generations, section.title)).toHaveLength(1)
     }
-    expect(finalConversation.generations)
-      .toHaveLength(1 + 1 + planned.length + 1 + report.revised.length)
+    expect(finalConversation.generations).toHaveLength(1 + 1 + planned.length + 1)
 
-    // The revision prompts carry the violation as an instruction
-    const revisionGeneration = findGeneration(finalConversation.generations, 'A style review found')
-    expect(revisionGeneration).toBeDefined()
-    const revisionPrompt = lastMessageOf(revisionGeneration as Generation)
-    expect(revisionPrompt).toContain('A style review found')
-    expect(revisionPrompt).toContain('style rule 6')
+    // No section was asked to rewrite itself for a style finding
+    expect(findGeneration(finalConversation.generations, 'A style review found')).toBeUndefined()
+
+    // And the marks reach the reading view. A pass whose findings only ever
+    // existed inside the function that made them would leave this empty, and
+    // the reader would be shown a script nothing had ever judged.
+    const projected = projectConversation(finalConversation)
+    expect(projected.findings).toEqual([
+      { stage: 'style', section: report.revised[0].sectionTitle, rules: [6], reason: report.revised[0].reason },
+      { stage: 'style', section: report.revised[1].sectionTitle, rules: [9], reason: report.revised[1].reason }
+    ])
+    // A prose critique quotes no passage — a VERDICT line names a section and
+    // a rule and points at nothing — so no span is invented for it
+    expect(projected.findings?.every(finding => finding.spans === undefined)).toBe(true)
+
+    // and they are still there when the conversation is read back off disk
+    const reloaded = parseConversationFromYamlMarkdown(
+      serializeConversationToYamlMarkdown(finalConversation)
+    )
+    expect(projectConversation(reloaded!).findings).toEqual(projected.findings)
 
     // The generation still completes normally
     expect(scriptUpdates.some(update => update.status === 'complete')).toBe(true)
@@ -451,11 +472,11 @@ describe('outline-critique step integration (story 8.9)', () => {
       expect(lastMessageOf(generation)).toContain(revisedDescription)
     }
 
-    // Outline + critique + one write per revised section + style critique +
-    // one rewrite per flagged section: no section was written twice, and no
-    // generation was written against the outline the critique replaced
-    const report = getState().reviewReport as ReviewReport
-    expect(generations).toHaveLength(1 + 1 + planned.length + 1 + report.revised.length)
+    // Outline + critique + one write per revised section + style critique: no
+    // section was written twice, and no generation was written against the
+    // outline the critique replaced. The style pass adds nothing beyond its
+    // own generation, because it marks rather than rewrites.
+    expect(generations).toHaveLength(1 + 1 + planned.length + 1)
 
     vi.restoreAllMocks()
   }, 30000)
@@ -674,33 +695,21 @@ describe('a planned run records the rounds it took', () => {
     expect(kinds[0]).toBe('outline')
     expect(kinds[1]).toBe('outline-critique')
     expect(kinds[2]).toBe('section')
-    // The style critique, and then the rewrites it asked for — which are
-    // stamped 'section', because a rewrite is a section revision whatever
-    // round it was performed inside. The stamp describes the work.
-    expect(kinds[kinds.length - 2]).toBe('style-critique')
-    expect(kinds[kinds.length - 1]).toBe('section')
-
-    // Same round NUMBER, though: they belong to the critique round, and the
-    // numbering the planner counts from must not gain a round nothing planned.
-    const critiqueRound = styleCritiqueGeneration(generations)!.round!.round
-    const rewrites = generations.slice(
-      generations.indexOf(styleCritiqueGeneration(generations)!) + 1
-    )
-    expect(rewrites.length).toBeGreaterThan(0)
-    for (const rewrite of rewrites) {
-      expect(rewrite.round).toEqual({ round: critiqueRound, kind: 'section' })
-    }
+    // The style critique is the LAST thing the run does. It used to be
+    // followed by the rewrites it asked for; it marks now and stops, so
+    // nothing follows it.
+    expect(kinds[kinds.length - 1]).toBe('style-critique')
+    expect(generations[generations.length - 1].round!.kind).toBe('style-critique')
   })
 
-  // BLOCKER 1. The pass rewrites sections, and the folds that skip a
-  // critique's prose used to skip the rewrites with it — so the reading view
-  // and the saved script showed the un-revised text while the pass reported
-  // success.
-  it('puts the style pass\'s rewrites into the script the reader sees and the file that is saved', async () => {
+  // BLOCKER 1, in the shape the pass now has. It rewrites nothing, so the
+  // failure the old test guarded against — the folds skipping the rewrites
+  // along with the critique's prose — cannot happen; what CAN still happen is
+  // the other half of it, a critique's own reply becoming a section of the
+  // script. Both folds have to leave the script exactly as it was written.
+  it('leaves the script exactly as it was written, and never folds its critique into it', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const revisedBody = 'The revised body the style pass paid for.'
-    const { orchestrator, conversation, getState, scriptUpdates } =
-      createHarness(true, [], revisedBody)
+    const { orchestrator, conversation, getState, scriptUpdates } = createHarness(true)
 
     await orchestrator.generateScript(
       { prompt: 'a relaxing script', conversationId: conversation.id },
@@ -708,23 +717,29 @@ describe('a planned run records the rounds it took', () => {
     )
 
     const generations = getState().conversations[0].generations
-    const rewrite = generations[generations.length - 1]
-    expect(rewrite.round!.kind).toBe('section')
-    const revisedTitle = (getState().reviewReport as ReviewReport).revised.slice(-1)[0].sectionTitle
-    expect(rewrite.response).toBe(`## ${revisedTitle}\n${revisedBody}`)
+    const critiqueGeneration = styleCritiqueGeneration(generations) as Generation
+    expect(generations[generations.length - 1]).toBe(critiqueGeneration)
 
-    // The reading view's fold
+    // The sections the reader sees are exactly the planned ones, each holding
+    // the body its own section round wrote
+    const planned = parseOutline((outlineCritiqueGeneration(generations) as Generation).response)
+      ?.sections ?? []
     const projected = projectConversation(getState().conversations[0])
-      .sections.find(section => section.title === revisedTitle)
-    expect(projected?.content).toBe(revisedBody)
+    expect(projected.sections.map(section => section.title))
+      .toEqual(planned.map(section => section.title))
+    for (const section of planned) {
+      const written = writingGenerations(generations, section.title)[0]
+      expect(projected.sections.find(entry => entry.title === section.title)?.content)
+        .toBe(written.response.split('\n').slice(1).join('\n').trim())
+    }
 
-    // The consolidation the prompts, the review pass and the export fold with
-    expect(consolidateSections(getState().conversations[0])
-      .find(section => section.title === revisedTitle)?.content).toBe(revisedBody)
+    // The consolidation the prompts and the export fold with agrees
+    expect(consolidateSections(getState().conversations[0]).map(section => section.title))
+      .toEqual(planned.map(section => section.title))
 
-    // And the script that was saved
+    // And nothing from the critique reached the saved script
     const saved = scriptUpdates.filter(update => update.status === 'complete').slice(-1)[0]
-    expect(saved.content).toContain(revisedBody)
+    expect(saved.content).not.toContain('VERDICT')
 
     vi.restoreAllMocks()
   }, 30000)

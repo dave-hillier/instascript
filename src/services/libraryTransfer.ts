@@ -6,7 +6,12 @@
 import type { Script } from '../types/script'
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
 import { sanitizeSelectionCounts } from './exampleCorpus'
-import { sanitizeGenerationToolCalls, sanitizeGenerationMetrics, sanitizeGenerationRound } from './conversationParser'
+import {
+  sanitizeGenerationToolCalls,
+  sanitizeGenerationMetrics,
+  sanitizeGenerationCritique,
+  sanitizeGenerationRound
+} from './conversationParser'
 
 export const LIBRARY_EXPORT_FORMAT = 'instascript-library'
 export const LIBRARY_EXPORT_VERSION = 1
@@ -136,6 +141,12 @@ const validateGeneration = (value: unknown, conversationId: string): Generation 
     // of telemetry, while throwing here would abort the import of an entire
     // library over it.
     metrics: sanitizeGenerationMetrics(value.metrics),
+    // Drop-not-throw again, and this one matters most of the three: a critique
+    // is written by a model, so a malformed one is the likeliest of all to
+    // arrive. validateMessage above THROWS, and a throw here would abort the
+    // import of an ENTIRE library over one unreadable judgement about one
+    // section of one script.
+    critique: sanitizeGenerationCritique(value.critique),
     // And again: a round record says why a generation was made. An import that
     // cannot read one loses the reason, not the writing.
     round: sanitizeGenerationRound(value.round)

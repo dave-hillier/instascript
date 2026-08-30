@@ -6,6 +6,8 @@ import {
   parseOutline
 } from './conversationDocument'
 import type {
+  CritiqueFinding,
+  CritiqueRecord,
   Generation,
   GenerationRound,
   GenerationToolCall,
@@ -57,6 +59,20 @@ export interface ProjectedSection {
   status?: GenerationToolCallStatus
   // The waiver's justification, as the tool handler worded it
   statusReason?: string
+  // How many times this body has been REPLACED, not how many times it was
+  // written: a section's first arrival leaves this absent, which reads as
+  // zero. A span pinned to a passage records this number, and comparing it
+  // against the section's count later is the only way to tell a quote the
+  // model repaired from a quote it mistyped — a quote that has vanished from a
+  // body nobody replaced was never there. Optional rather than required
+  // because the section shapes parseSections builds carry no count, and making
+  // them fabricate a zero is how a live splice would silently reset one.
+  revisions?: number
+  // True while this body is the one a generation is streaming right now, so a
+  // reader of the projection can decline to judge it. Half-arrived prose has
+  // lost every phrase that has not been written yet, and a span placed against
+  // it would report passages gone that are merely late.
+  isLive?: boolean
   // True when this body was folded out of markdown a RUN was streaming into
   // the conversation's LAST generation, with nothing to show that its stream
   // ended — so the body may be a fragment. See mayHaveBeenCutOff for what
@@ -90,7 +106,30 @@ export interface ProjectedDocument {
   // Every round this conversation has a record of, in the order they were
   // admitted, rejected generations included (see the module comment).
   rounds: GenerationRound[]
+  // What the judging passes marked, standing against the script as it now
+  // reads. These belong to the RUN — a model made them, in the conversation —
+  // which is why they fold out of the stored generations here rather than
+  // being kept beside the document.
+  //
+  // A later critique of the same stage REPLACES an earlier one whole: a style
+  // pass run twice has judged the script twice, and the older verdict is about
+  // a script that has since moved. Nothing is merged, because a finding the
+  // second pass did not repeat is a finding the second pass did not make.
+  //
+  // Optional, and projectConversation always sets it. What absent means is
+  // "no critique fold ran behind this document" — which a document assembled
+  // by hand for the planner, reading only rounds and sections, genuinely has
+  // not. Requiring an empty list there would spell "nobody judged this" and
+  // "judged and found nothing" the same way.
+  findings?: ProjectedFinding[]
   fullContent: string
+}
+
+// One finding as the document carries it: the stored finding plus the pass
+// that made it, so a reader can tell a style mark from a review mark without
+// consulting the generation it came out of.
+export interface ProjectedFinding extends CritiqueFinding {
+  stage: CritiqueRecord['stage']
 }
 
 // The generation currently streaming, if any. The projection splices its
@@ -125,6 +164,13 @@ export const sectionStatusNote = (
     ? `Kept outside the length window: ${section.statusReason}`
     : `Kept outside the length window at ${section.wordCount} words`
 }
+
+// How many times a section's body has been replaced. Absent is zero: a body
+// that has only ever been written once has been replaced no times, and every
+// reader has to agree about that or a span settles on one render and un-settles
+// on the next.
+export const sectionRevisions = (section: Pick<ProjectedSection, 'revisions'>): number =>
+  section.revisions ?? 0
 
 export const sectionSlug = (title: string): string =>
   `section_${title.toLowerCase().replace(/[^a-z0-9]/g, '_')}`
@@ -175,10 +221,20 @@ export const parseSections = (
 
 // A section replaces any earlier one with the same title: that is how a
 // regeneration, a manual edit and a revise tool call all take effect.
+//
+// That replacement is also where the revision count comes from, and counting
+// it here rather than stamping it on the tool call is what gets every case
+// right for nothing: a wholly rejected attempt never reaches this function, so
+// three refusals followed by one acceptance count as the one replacement they
+// are; a waived body folds like any other and counts, because the body really
+// was replaced; and a manual edit, which arrives as plain markdown with no
+// tool call at all, counts too. It is derived from the stored conversation
+// alone, which is the requirement — a count that came out differently after a
+// reload would silently settle or un-settle every span on the section.
 const upsert = (sections: ProjectedSection[], section: ProjectedSection): void => {
   const existing = sections.findIndex(s => s.title === section.title)
   if (existing >= 0) {
-    sections[existing] = section
+    sections[existing] = { ...section, revisions: sectionRevisions(sections[existing]) + 1 }
   } else {
     sections.push(section)
   }
@@ -346,6 +402,9 @@ export function projectConversation(
 ): ProjectedDocument {
   const sections: ProjectedSection[] = []
   const rounds: GenerationRound[] = []
+  // Keyed by stage so the last critique of each pass wins, and insertion
+  // ordered so the passes come out in the order they last judged
+  const critiques = new Map<CritiqueRecord['stage'], ProjectedFinding[]>()
   let title: string | undefined
   let outline: ScriptOutline | undefined
   let outlineText: string | undefined
@@ -361,6 +420,17 @@ export function projectConversation(
     // Collected before anything else and from EVERY generation, refused
     // attempts included: a round that produced nothing still ran.
     if (generation.round) rounds.push(generation.round)
+    // Collected from EVERY generation for the same reason the rounds are: a
+    // critique is what a pass decided, and a pass that decided nothing needed
+    // changing still decided.
+    if (generation.critique) {
+      const record = generation.critique
+      critiques.delete(record.stage)
+      critiques.set(
+        record.stage,
+        record.findings.map(finding => ({ ...finding, stage: record.stage }))
+      )
+    }
 
     const calls = readToolCalls(generation)
     const folded = calls
@@ -394,7 +464,15 @@ export function projectConversation(
     ...sections.map(section => `## ${section.title}\n${section.content}`)
   ].filter(Boolean).join('\n\n')
 
-  return { title, outline, outlineText, sections, rounds, fullContent }
+  return {
+    title,
+    outline,
+    outlineText,
+    sections,
+    rounds,
+    findings: [...critiques.values()].flat(),
+    fullContent
+  }
 }
 
 // A critique is a reply ABOUT the script, not part of it. Before round records
@@ -481,10 +559,20 @@ const spliceLiveSection = (
     // truncationSuspect is dropped along with the body it described: it says
     // that the STORED body may have been cut short, and the body here is the
     // one arriving now. Nothing resumes from a section that is streaming.
-    const kept = { ...sections[existing], content: live.content, wordCount: live.wordCount }
+    //
+    // revisions is carried across untouched, and deliberately: it counts
+    // replacements the conversation records, and a stream still arriving has
+    // not recorded one. Recounting it here would move a span's settling test
+    // under it mid-stream.
+    const kept = {
+      ...sections[existing],
+      content: live.content,
+      wordCount: live.wordCount,
+      isLive: true
+    }
     delete kept.truncationSuspect
     sections[existing] = kept
   } else {
-    sections.push(live)
+    sections.push({ ...live, isLive: true })
   }
 }

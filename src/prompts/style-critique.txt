@@ -2,12 +2,18 @@ Review the hypnosis script below against the numbered style rules. Judge each se
 
 {styleRules}
 
-For every "##" section of the script, output exactly one line in one of these two formats:
+You are MARKING this script, not rewriting it. Record what you find and stop there: do not write, revise or improve a single section. A reader reads your findings and decides what to act on, and a finding they can disagree with is worth more than a rewrite they never saw.
+
+Record the critique by calling `critique_record` once, with stage "style":
+
+* Use verdict "pass", with no findings, when every section follows the rules.
+* Use verdict "revise" and one finding per section at fault. Name a section at most once, cite the rule numbers it breaks, and say in one line why.
+* Quote the passages at fault in `spans`. Each span must be copied CHARACTER FOR CHARACTER out of that section as it reads below — not paraphrased, not tidied, not summarised — long enough to appear exactly once in that section. A span that is too short, that cannot be found, or that appears more than once is refused with the fault named, and you must quote again.
+
+If no tools are available to you, reply instead with one line per section, in script order, in one of these two formats and nothing else — no preamble, no commentary, no code fences:
 
 VERDICT: <section title> | compliant
 VERDICT: <section title> | violates <rule numbers, comma-separated> | <one-line reason>
-
-Output only VERDICT lines, one per section, in script order — no preamble, no commentary, no code fences.
 
 Here is the script to review:
 

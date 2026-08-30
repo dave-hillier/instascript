@@ -1,7 +1,7 @@
 // The tool-name union lives with the tool declarations so the stored record
 // and the schemas sent to the model can never name different tools. This is a
 // type-only import, so it adds nothing to the runtime graph.
-import type { WritingToolName } from '../services/writingTools'
+import type { CritiqueStage, CritiqueVerdictName, WritingToolName } from '../services/writingTools'
 
 export interface GenerationRequest {
   prompt: string
@@ -194,6 +194,63 @@ export interface GenerationMetrics {
   aborted?: boolean
 }
 
+// One passage a finding quoted, anchored the way a reader's own flag is.
+//
+// The quote is the BODY's own slice, never the string the model typed: it is
+// measured against the section once, at the moment the critique is accepted,
+// and everything downstream re-finds it rather than re-deciding it. A quote
+// that could not be pinned never enters the record at all — the call carrying
+// it was refused and asked again.
+//
+// Plain structured-cloneable data, like GenerationToolCall:
+// duplicateRawConversation copies generations with structuredClone.
+export interface CritiqueSpan {
+  quote: string
+  // Up to SPAN_CONTEXT_CHARS of body immediately before and after the quote,
+  // so the passage can be re-found after the body around it has moved
+  before: string
+  after: string
+  // Which occurrence of the quote in that body this was, counting from zero
+  occurrence: number
+}
+
+// One fault a critique named, against one section.
+export interface CritiqueFinding {
+  // Exact section title the finding is against
+  section: string
+  // The numbered style rules the section breaks, where the pass cites any.
+  // Every number here named a rule at the moment it was accepted.
+  rules?: number[]
+  // Present only when the finding quoted a passage; a prose critique, and a
+  // finding about a section that is not written yet, carry none.
+  spans?: CritiqueSpan[]
+  // The section's replacement count when those spans were anchored, present
+  // exactly when `spans` is. Comparing it against the section's count now is
+  // what tells a passage the writer repaired from a passage that was never
+  // there.
+  revisions?: number
+  // Why the section is at fault, in one line
+  reason: string
+}
+
+// One recorded critique: what a judging pass decided, and why.
+//
+// It is stored on the generation the pass produced because it BELONGS TO THE
+// RUN — it is a judgement the model made, in the conversation, and it travels
+// with the conversation through export, import and duplication. A reader's own
+// flags are a different thing and are deliberately not stored here.
+//
+// An approving critique is stored too. Without it, a script that was judged
+// and approved and one that was never judged leave the same conversation
+// behind, and the round gate reading that conversation would ask for the same
+// pass again forever.
+export interface CritiqueRecord {
+  stage: CritiqueStage
+  verdict: CritiqueVerdictName
+  // Empty for a passing verdict
+  findings: CritiqueFinding[]
+}
+
 export interface Generation {
   messages: ChatMessage[] // Complete messages array sent to OpenAI
   response: string // Assistant response received
@@ -212,6 +269,11 @@ export interface Generation {
   // every generation stored before metrics existed, and on any generation
   // whose provider reported nothing.
   metrics?: GenerationMetrics
+  // The critique this generation recorded, when it was a judging pass that
+  // recorded one. Absent on every generation that wrote script rather than
+  // judging it, on a pass whose critique was never accepted, and on every
+  // generation stored before critiques were recorded.
+  critique?: CritiqueRecord
   // The planned round this generation was produced for, when it was produced
   // by a planned run at all. Absent on a manual section edit, on every
   // generation stored before rounds existed, and on the reader-initiated
@@ -256,9 +318,17 @@ export type GenerationPhase =
   | 'complete'
   | 'error'
 
-// One section rewritten by a review pass: the style pass (story 8.5) cites
-// the numbered style rules it violated, the whole-script review (story 8.14)
-// names why in a word ("cohesion", "length")
+// One section a review pass acted on. The two passes now mean different things
+// by it, and the name is kept only because the page and the exporter read it:
+//
+//  - the whole-script review (story 8.14) still REWRITES, so an entry is a
+//    section it rewrote, and `reason` names why in a word ("cohesion",
+//    "length");
+//  - the style pass (story 8.5) no longer rewrites anything. An entry there is
+//    a section it MARKED — a finding it recorded, citing the numbered style
+//    rules the section breaks — and the script is exactly as the reader left
+//    it. Acting on the finding is the reader's decision, which is the whole
+//    point of the pass quoting the passage rather than replacing it.
 export interface ReviewRevision {
   sectionTitle: string
   ruleNumbers?: number[]
@@ -268,6 +338,8 @@ export interface ReviewRevision {
 // The outcome of a review pass, shown on the script page until dismissed
 export interface ReviewReport {
   conversationId: string
+  // What the pass did, on the terms above: sections rewritten by the
+  // whole-script review, sections marked by the style pass
   revised: ReviewRevision[]
   // Prebuilt one-line outcome; the style pass leaves it unset and the page
   // formats its rule-based revisions instead

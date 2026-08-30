@@ -11,6 +11,9 @@ import {
   buildConversationHistory,
   getSystemPrompt,
   getStyleRules,
+  styleRuleNumbers,
+  isStyleRuleNumber,
+  styleRuleRange,
   getToolSystemPrompt,
   getToolOutlineGenerationPrompt,
   getToolSectionGenerationPrompt,
@@ -847,5 +850,43 @@ describe('the tool-mode prompts', () => {
     // The heading comes from the outline title, so there is nothing to say
     // about "##" headers or preambles any more
     expect(prompt).not.toContain('##')
+  })
+})
+
+describe('the numbers the style rules carry', () => {
+  it('reads them off style-rules.txt rather than restating them', () => {
+    const numbers = styleRuleNumbers()
+
+    expect(numbers.length).toBeGreaterThan(1)
+    // A contiguous run from one, which is what the file's numbered list is
+    expect(numbers).toEqual(numbers.map((_, index) => index + 1))
+    // Every number names a line that is actually in the file
+    for (const number of numbers) {
+      expect(getStyleRules()).toContain(`\n${number}. `)
+    }
+  })
+
+  it('recognises a rule the list carries and refuses one it does not', () => {
+    const numbers = styleRuleNumbers()
+
+    expect(isStyleRuleNumber(numbers[0])).toBe(true)
+    expect(isStyleRuleNumber(numbers[numbers.length - 1])).toBe(true)
+    expect(isStyleRuleNumber(numbers[numbers.length - 1] + 1)).toBe(false)
+    expect(isStyleRuleNumber(0)).toBe(false)
+    expect(isStyleRuleNumber(1.5)).toBe(false)
+    expect(isStyleRuleNumber('6')).toBe(false)
+    expect(isStyleRuleNumber(undefined)).toBe(false)
+  })
+
+  it('quotes the range back as the numbers the file actually has', () => {
+    const numbers = styleRuleNumbers()
+
+    expect(styleRuleRange()).toBe(`${numbers[0]}-${numbers[numbers.length - 1]}`)
+  })
+
+  it('does not mistake a sub-bullet of a rule for a rule of its own', () => {
+    // Rule 3's pacing marks are indented bullets, not numbered rules
+    expect(getStyleRules()).toContain('`…` = short pause')
+    expect(styleRuleNumbers()).not.toContain(0)
   })
 })
