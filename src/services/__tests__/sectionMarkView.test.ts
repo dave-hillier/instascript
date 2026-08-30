@@ -6,6 +6,11 @@ import {
   markRenderId,
   focusedRunKey,
   markPlacementNote,
+  markActionName,
+  markFaultNote,
+  markMadeNote,
+  markableUnits,
+  sentencesOf,
   spendCostNote,
   type MarkableSection,
   type SectionMark
@@ -610,6 +615,176 @@ describe('sectionMarkView', () => {
 
   // M4: a finding the reader paid a rewrite for is not one they dismissed. It
   // is hidden like one, but there is nothing to restore it to.
+  // Marking has to be reachable without a pointer. A selection cannot be made
+  // in non-editable prose from the keyboard at all — caret browsing is off by
+  // default and a page cannot turn it on — so there is nothing for a key
+  // handler on the body to read. The keyboard is given units instead.
+  describe('the passages a keyboard can mark', () => {
+    it('offers each paragraph, and each sentence inside a paragraph that has more than one', () => {
+      const body = [
+        '## Settling',
+        'Let the shoulders drop. Notice the weight of the hands.',
+        'The breath moves on its own, without any help from you at all.'
+      ].join('\n')
+
+      expect(markableUnits(section({ content: body })).map(unit => ({ kind: unit.kind, text: unit.text })))
+        .toEqual([
+          { kind: 'paragraph', text: 'Let the shoulders drop. Notice the weight of the hands.' },
+          { kind: 'sentence', text: 'Let the shoulders drop.' },
+          { kind: 'sentence', text: 'Notice the weight of the hands.' },
+          { kind: 'paragraph', text: 'The breath moves on its own, without any help from you at all.' }
+        ])
+    })
+
+    // The two units would carry identical text and mark exactly the same
+    // passage; a second button doing the same thing is a tab stop that teaches
+    // the reader nothing.
+    it('offers a one-sentence paragraph once', () => {
+      const units = markableUnits(section({ content: '## Settling\nOne paragraph only, and it is this one.' }))
+
+      expect(units).toHaveLength(1)
+      expect(units[0]?.kind).toBe('paragraph')
+    })
+
+    it('leaves out the heading the header already draws', () => {
+      expect(markableUnits(section()).every(unit => !unit.text.startsWith('## '))).toBe(true)
+    })
+
+    // The unit's text is what goes to resolveSpan, exactly as a dragged
+    // selection does, so a keyboard-made mark and a pointer-made mark are the
+    // same kind of thing and re-anchor by the same rule.
+    it('hands back text the body can be re-anchored on', () => {
+      for (const unit of markableUnits(section())) {
+        const resolved = resolveSpan(BODY, unit.text)
+        expect(resolved.ok).toBe(true)
+      }
+    })
+
+    // Length and uniqueness are the span layer's rules and this list is not a
+    // second opinion about them: a unit that fails one is refused out loud, in
+    // the same words a dragged selection is refused in. Hiding it would leave
+    // a paragraph the reader can see and cannot reach, with nothing said.
+    it('still offers a passage the span rules will refuse', () => {
+      const body = '## Settling\nStop. Stop. Breathe out slowly and let the jaw go.'
+      const units = markableUnits(section({ content: body }))
+
+      expect(units.map(unit => unit.text)).toContain('Stop.')
+      const short = resolveSpan(body, 'Stop.')
+      expect(short.ok).toBe(false)
+      if (!short.ok) expect(markFaultNote(short)).toContain(`at least ${16}`)
+    })
+
+    it('names each control by what pressing it would mark, and where', () => {
+      const units = markableUnits(section())
+
+      expect(units[0]?.name)
+        .toBe('Mark this whole paragraph in "Settling": Let the shoulders drop away from the ears, and notice the we\u2026')
+      expect(units.every(unit => unit.name.includes('Settling'))).toBe(true)
+    })
+
+    it('shortens a long passage for the button and for the name', () => {
+      const unit = markableUnits(section())[0]
+
+      expect(unit?.preview.length).toBeLessThanOrEqual(61)
+      expect(unit?.preview.endsWith('\u2026')).toBe(true)
+      expect(unit?.text.length).toBeGreaterThan(unit?.preview.length ?? 0)
+    })
+
+    // A live section shows no marks at all, so focusable controls over its
+    // paragraphs could only ever answer "not yet" (M4).
+    it('offers nothing while the section is being written', () => {
+      const marks = view({ sections: [section({ isLive: true })] })
+
+      expect(marks.bySection.Settling?.marking).toBeNull()
+    })
+
+    it('offers nothing for a section with no prose in it', () => {
+      const marks = view({ sections: [section({ content: '## Settling\n\n' })] })
+
+      expect(marks.bySection.Settling?.marking).toBeNull()
+    })
+
+    it('names the group by the section it marks into', () => {
+      expect(view().bySection.Settling?.marking?.summary).toBe('Mark a passage in "Settling"')
+    })
+
+    it('gives every control on the page a key of its own', () => {
+      const keys = markableUnits(section()).map(unit => unit.key)
+
+      expect(new Set(keys).size).toBe(keys.length)
+    })
+  })
+
+  // A refusal is announced; a success has to be too. The panel entry and the
+  // highlight are both silent to a reader who cannot see them.
+  describe('being told a passage was marked', () => {
+    it('says so, quoting what was marked', () => {
+      expect(markMadeNote('the weight of the hands')).toBe('Marked: the weight of the hands')
+    })
+
+    it('shortens a long passage the same way a control does', () => {
+      const long = 'Let the shoulders drop away from the ears, and notice the weight of the hands.'
+
+      expect(markMadeNote(long)).toBe('Marked: Let the shoulders drop away from the ears, and notice the we\u2026')
+    })
+  })
+
+  describe('cutting a paragraph into sentences', () => {
+    it('ends a sentence only where the terminator is followed by a space or the end', () => {
+      expect(sentencesOf('Breathe in for 4.5 counts. Then out again.'))
+        .toEqual(['Breathe in for 4.5 counts.', 'Then out again.'])
+    })
+
+    it('keeps the closing punctuation that trails a terminator', () => {
+      expect(sentencesOf('"Let it go," she said. And it went\u2026 slowly. Yes!'))
+        .toEqual(['"Let it go," she said.', 'And it went\u2026 slowly.', 'Yes!'])
+    })
+
+    it('treats a paragraph with no terminator as one sentence', () => {
+      expect(sentencesOf('no full stop here at all')).toEqual(['no full stop here at all'])
+    })
+  })
+
+  // The panel lists marks one after another with the same buttons under each.
+  // A name that said only "Show" would be one of several identical names in
+  // the tab order, and a reader who cannot see which entry they are inside
+  // could not tell which mark they were about to spend a rewrite on.
+  describe('naming a mark\'s actions', () => {
+    const marked = (): SectionMark => {
+      const marks = view({ flags: [flag()] }).marks
+      const found = marks[0]
+      if (!found) throw new Error('no mark')
+      return found
+    }
+
+    it('says which mark, and on which section, in every action', () => {
+      const mark = marked()
+
+      for (const action of ['show', 'rename', 'spend', 'dismiss'] as const) {
+        expect(markActionName(mark, action)).toContain('Too abstract')
+        expect(markActionName(mark, action)).toContain('Settling')
+      }
+    })
+
+    it('says what a rewrite would cost before it is bought', () => {
+      const mark = marked()
+
+      expect(markActionName(mark, 'spend')).toContain(mark.spendNote)
+    })
+
+    it('tells discarding your own mark apart from dismissing the model\'s finding', () => {
+      const flagged = marked()
+      const findings = view({
+        findings: [finding({ spans: [spanFor(BODY, 'The breath moves on its own')] })]
+      }).marks
+      const found = findings[0]
+      if (!found) throw new Error('no finding')
+
+      expect(markActionName(flagged, 'dismiss')).toContain('Discard your mark')
+      expect(markActionName(found, 'dismiss')).toContain('The conversation keeps it.')
+    })
+  })
+
   describe('a finding already spent on a rewrite', () => {
     it('is not drawn again', () => {
       const quoted = finding({ spans: [spanFor(BODY, 'the weight of the hands')] })

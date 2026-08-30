@@ -124,12 +124,57 @@ export interface MarkedParagraph {
   runs: MarkRun[]
 }
 
+// One passage a reader can mark without a pointer.
+//
+// A mouse marks whatever was dragged over; a keyboard cannot make a selection
+// in non-editable prose at all without caret browsing, which is off by default
+// and which a page cannot turn on. So the keyboard is offered UNITS instead —
+// the paragraphs of the body and the sentences inside them — and marking one
+// sends its text down exactly the path a dragged selection takes. The cost is
+// granularity: a keyboard reader marks a whole sentence where a mouse could
+// have marked three words. The gain is that they can mark anything at all.
+export interface MarkableUnit {
+  // Whether this is a whole paragraph or one sentence out of one. The reading
+  // view draws the two differently — a sentence is indented under the
+  // paragraph it came from — and which is which is decided here rather than by
+  // counting positions in the list, where a paragraph of one sentence (offered
+  // once, as a sentence) would throw the count off.
+  kind: 'paragraph' | 'sentence'
+  // Identity within the rendered list. Derived from where the unit sits in the
+  // body, which is all it is: unlike a mark, a unit is not stored, not
+  // re-anchored, and does not outlive the render it was built for.
+  key: string
+  // The unit's text, verbatim from the body. This is what the control hands
+  // back, and it is resolved by resolveSpan exactly as a dragged selection is,
+  // so a keyboard-made mark and a pointer-made mark are the same kind of thing
+  // and are refused by the same rules with the same words.
+  text: string
+  // The unit as the button shows it, shortened so a paragraph-long name does
+  // not fill the line.
+  preview: string
+  // What the control is called. It has to say what pressing it would DO and to
+  // which words, because "Mark" repeated down a list names nothing.
+  name: string
+}
+
+// The keyboard's way into marking one section.
+export interface SectionMarkingView {
+  // The accessible name of the group the units sit in.
+  summary: string
+  units: MarkableUnit[]
+}
+
 export interface SectionMarkView {
   // The section's body as the view renders it: the paragraphs it already drew,
   // each cut into runs. A section with no marks comes back as one run per
   // paragraph, which is exactly what it rendered before marks existed.
   paragraphs: MarkedParagraph[]
   marks: SectionMark[]
+  // The units a keyboard reader can mark, or null when there are none to
+  // offer. Null while the section is being written: its body is a fragment, it
+  // shows no marks at all, and a list of focusable controls that only ever
+  // answer "not yet" is a worse tab stop than none.
+  marking: SectionMarkingView | null
 }
 
 export interface DocumentMarkView {
@@ -449,6 +494,121 @@ const paragraphRuns = (
   return runs
 }
 
+// Sentence terminators, and the closing punctuation allowed to trail one.
+//
+// A sentence ends at one of these only when what follows is whitespace or the
+// end of the paragraph AND the next word does not begin in lower case. The
+// second half is what keeps "4.5", "e.g. the shoulders" and a trailing ellipsis
+// mid-thought — "and it went\u2026 slowly" — from being cut in two.
+//
+// It errs towards fewer, longer units. A sentence that genuinely begins in
+// lower case is joined to the one before it, and an abbreviation followed by a
+// capital — "Dr. Cole" — is still cut wrongly. Both are survivable: a unit is
+// only a passage offered for marking, and one that reads oddly costs the
+// reader a press, where a missing one would cost them the passage.
+const SENTENCE_END = '.!?\u2026'
+const SENTENCE_TRAIL = '.!?\u2026"\u2019\u201d\')]'
+
+// A paragraph cut into sentences, each trimmed, with empties dropped.
+export const sentencesOf = (paragraph: string): string[] => {
+  const sentences: string[] = []
+  let start = 0
+  let index = 0
+  while (index < paragraph.length) {
+    if (!SENTENCE_END.includes(paragraph.charAt(index))) {
+      index += 1
+      continue
+    }
+    let end = index + 1
+    while (end < paragraph.length && SENTENCE_TRAIL.includes(paragraph.charAt(end))) end += 1
+    if (end < paragraph.length && !/\s/u.test(paragraph.charAt(end))) {
+      index = end
+      continue
+    }
+    let next = end
+    while (next < paragraph.length && /\s/u.test(paragraph.charAt(next))) next += 1
+    if (next < paragraph.length && /\p{Ll}/u.test(paragraph.charAt(next))) {
+      index = end
+      continue
+    }
+    sentences.push(paragraph.slice(start, end))
+    start = end
+    index = end
+  }
+  sentences.push(paragraph.slice(start))
+  return sentences.map(sentence => sentence.trim()).filter(sentence => sentence !== '')
+}
+
+// How much of a unit its button shows, and how much of it its name repeats.
+// Long enough to tell two sentences of a paragraph apart, short enough that a
+// screen reader is not read a whole paragraph before it says what the button
+// does.
+const UNIT_PREVIEW_CHARS = 60
+
+const preview = (text: string): string =>
+  text.length <= UNIT_PREVIEW_CHARS
+    ? text
+    : `${text.slice(0, UNIT_PREVIEW_CHARS).trimEnd()}\u2026`
+
+// The units of one section, in reading order.
+//
+// A paragraph comes first and then its sentences, because the two are
+// different objections: a paragraph that says the same thing twice is faulted
+// whole, while a single clumsy line is faulted on its own. A paragraph that is
+// one sentence is offered once — the two units would carry identical text and
+// mark exactly the same passage, and a second button that does the same thing
+// is a tab stop that teaches the reader nothing.
+//
+// Nothing here checks whether a unit CAN be marked. Length and uniqueness are
+// resolveSpan's rules, and this list is deliberately not a second opinion
+// about them: a unit that fails one is refused, out loud, in the same words a
+// dragged selection is refused in. Hiding it instead would leave a paragraph
+// the reader can see and cannot reach, with nothing said about why.
+export const markableUnits = (section: MarkableSection): MarkableUnit[] => {
+  const units: MarkableUnit[] = []
+  const add = (
+    kind: MarkableUnit['kind'],
+    key: string,
+    text: string
+  ): void => {
+    units.push({
+      kind,
+      key,
+      text,
+      preview: preview(text),
+      name: kind === 'paragraph'
+        ? `Mark this whole paragraph in "${section.title}": ${preview(text)}`
+        : `Mark this sentence in "${section.title}": ${preview(text)}`
+    })
+  }
+
+  for (const paragraph of bodyParagraphs(section.content)) {
+    const sentences = sentencesOf(paragraph.text)
+    const whole = paragraph.text.trim()
+    if (whole === '') continue
+    // A paragraph of one sentence is offered ONCE, as the paragraph. The two
+    // units would carry identical text and mark exactly the same passage, and
+    // a second button doing the same thing is a tab stop that teaches the
+    // reader nothing.
+    add('paragraph', `${paragraph.key}_unit_paragraph`, whole)
+    if (sentences.length < 2) continue
+    sentences.forEach((sentence, index) => {
+      add('sentence', `${paragraph.key}_unit_${index}`, sentence)
+    })
+  }
+  return units
+}
+
+// The keyboard's way into marking a section, or null when there is none to
+// offer: a body still being written shows no marks and settles nothing, and a
+// body with no prose in it has nothing to mark.
+export const sectionMarking = (section: MarkableSection): SectionMarkingView | null => {
+  if (section.isLive === true) return null
+  const units = markableUnits(section)
+  if (units.length === 0) return null
+  return { summary: `Mark a passage in "${section.title}"`, units }
+}
+
 // The whole document's marks, in one pass.
 //
 // One entry point rather than one call per section, because the ids have to be
@@ -521,7 +681,7 @@ export function documentMarkView(input: MarkViewInput): DocumentMarkView {
       if (carrier) mark.anchorRunKey = carrier.key
     }
     marks.push(...sectionMarks)
-    bySection[section.title] = { paragraphs, marks: sectionMarks }
+    bySection[section.title] = { paragraphs, marks: sectionMarks, marking: sectionMarking(section) }
   }
 
   // A finding can name a section the script does not have — a critique of an
@@ -545,25 +705,64 @@ export const focusedRunKey = (
   return marks.find(mark => mark.id === focusedMarkId)?.anchorRunKey ?? null
 }
 
-// Why the reader's selection could not be marked, in their terms.
+// Why the passage the reader chose could not be marked, in their terms.
 //
 // A refusal has to teach the reader the same rule the model is held to, or the
 // two halves of this feature would be marking passages by different rules: a
 // mark that cannot be found again after the words around it move is worse than
 // no mark, because it silently moves onto words nobody chose.
-export const selectionFaultNote = (
+//
+// The wording names no gesture. The same passage reaches here from a dragged
+// selection and from a keyboard reader pressing the button for a sentence, and
+// telling the second of them to "select a little more" would describe a thing
+// they cannot do.
+export const markFaultNote = (
   resolution: Extract<SpanResolution, { ok: false }>
 ): string => {
   switch (resolution.fault) {
     case 'short':
-      return `Select at least ${SPAN_MIN_CHARS} characters — that was ${resolution.chars}. A shorter passage cannot be found again once the words around it change.`
+      return `A mark must name at least ${SPAN_MIN_CHARS} characters — that passage is ${resolution.chars}. A shorter one cannot be found again once the words around it change.`
     case 'long':
       return `That is ${resolution.chars} characters; a mark holds at most ${SPAN_QUOTE_MAX}. Beyond that the objection is to the section rather than to a passage in it.`
     case 'ambiguous':
-      return `Those words appear ${resolution.matches} times in this section. Select a little more, so the mark names which one you meant.`
+      return `Those words appear ${resolution.matches} times in this section. Mark a longer passage, so the mark names which one you meant.`
     case 'absent':
-      return 'Those words are not in this section. A selection that crosses out of one section cannot be marked.'
+      return 'Those words are not in this section. A passage that crosses out of one section cannot be marked.'
     default:
-      return 'Nothing was selected.'
+      return 'No passage was chosen.'
   }
 }
+
+// What each of a mark's actions is called.
+//
+// Every name repeats the mark's own label and the section it is on. The panel
+// lists marks one after another with the same four buttons under each, and a
+// name that said only "Show", or "Dismiss this finding about the section", would
+// be one of several identical names in the tab order, leaving a reader who
+// cannot see which entry they are inside unable to tell which mark they are
+// about to spend a rewrite on.
+export type MarkAction = 'show' | 'rename' | 'spend' | 'dismiss'
+
+export const markActionName = (mark: SectionMark, action: MarkAction): string => {
+  const named = `"${mark.label}" on "${mark.section}"`
+  switch (action) {
+    case 'show':
+      return `Show the passage marked ${named}`
+    case 'rename':
+      return `Rename your mark ${named}`
+    case 'spend':
+      return `Rewrite "${mark.section}" for the mark ${named}. ${mark.spendNote}`
+    default:
+      return mark.kind === 'flag'
+        ? `Discard your mark ${named}`
+        : `Dismiss the finding ${named}. The conversation keeps it.`
+  }
+}
+
+// What the reader is told when a passage WAS marked.
+//
+// A refusal is announced and a success was not, which is a gap nobody notices
+// until they cannot see the page: the panel gains an entry and the passage
+// gains a highlight, and neither of those is announced. Said in the same
+// status region the refusals use, so one place carries the answer either way.
+export const markMadeNote = (quote: string): string => `Marked: ${preview(quote)}`

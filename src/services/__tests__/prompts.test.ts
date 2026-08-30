@@ -22,6 +22,8 @@ import {
   buildGenerationSystemPrompt,
   withGenerationSystemPrompt,
   buildStructureBlock,
+  buildOutlineCritiquePrompt,
+  buildScriptReviewPrompt,
   withStructureBlock,
   buildExampleTaggingPrompt
 } from '../prompts'
@@ -888,5 +890,61 @@ describe('the numbers the style rules carry', () => {
     // Rule 3's pacing marks are indented bullets, not numbered rules
     expect(getStyleRules()).toContain('`…` = short pause')
     expect(styleRuleNumbers()).not.toContain(0)
+  })
+})
+
+// Both judging passes ask for the critique the SAME way — one critique_record
+// call, with the stage of the pass that is running — because the model's
+// answer is read by one acceptance path. What differs between them is what
+// they may quote, and each prompt has to say which it is or the model spends a
+// turn being refused.
+describe('what the judging passes ask for', () => {
+  const outlinePrompt = buildOutlineCritiquePrompt(
+    'a relaxing script',
+    '# Deep Rest\n## Induction\nSettle the listener.',
+    buildLengthPlan()
+  )
+  const reviewPrompt = buildScriptReviewPrompt(
+    'a relaxing script',
+    'The script is 3,300 words.',
+    '# Deep Rest\n## Induction\nSettle.'
+  )
+
+  it('asks the outline critique to record its verdict under its own stage', () => {
+    expect(outlinePrompt).toContain('`critique_record`')
+    expect(outlinePrompt).toContain('stage "outline"')
+  })
+
+  it('tells the outline critique to quote nothing, because nothing is written', () => {
+    expect(outlinePrompt).toContain('Record NO spans')
+    expect(outlinePrompt).not.toMatch(/CHARACTER FOR CHARACTER/)
+  })
+
+  it('leaves the outline critique free to revise the plan it just judged', () => {
+    expect(outlinePrompt).toContain('`outline_write`')
+    expect(outlinePrompt).toContain('# Title')
+  })
+
+  it('keeps the prose answer a model without tools gives, for both passes', () => {
+    expect(outlinePrompt).toContain('If no tools are available to you')
+    expect(outlinePrompt).toContain('OUTLINE OK')
+    expect(reviewPrompt).toContain('If no tools are available to you')
+    expect(reviewPrompt).toContain('VERDICT: <section title> | cohesive')
+    expect(reviewPrompt).toContain('VERDICT: <section title> | revise |')
+  })
+
+  it('asks the whole-script review to record its verdict under its own stage', () => {
+    expect(reviewPrompt).toContain('`critique_record`')
+    expect(reviewPrompt).toContain('stage "review"')
+  })
+
+  it('asks the whole-script review to quote, because the script is written', () => {
+    expect(reviewPrompt).toContain('CHARACTER FOR CHARACTER')
+    expect(reviewPrompt).toContain('`spans`')
+  })
+
+  it('tells the whole-script review it is marking, not rewriting', () => {
+    expect(reviewPrompt).toContain('MARKING this script, not rewriting it')
+    expect(reviewPrompt).not.toContain('what the rewrite must do')
   })
 })

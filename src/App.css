@@ -3897,6 +3897,16 @@ article mark[data-mark-focused] {
   margin: 1.5rem 0;
 }
 
+/* The region is always in the document so a screen reader is already watching
+   it when the first mark lands. Collapsed rather than hidden while it has
+   nothing to say: display:none would take it out of the accessibility tree,
+   which is the one thing it must stay in. */
+.selection-note:empty {
+  border-left: 0;
+  padding: 0;
+  margin: 0;
+}
+
 .marks-panel {
   font-family: var(--font-ui);
   border-top: 1px solid var(--line);
@@ -4056,4 +4066,64 @@ article mark[data-mark-focused] {
   color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
+}
+
+/* The keyboard's way into marking a passage.
+   Closed, it is one tab stop per section; opened, one per paragraph and one
+   per sentence in it. Kept shut by default so the reading view stays prose:
+   a reader with a mouse never needs it, and a reader without one finds it
+   immediately after the section it belongs to. */
+.mark-units {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.mark-units > summary {
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 0.125rem 0;
+}
+
+.mark-units > summary:hover,
+.mark-units > summary:focus-visible {
+  color: var(--ink);
+}
+
+.mark-units ul {
+  list-style: none;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mark-units li button {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--ink-muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+/* A sentence is indented under the paragraph it came from, so the coarse unit
+   and the fine ones inside it read as what they are rather than as one flat
+   list. Which is which is the view model's answer, carried on the item. */
+.mark-units li[data-unit-kind="sentence"] button {
+  margin-left: 0.75rem;
+}
+
+.mark-units li button:hover,
+.mark-units li button:focus-visible {
+  color: var(--ink);
+  border-color: var(--accent);
 }

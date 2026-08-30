@@ -23,7 +23,8 @@ import { findingKey, loadMarks, saveMarks, type ReaderFlag } from '../services/m
 import {
   documentMarkView,
   focusedRunKey,
-  selectionFaultNote,
+  markFaultNote,
+  markMadeNote,
   type SectionMark
 } from '../services/sectionMarkView'
 import { resolveSpan } from '../services/span'
@@ -431,11 +432,14 @@ export const ScriptPage = ({
 
     const resolved = resolveSpan(section.content, selection)
     if (!resolved.ok) {
-      setSelectionNote(selectionFaultNote(resolved))
+      setSelectionNote(markFaultNote(resolved))
       return
     }
 
-    setSelectionNote(null)
+    // Said out loud, because nothing else about a successful mark is: the
+    // panel entry and the highlight are both silent to a reader who cannot
+    // see them, and this is the same region a refusal is announced in.
+    setSelectionNote(markMadeNote(resolved.anchor.quote))
     setFocusedMarkId(null)
     const flag: ReaderFlag = {
       id: `flag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,

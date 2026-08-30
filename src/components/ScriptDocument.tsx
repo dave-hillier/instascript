@@ -46,10 +46,13 @@ interface ScriptDocumentProps {
   // The run element to bring into view, when the reader asked to be shown one
   focusedRunKey: string | null
   onFocusMark: (markId: string | null) => void
-  // The reader selected words in a section body. What they selected is read
-  // from the element that raised the event, never found by a global query.
-  onPassageSelected: (sectionTitle: string, selection: string) => void
-  // Why the last selection could not be marked, when it could not be
+  // The reader chose a passage in a section body — by dragging over it, in
+  // which case the text is read off the element that raised the event and
+  // never found by a global query, or by pressing the control for one of the
+  // units the view model offers the keyboard. Both send the same thing: the
+  // words, for the page to resolve against that body.
+  onPassageSelected: (sectionTitle: string, passage: string) => void
+  // Why the last passage could not be marked, when it could not be
   selectionNote: string | null
   onSpendMark: (mark: SectionMark) => void
   onDismissMark: (mark: SectionMark) => void
@@ -228,10 +231,11 @@ export const ScriptDocument = ({
                 </div>
               </form>
             ) : (
-              /* Selecting words here is how a passage gets flagged. The
-                 handlers read the selection off this element and change
-                 nothing; every decision about what is drawn was made by
-                 sectionMarkView before the render began. */
+              <Fragment>
+              {/* Selecting words here is how a passage gets flagged. The
+                  handlers read the selection off this element and change
+                  nothing; every decision about what is drawn was made by
+                  sectionMarkView before the render began. */}
               <div
                 className="section-body"
                 onMouseUp={event => reportSelection(event, section.title)}
@@ -263,24 +267,73 @@ export const ScriptDocument = ({
                     )}
                   </p>
                 ))}
-                {/* Marking a passage must not be a mouse-only gesture. This
-                    button carries no handler of its own on purpose: the
-                    selection has to be read from the body element, and the
-                    click bubbling to the body's own handler is what hands that
+                {/* Where a dragged selection is committed. It is the POINTER
+                    path and only that: a keyboard cannot make a selection in
+                    this prose at all, so pressing it without one truthfully
+                    reports that no passage was chosen, and the keyboard's own
+                    way in is the unit list below.
+
+                    It carries no handler of its own on purpose: the selection
+                    has to be read from the body element, and the click
+                    bubbling to the body's own handler is what hands that
                     element in as currentTarget — nothing is looked up. The
                     mousedown default is suppressed so pressing it does not
                     clear the selection it is about to mark. */}
-                <p className="mark-selection">
-                  <button
-                    type="button"
-                    onMouseDown={event => event.preventDefault()}
-                    aria-label={`Mark the words selected in the ${section.title} section`}
-                  >
-                    <BookmarkPlus size={14} aria-hidden="true" />
-                    Mark selection
-                  </button>
-                </p>
+                {/* Gated on the same decision the unit list is gated on: a
+                    section still being written, or one with no prose yet, has
+                    nothing markable in it, and a tab stop whose only possible
+                    answer is "not yet" is a dead one. */}
+                {markViews[section.title]?.marking && (
+                  <p className="mark-selection">
+                    <button
+                      type="button"
+                      onMouseDown={event => event.preventDefault()}
+                      aria-label={`Mark the words selected in the ${section.title} section`}
+                    >
+                      <BookmarkPlus size={14} aria-hidden="true" />
+                      Mark selection
+                    </button>
+                  </p>
+                )}
               </div>
+              {/* The keyboard's way in, which the selection above cannot be.
+                  A selection cannot be MADE in non-editable prose without
+                  caret browsing, which is off by default and which a page
+                  cannot turn on, so there is nothing for the body's key
+                  handler to read. These controls do not read a selection at
+                  all: each one carries the text of a paragraph or a sentence
+                  and hands it to the same resolution a drag goes through, so
+                  a keyboard-made mark is the same kind of thing as a
+                  pointer-made one and is refused by the same rules.
+
+                  They sit OUTSIDE the body element on purpose: a click inside
+                  it bubbles to the body's own selection handler, and a unit
+                  press would then be read as a selection as well.
+
+                  What the units are, what each is called, and whether there
+                  are any to offer at all are sectionMarkView's decisions — a
+                  section still being written offers none, so its prose gains
+                  no tab stops that could only answer "not yet". */}
+              {markViews[section.title]?.marking && (
+                <details className="mark-units">
+                  <summary>{markViews[section.title]?.marking?.summary}</summary>
+                  <ul>
+                    {(markViews[section.title]?.marking?.units ?? []).map(unit => (
+                      <li key={unit.key} data-unit-kind={unit.kind}>
+                        <button
+                          type="button"
+                          aria-label={unit.name}
+                          onClick={() => onPassageSelected(section.title, unit.text)}
+                        >
+                          <BookmarkPlus size={12} aria-hidden="true" />
+                          <span aria-hidden="true">{unit.preview}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              </Fragment>
             )}
           </section>
         ))
@@ -301,13 +354,17 @@ export const ScriptDocument = ({
       )}
     </article>
 
-    {/* Why a selection could not be marked, in the reader's own terms: a
-        passage too short to be found again, or one the body repeats */}
-    {selectionNote && (
-      <p className="selection-note" role="status">
-        {selectionNote}
-      </p>
-    )}
+    {/* What became of a mark, in the reader's own terms: the passage that was
+        marked, or why one could not be — too short to be found again, or one
+        the body repeats.
+
+        Rendered ALWAYS, empty until there is something to say. A live region
+        inserted into the document together with its text is commonly not
+        announced at all, and the first mark a reader makes is exactly when
+        they need to hear that it worked. */}
+    <p className="selection-note" role="status">
+      {selectionNote ?? ''}
+    </p>
 
     <MarksPanel
       marks={marks}

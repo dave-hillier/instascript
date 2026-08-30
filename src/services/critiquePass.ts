@@ -339,6 +339,29 @@ export function acceptCritique(
     }
 
     const claimed = finding.spans ?? []
+
+    // The outline pass judges a PLAN. Its sections are titles and one-line
+    // descriptions; not one word of the script has been written, so there is
+    // no body a quote could have been read off. A "quoted passage" here could
+    // only be a line of the plan passed off as a line of the script, or an
+    // invention — and once recorded neither is distinguishable from a passage
+    // the reader can go and find. So a finding at this stage carries a
+    // section, a reason and nothing else, and that is not a weaker record: it
+    // is the whole of what a critique of a plan honestly knows.
+    //
+    // Where a body DOES exist the quote is still held to every rule below: it
+    // must be found in that body, character for character, and exactly once.
+    // What is deliberately not required is that every finding carry one — a
+    // section that restates the section before it is at fault as a whole, and
+    // forcing a quote out of it would make the pass point at an arbitrary
+    // sentence to say something true about all of them.
+    if (stage === 'outline' && claimed.length > 0) {
+      return refuse(
+        `the outline pass judges a plan, and "${finding.section}" is not written yet, so there ` +
+        'is nothing in it to quote; record the finding as a section and a reason, without spans.'
+      )
+    }
+
     const written = bodies.get(finding.section)
     if (claimed.length > 0 && written === undefined) {
       return refuse(

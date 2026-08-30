@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestrator'
 import type { RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
 import { MockAPIService } from '../mockApi'
-import { MAX_SCRIPT_REVIEW_REVISIONS, SCRIPT_REVIEW_SECTION_TITLE } from '../scriptReview'
+import { SCRIPT_REVIEW_SECTION_TITLE } from '../scriptReview'
 import { STYLE_REVIEW_SECTION_TITLE } from '../critiquePass'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from '../outlineCritique'
 import { buildLengthPlan } from '../scriptLength'
@@ -19,7 +19,6 @@ import type { RawConversation, ReviewReport, ChatMessage, Generation } from '../
 import type { ExampleScript } from '../exampleSearchService'
 import type { ProviderCallOptions } from '../scriptGenerationService'
 import type { Script } from '../../types/script'
-import { textFrames } from './fixtures/streamFake'
 
 // Sociable integration test for the style-review pass (story 8.5): the real
 // orchestrator and reducer, with the mock provider's streaming delays zeroed
@@ -44,15 +43,12 @@ interface Harness {
   sent: SentRequest[]
 }
 
-// The mock provider answers a REWRITE with the very same prose it wrote the
-// section with, so "did the revision land?" cannot be asked of it: the before
-// and the after are the same string. A test that has to tell them apart passes
-// `rewriteBody`, and every rewrite request — both review passes word their
-// instruction with "review found" — is answered with that instead.
+// Neither judging pass rewrites anything any more, so the harness has no
+// rewrite reply to script: every request it answers is one the run itself
+// asked for, straight from the mock provider.
 const createHarness = (
   reviewPassEnabled: boolean,
-  examples: ExampleScript[] = [],
-  rewriteBody?: string
+  examples: ExampleScript[] = []
 ): Harness => {
   const conversation: RawConversation = {
     id: 'conv-1',
@@ -110,9 +106,6 @@ const createHarness = (
       options?: ProviderCallOptions
     ) => {
       sent.push({ label: request.sectionTitle, messages })
-      if (rewriteBody && request.prompt.includes('review found')) {
-        return textFrames(rewriteBody)
-      }
       return provider.regenerateSection(request, messages, abortSignal, options)
     }
   }
@@ -160,19 +153,6 @@ const styleCritiqueGeneration = (generations: Generation[]): Generation | undefi
 
 const scriptReviewGeneration = (generations: Generation[]): Generation | undefined =>
   generations.find(generation => firstMessageOf(generation).includes('The brief was:'))
-
-// The rewrites a test provoked, counted off the run instead of written down as
-// a literal. Only the whole-script review rewrites anything now — the style
-// pass marks and stops — and the two are told apart by the prebuilt summary
-// only the whole-script review sets (see ReviewReport.summary).
-const revisionsReported = (actions: RawConversationAction[]): number =>
-  actions.reduce(
-    (total, action) =>
-      action.type === 'REVIEW_PASS_COMPLETED' && action.report.summary !== undefined
-        ? total + action.report.revised.length
-        : total,
-    0
-  )
 
 const findGeneration = (generations: Generation[], phrase: string): Generation | undefined =>
   generations.find(generation =>
@@ -272,7 +252,7 @@ describe('style-review pass integration', () => {
 })
 
 describe('on-demand whole-script review (story 8.14)', () => {
-  it('reviews the finished script for cohesion and length, then rewrites what it flags', async () => {
+  it('reviews the finished script for cohesion and length, MARKS what it finds, and rewrites nothing', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { orchestrator, conversation, getState, actions, scriptUpdates } = createHarness(false)
 
@@ -293,6 +273,8 @@ describe('on-demand whole-script review (story 8.14)', () => {
     }
     expect(written).toHaveLength(1 + planned.length)
 
+    const before = consolidateSections(getState().conversations[0])
+
     await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
 
     const generations = getState().conversations[0].generations
@@ -306,27 +288,43 @@ describe('on-demand whole-script review (story 8.14)', () => {
     expect(reviewPrompt).toContain('The length is on target.')
     expect(reviewGeneration.response).toContain('VERDICT:')
 
-    // A mock run lands inside the duration window, so only the section the
-    // review flags for cohesion is rewritten
+    // The section the review will not call cohesive is MARKED
     const report = getState().reviewReport as ReviewReport
     expect(report.conversationId).toBe(conversation.id)
     expect(report.revised).toHaveLength(1)
-    expect(report.revised[0].reason).toBe('cohesion')
-    expect(report.summary).toContain('rewrote 1 section')
+    expect(report.revised[0].reason).toContain('Re-inducts a listener who is already deep')
+    expect(report.summary).toContain('marked 1 section')
+    expect(report.summary).toContain('Nothing was rewritten')
     expect(report.summary).toContain(`close to the ${buildLengthPlan().targetMinutes} minute target`)
 
-    // The review adds its own exchange and one rewrite per flagged section on
-    // top of what the run had already written, and nothing besides
-    expect(generations).toHaveLength(1 + planned.length + 1 + report.revised.length)
+    // The review adds ONE generation — its own — and no rewrite. The count is
+    // the assertion that the pass stopped rewriting: the old loop added one
+    // regeneration per flagged section.
+    expect(generations).toHaveLength(1 + planned.length + 1)
+    expect(findGeneration(generations, 'does not sit right in the arc')).toBeUndefined()
 
-    // The rewrite carries the cohesion problem as its instruction
-    const revision = findGeneration(generations, 'does not sit right in the arc') as Generation
-    expect(revision).toBeDefined()
-    const revisionPrompt = lastMessageOf(revision)
-    expect(revisionPrompt).toContain('does not sit right in the arc')
-    expect(revisionPrompt).toContain('Re-inducts a listener who is already deep')
+    // The script the reader had is the script the reader still has
+    expect(consolidateSections(getState().conversations[0])).toEqual(before)
 
-    // The rewritten script is saved, and the run settles as complete
+    // And the marks reach the reading view, stamped with the pass that made
+    // them — the branch nothing could reach while the review recorded nothing
+    const projected = projectConversation(getState().conversations[0])
+    expect(projected.findings).toEqual([
+      {
+        stage: 'review',
+        section: report.revised[0].sectionTitle,
+        reason: report.revised[0].reason
+      }
+    ])
+    // A prose review quotes no passage, so no span is invented for it
+    expect(projected.findings?.every(finding => finding.spans === undefined)).toBe(true)
+
+    // and they survive a round trip through storage
+    const reloaded = parseConversationFromYamlMarkdown(
+      serializeConversationToYamlMarkdown(getState().conversations[0])
+    )
+    expect(projectConversation(reloaded!).findings).toEqual(projected.findings)
+
     const lastUpdate = scriptUpdates[scriptUpdates.length - 1]
     expect(lastUpdate.status).toBe('complete')
     expect(lastUpdate.content).toContain('## Awakening')
@@ -337,7 +335,7 @@ describe('on-demand whole-script review (story 8.14)', () => {
     vi.restoreAllMocks()
   }, 30000)
 
-  it('grows the sections with the most room when the script is under its duration target', async () => {
+  it('tells the reader a short script is short instead of padding it out for them', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { orchestrator, conversation, getState, scriptUpdates } = createHarness(false)
 
@@ -362,38 +360,21 @@ describe('on-demand whole-script review (story 8.14)', () => {
     await orchestrator.reviewScript(stored, 'a relaxing script')
 
     const generations = getState().conversations[0].generations
+    // The shortfall is still measured, and still stated to the model as fact
     expect(firstMessageOf(scriptReviewGeneration(generations) as Generation)).toContain('words short')
 
-    // Every rewrite slot is used, each with an explicit word target, and the
-    // section the review flagged also carries its cohesion problem
+    // It is reported to the reader, and nothing is written to fix it: the
+    // review exchange is the only generation the press added
     const report = getState().reviewReport as ReviewReport
-    expect(report.revised).toHaveLength(MAX_SCRIPT_REVIEW_REVISIONS)
-    expect(report.revised.map(entry => entry.reason)).toContain('cohesion and length')
     expect(report.summary).toContain(`under the ${buildLengthPlan().targetMinutes} minute target`)
+    expect(report.summary).toContain('Nothing was rewritten')
+    expect(generations).toHaveLength(stored.generations.length + 1)
+    expect(generations.some(generation => /approximately \d+ words/.test(lastMessageOf(generation))))
+      .toBe(false)
 
-    // The review exchange plus one rewrite per slot, on top of the four
-    // generations the stored conversation already held
-    expect(generations).toHaveLength(stored.generations.length + 1 + report.revised.length)
-
-    // Each rewrite states the section's measured length and asks for more than
-    // it has. Selecting the prompts by the growth instruction and then merely
-    // re-matching that instruction would assert nothing, so the numbers the
-    // instructions carry are what is checked: every target above its current
-    // count, and the current counts exactly the lengths of the thin sections
-    // as the document measures them.
-    const growth = /expand this section from (\d+) to approximately (\d+) words/
-    const growthPrompts = generations.map(lastMessageOf).filter(prompt => growth.test(prompt))
-    expect(growthPrompts).toHaveLength(MAX_SCRIPT_REVIEW_REVISIONS)
-    const currents: number[] = []
-    for (const prompt of growthPrompts) {
-      const [, current, target] = prompt.match(growth) as RegExpMatchArray
-      expect(Number(target)).toBeGreaterThan(Number(current))
-      currents.push(Number(current))
-    }
-    const measured = projectConversation(stored).sections.map(section => section.wordCount)
-    expect([...currents].sort((a, b) => a - b)).toEqual([...measured].sort((a, b) => a - b))
-
-    // The grown script is what gets saved
+    // The thin sections are untouched
+    expect(consolidateSections(getState().conversations[0]))
+      .toEqual(consolidateSections(stored))
     expect(scriptUpdates[scriptUpdates.length - 1].status).toBe('complete')
 
     vi.restoreAllMocks()
@@ -412,10 +393,10 @@ describe('on-demand whole-script review (story 8.14)', () => {
   })
 })
 
-// The review judges length and instructs rewrites against a target, so a
-// review that replans at the default would cut a correctly sized long script
+// The review judges length against a target, so a review that replanned at the
+// default would tell the reader a correctly sized long script runs long
 describe('the whole-script review honours the run length', () => {
-  it('judges and rewrites against the requested length, not the default', async () => {
+  it('judges against the requested length, not the default', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { orchestrator, conversation, getState } = createHarness(false)
 
@@ -620,16 +601,18 @@ describe('which requests the exemplars ride on', () => {
       expect(carriesExample(request.messages)).toBe(false)
     }
 
-    // Every prose request — the outline, each section and each review-driven
-    // rewrite — carries the corpus, and there are exactly that many of them:
-    // an equality, so an ungrounded extra request cannot hide inside a count
-    // that only had to be large enough
+    // Every prose request — the outline and each section — carries the corpus,
+    // and there are exactly that many of them: an equality, so an ungrounded
+    // extra request cannot hide inside a count that only had to be large
+    // enough. Neither judging pass writes prose any more, so nothing else is
+    // sent at all.
     const generations = getState().conversations[0].generations
     const critique = outlineCritiqueGeneration(generations) as Generation
     const planned = parseOutline(critique.response)?.sections ?? []
     expect(planned.length).toBeGreaterThan(1)
+    expect(actions.some(action => action.type === 'REVIEW_PASS_COMPLETED')).toBe(true)
     const prose = sent.filter(request => !judgingTitles.includes(request.label))
-    expect(prose).toHaveLength(1 + planned.length + revisionsReported(actions))
+    expect(prose).toHaveLength(1 + planned.length)
     for (const request of prose) {
       expect(carriesExample(request.messages)).toBe(true)
     }
@@ -868,35 +851,31 @@ describe('the whole-script review is a command that leaves a record', () => {
     await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
 
     const added = getState().conversations[0].generations.slice(beforeReview.length)
-    expect(added.length).toBeGreaterThan(0)
     // One round number for the whole press — the record a pipeline that ever
-    // switched the review on would read — and one kind per generation, saying
-    // what that generation IS: the review itself, then the section revisions
-    // it asked for.
-    expect(added.every(generation => generation.round!.round === lastRound + 1)).toBe(true)
+    // switched the review on would read — on the one generation the press
+    // writes. It asks for no rewrites, so there is nothing else to stamp.
+    expect(added).toHaveLength(1)
     expect(added[0].round).toEqual({ round: lastRound + 1, kind: 'review' })
-    expect(added.slice(1).every(generation => generation.round!.kind === 'section')).toBe(true)
-    expect(added.length).toBeGreaterThan(1)
   })
 
   // BLOCKER 2. Storage and the reading view have to say the same thing about
-  // what the script says: finalContent here is built from consolidateSections,
-  // and the reading view folds through projectConversation.
+  // what the script says: the content saved here is built from
+  // consolidateSections, and the reading view folds through
+  // projectConversation. A critique's own reply must not become a section of
+  // the script in either of them.
   it('leaves the two folds agreeing about the reviewed script', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const revisedBody = 'The revised body the whole-script review asked for.'
-    const { orchestrator, conversation, getState, scriptUpdates } =
-      createHarness(false, [], revisedBody)
+    const { orchestrator, conversation, getState, scriptUpdates } = createHarness(false)
 
     await orchestrator.generateScript(
       { prompt: 'a relaxing script', conversationId: conversation.id },
       conversation
     )
+    const before = consolidateSections(getState().conversations[0])
     await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
 
     const reviewed = getState().conversations[0]
-    const revised = (getState().reviewReport as ReviewReport).revised
-    expect(revised.length).toBeGreaterThan(0)
+    expect((getState().reviewReport as ReviewReport).revised.length).toBeGreaterThan(0)
 
     const projected = projectConversation(reviewed)
     expect(projected.sections.map(section => ({
@@ -904,14 +883,11 @@ describe('the whole-script review is a command that leaves a record', () => {
       content: section.content
     }))).toEqual(consolidateSections(reviewed))
 
-    // Including the rewrite itself: the saved script holds the revised body,
-    // not the one the review asked to be replaced
-    const rewrite = reviewed.generations[reviewed.generations.length - 1]
-    expect(rewrite.response).toContain(revisedBody)
+    // And both folds still hold exactly the script that was written: the
+    // review's own VERDICT lines are a critique, not a section
+    expect(consolidateSections(reviewed)).toEqual(before)
     const saved = scriptUpdates.filter(update => update.status === 'complete').slice(-1)[0]
-    expect(saved.content).toContain(revisedBody)
-    expect(projected.sections.find(section => section.title === revised.slice(-1)[0].sectionTitle)
-      ?.content).toBe(revisedBody)
+    expect(saved.content).not.toContain('VERDICT')
 
     vi.restoreAllMocks()
   }, 30000)

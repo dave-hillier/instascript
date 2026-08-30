@@ -26,6 +26,9 @@ import {
 import { projectConversation, isRejectedGeneration } from '../scriptProjection'
 import { buildConversationHistory, styleRuleNumbers } from '../prompts'
 import { STYLE_REVIEW_SECTION_TITLE } from '../critiquePass'
+import { OUTLINE_CRITIQUE_SECTION_TITLE } from '../outlineCritique'
+import { SCRIPT_REVIEW_SECTION_TITLE } from '../scriptReview'
+import { parseOutline } from '../conversationDocument'
 import { reanchorSpan, SPAN_CONTEXT_CHARS } from '../span'
 import {
   parseConversationFromYamlMarkdown,
@@ -63,6 +66,10 @@ type Reply =
   | { call: { name: string; args: string; id?: string; finishReason?: string | null } }
   | { prose: string }
 
+// A reply a test streams itself, for the turns the one-call fixture cannot
+// express — two calls in one turn, say
+type ScriptedReply = Reply | (() => AsyncGenerator<ProviderFrame, void, unknown>)
+
 interface Harness {
   orchestrator: RawScriptGenerationOrchestrator
   conversation: RawConversation
@@ -74,13 +81,15 @@ interface Harness {
   outlineRequests: Array<ProviderCallOptions | undefined>
 }
 
-const replyFrames = (reply: Reply) =>
-  'prose' in reply
+const replyFrames = (reply: ScriptedReply) =>
+  typeof reply === 'function'
+    ? reply()
+    : 'prose' in reply
     ? textFrames(reply.prose)
-    : toolCallFrames(reply.call.name, reply.call.args, {
-        id: reply.call.id ?? 'call_1',
-        finishReason: reply.call.finishReason === undefined ? 'tool_calls' : reply.call.finishReason
-      })
+      : toolCallFrames(reply.call.name, reply.call.args, {
+          id: reply.call.id ?? 'call_1',
+          finishReason: reply.call.finishReason === undefined ? 'tool_calls' : reply.call.finishReason
+        })
 
 // `body` decides what the double writes for a given section and attempt; it
 // returns a string for a tool call, or a prose reply when a test wants the
@@ -97,6 +106,10 @@ const createHarness = (
     // Returning null falls back to the ordinary `body` behaviour.
     outlineReply?: (attempt: number) => Reply | null
     sectionReply?: (sectionTitle: string, attempt: number) => Reply | null
+    // Answers the outline-critique request, which is a judging turn rather
+    // than a section: it is asked for by the same provider method and told
+    // apart by its marker title.
+    outlineCritiqueReply?: (attempt: number) => ScriptedReply | null
     examples?: ExampleScript[]
     // Runs the outline critique and the style-review pass, as the setting does
     reviewPassEnabled?: boolean
@@ -152,6 +165,12 @@ const createHarness = (
         sections.push({ sectionTitle: request.sectionTitle, messages, options: callOptions })
         const attempt = (attempts.get(request.sectionTitle) ?? 0) + 1
         attempts.set(request.sectionTitle, attempt)
+
+        if (request.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE) {
+          const critiqueReply = options.outlineCritiqueReply?.(attempt)
+          if (critiqueReply) return replyFrames(critiqueReply)
+        }
+
         options.onSectionStream?.(request.sectionTitle, attempt)
 
         const scripted = options.sectionReply?.(request.sectionTitle, attempt)
@@ -1623,5 +1642,451 @@ describe('the style pass records a critique rather than rewriting sections', () 
     for (const title of SECTIONS) {
       expect(callsFor(harness, title)).toHaveLength(1)
     }
+  })
+})
+
+// Two calls in one turn, which is what a model does when it judges the plan
+// and re-issues it in the same breath. The shared fixture carries one call per
+// stream; this is the same protocol with a second index alongside it.
+async function* twoCallFrames(
+  first: { name: string; args: string; id: string },
+  second: { name: string; args: string; id: string }
+): AsyncGenerator<ProviderFrame, void, unknown> {
+  yield { kind: 'firstToken', at: Date.now() }
+  const calls = [first, second]
+  for (let index = 0; index < calls.length; index++) {
+    const call = calls[index]
+    for (let i = 0; i < call.args.length; i += 7) {
+      yield {
+        kind: 'toolCall',
+        index,
+        id: call.id,
+        name: call.name,
+        argumentsDelta: call.args.slice(i, i + 7)
+      }
+    }
+  }
+  yield { kind: 'finished', reason: 'tool_calls' }
+}
+
+describe('the outline critique records what it found', () => {
+  const SECTIONS = ['Induction', 'Awakening']
+
+  const outlineCritiqueArguments = (findings: unknown[], verdict = 'revise'): string =>
+    JSON.stringify({ stage: 'outline', verdict, findings })
+
+  // A whole tool-written run with the optional passes on, answering the
+  // OUTLINE critique with `replies` in order. The style pass that follows it
+  // approves, so nothing it does can be mistaken for what this pass did.
+  const runWithOutlineCritiques = async (
+    replies: Array<Reply | (() => AsyncGenerator<ProviderFrame, void, unknown>)>
+  ) => {
+    let critiqueTurn = 0
+    const harness = createHarness({
+      sectionTitles: SECTIONS,
+      reviewPassEnabled: true,
+      sectionReply: sectionTitle => {
+        if (sectionTitle === STYLE_REVIEW_SECTION_TITLE) {
+          return {
+            call: {
+              name: CRITIQUE_RECORD_TOOL,
+              args: JSON.stringify({ stage: 'style', verdict: 'pass', findings: [] }),
+              id: 'call_style'
+            }
+          }
+        }
+        return null
+      },
+      outlineCritiqueReply: () => {
+        const reply = replies[critiqueTurn] ?? replies[replies.length - 1]
+        critiqueTurn += 1
+        return reply
+      }
+    })
+
+    await harness.orchestrator.generateScript(
+      { prompt: 'A deep rest script' },
+      harness.conversation
+    )
+    return { harness, critiqueTurns: () => critiqueTurn }
+  }
+
+  const outlineCritiqueCalls = (harness: Harness) =>
+    generationsOf(harness)
+      .flatMap(generation => generation.toolCalls ?? [])
+      .filter(call => call.name === CRITIQUE_RECORD_TOOL)
+
+  it('offers the tools on the outline-critique request, so the critique can be a call at all', async () => {
+    const { harness } = await runWithOutlineCritiques([
+      { call: { name: CRITIQUE_RECORD_TOOL, args: outlineCritiqueArguments([], 'pass'), id: 'call_o1' } }
+    ])
+
+    const request = harness.sections.find(
+      entry => entry.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE
+    )
+    expect(request?.options?.tools).toEqual(WRITING_TOOLS)
+  })
+
+  it('records an approving critique of the plan and leaves the plan alone', async () => {
+    const { harness, critiqueTurns } = await runWithOutlineCritiques([
+      { call: { name: CRITIQUE_RECORD_TOOL, args: outlineCritiqueArguments([], 'pass'), id: 'call_o1' } }
+    ])
+
+    expect(critiqueTurns()).toBe(1)
+    const recorded = outlineCritiqueCalls(harness).filter(call => call.id === 'call_o1')
+    expect(recorded.map(call => call.status)).toEqual(['accepted'])
+    // Named for the pass that ran, not for the one this code was copied from
+    expect(recorded[0].reason).toBe('The outline pass approved the script.')
+
+    // The plan the run wrote is the plan every section is written against
+    const document = projectConversation(harness.getState().conversations[0])
+    expect(document.sections.map(section => section.title)).toEqual(SECTIONS)
+  })
+
+  it('marks the plan, and the mark reaches the reading view stamped as the outline pass', async () => {
+    const { harness } = await runWithOutlineCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: outlineCritiqueArguments([
+            { section: 'Awakening', reason: 'Nothing plants the anchor this section pays off.' }
+          ]),
+          id: 'call_o1'
+        }
+      }
+    ])
+
+    const stored = harness.getState().conversations[0]
+    expect(projectConversation(stored).findings).toEqual([
+      {
+        stage: 'outline',
+        section: 'Awakening',
+        reason: 'Nothing plants the anchor this section pays off.'
+      }
+    ])
+
+    // and it is still there after a round trip through the file it is stored as
+    const reloaded = parseConversationFromYamlMarkdown(serializeConversationToYamlMarkdown(stored))
+    expect(projectConversation(reloaded!).findings)
+      .toEqual(projectConversation(stored).findings)
+  })
+
+  // The one rule this stage has that the others do not. Nothing is written
+  // yet, so a "quoted passage" could only be a line of the plan passed off as
+  // a line of the script, or an invention.
+  it('refuses a quoted passage, because no section is written yet', async () => {
+    const { harness, critiqueTurns } = await runWithOutlineCritiques([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: outlineCritiqueArguments([
+            { section: 'Awakening', spans: ['a passage nobody has written'], reason: 'Thin.' }
+          ]),
+          id: 'call_o1'
+        }
+      },
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: outlineCritiqueArguments([{ section: 'Awakening', reason: 'Thin.' }]),
+          id: 'call_o2'
+        }
+      }
+    ])
+
+    expect(critiqueTurns()).toBe(2)
+    const calls = outlineCritiqueCalls(harness).filter(call => call.id.startsWith('call_o'))
+    expect(calls.map(call => call.status)).toEqual(['rejected', 'accepted'])
+    expect(calls[0].reason).toContain('is not written yet')
+
+    // The refusal went back as a tool result on the retry, not as prose
+    const retry = harness.sections.filter(
+      entry => entry.sectionTitle === OUTLINE_CRITIQUE_SECTION_TITLE
+    )[1]
+    const turns = retry.options?.toolTurns ?? []
+    expect(turns.map(turn => turn.role)).toEqual(['assistant', 'tool'])
+    expect(turns[1].role === 'tool' && turns[1].content).toContain('is not written yet')
+
+    // And the finding that was finally recorded quotes nothing
+    const findings = projectConversation(harness.getState().conversations[0]).findings ?? []
+    expect(findings).toEqual([{ stage: 'outline', section: 'Awakening', reason: 'Thin.' }])
+  })
+
+  // Recording the critique is ADDITIVE: revising the plan is what this step
+  // has always done, and it still does it.
+  it('takes the revised plan from an outline_write call in the same turn as the critique', async () => {
+    const revised = ['Induction', 'Deepening', 'Return']
+    const { harness } = await runWithOutlineCritiques([
+      () => twoCallFrames(
+        {
+          name: CRITIQUE_RECORD_TOOL,
+          args: outlineCritiqueArguments([
+            { section: 'Awakening', reason: 'Carries the whole return on its own.' }
+          ]),
+          id: 'call_o1'
+        },
+        { name: OUTLINE_WRITE_TOOL, args: outlineArguments(revised), id: 'call_o_plan' }
+      )
+    ])
+
+    // Every section of the REVISED plan is written, and the superseded one is
+    // not: the critique's generation is what latest-outline-wins reads
+    const document = projectConversation(harness.getState().conversations[0])
+    expect(document.sections.map(section => section.title)).toEqual(revised)
+    expect(document.outline?.sections.map(section => section.title)).toEqual(revised)
+
+    // The critique is recorded on the same generation the revised plan is
+    const critiqued = generationsOf(harness).find(generation => generation.critique !== undefined)
+    expect(critiqued?.critique?.stage).toBe('outline')
+    expect(critiqued?.response.startsWith('# ')).toBe(true)
+    expect(parseOutline(critiqued!.response)?.sections.map(section => section.title))
+      .toEqual(revised)
+  })
+
+  // The prose path is not a failure mode: a model that cannot call tools still
+  // answers this step the way it always has.
+  it('still takes a revised plan written out in prose, recording no critique for it', async () => {
+    const { harness } = await runWithOutlineCritiques([
+      { prose: '# Deep Rest\n## Induction\nWhat Induction covers.\n## Return\nWhat Return covers.' }
+    ])
+
+    const document = projectConversation(harness.getState().conversations[0])
+    expect(document.sections.map(section => section.title)).toEqual(['Induction', 'Return'])
+    const findings = document.findings ?? []
+    expect(findings.some(finding => finding.stage === 'outline')).toBe(false)
+  })
+
+  // The gate the planner reads is the ROUND RECORD, not the critique, and
+  // recording one must not change when the pass fires.
+  it('does not critique the outline again when its record is already in the conversation', async () => {
+    const { harness } = await runWithOutlineCritiques([
+      { call: { name: CRITIQUE_RECORD_TOOL, args: outlineCritiqueArguments([], 'pass'), id: 'call_o1' } }
+    ])
+
+    const written = harness.getState().conversations[0].generations
+    const resumed = createHarness({ sectionTitles: SECTIONS, reviewPassEnabled: true })
+    resumed.conversation.generations.push(...written)
+
+    await resumed.orchestrator.generateScript(
+      { prompt: 'A deep rest script' },
+      resumed.conversation
+    )
+
+    // Not one further request: neither the outline critique nor the style pass
+    // ran a second time over a conversation that records both
+    expect(resumed.getState().conversations[0].generations).toHaveLength(written.length)
+    expect(resumed.sections.map(request => request.sectionTitle)).toEqual([])
+  })
+})
+
+describe('the whole-script review records what it found', () => {
+  const SECTIONS = ['Induction', 'Awakening']
+  const BODY = words(SECTION_TARGET_WORDS)
+
+  const reviewArguments = (findings: unknown[], verdict = 'revise'): string =>
+    JSON.stringify({ stage: 'review', verdict, findings })
+
+  // A finished tool-written script, then the reader's press of the review
+  // button, with the review request answered by `replies` in order.
+  const runWithReviews = async (replies: Array<Reply | null>) => {
+    let reviewTurn = 0
+    const harness = createHarness({
+      sectionTitles: SECTIONS,
+      body: () => BODY,
+      sectionReply: sectionTitle => {
+        if (sectionTitle !== SCRIPT_REVIEW_SECTION_TITLE) return null
+        const reply = replies[reviewTurn] ?? replies[replies.length - 1]
+        reviewTurn += 1
+        return reply
+      }
+    })
+
+    await harness.orchestrator.generateScript(
+      { prompt: 'A deep rest script' },
+      harness.conversation
+    )
+    const written = generationsOf(harness).length
+
+    await harness.orchestrator.reviewScript(
+      harness.getState().conversations[0],
+      'A deep rest script'
+    )
+
+    return { harness, reviewTurns: () => reviewTurn, written }
+  }
+
+  const reviewCalls = (harness: Harness) =>
+    generationsOf(harness)
+      .flatMap(generation => generation.toolCalls ?? [])
+      .filter(call => call.name === CRITIQUE_RECORD_TOOL)
+
+  it('offers the tools on the review request, so the review can be a call at all', async () => {
+    const { harness } = await runWithReviews([
+      { call: { name: CRITIQUE_RECORD_TOOL, args: reviewArguments([], 'pass'), id: 'call_r1' } }
+    ])
+
+    const request = harness.sections.find(
+      entry => entry.sectionTitle === SCRIPT_REVIEW_SECTION_TITLE
+    )
+    expect(request?.options?.tools).toEqual(WRITING_TOOLS)
+  })
+
+  it('pins the quoted passage to the section it names and rewrites nothing', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness, reviewTurns, written } = await runWithReviews([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: reviewArguments([
+            { section: 'Awakening', spans: [quote], reason: 'Never pays off the anchor.' }
+          ]),
+          id: 'call_r1'
+        }
+      }
+    ])
+
+    expect(reviewTurns()).toBe(1)
+    expect(reviewCalls(harness).map(call => call.status)).toEqual(['accepted'])
+    expect(reviewCalls(harness)[0].reason).toBe('The review pass marked 1 section(s).')
+
+    // The press adds ITS OWN generation and no other: the old pass rewrote up
+    // to three sections here, each of which was a generation
+    expect(generationsOf(harness)).toHaveLength(written + 1)
+    for (const title of SECTIONS) {
+      expect(callsFor(harness, title)).toHaveLength(1)
+    }
+
+    // The mark reaches the reading view, stamped with the pass that made it,
+    // and points at words that are really in the section it names
+    const stored = harness.getState().conversations[0]
+    const document = projectConversation(stored)
+    expect(document.findings).toEqual([
+      {
+        stage: 'review',
+        section: 'Awakening',
+        spans: [{
+          quote,
+          before: '',
+          after: BODY.slice(quote.length, quote.length + SPAN_CONTEXT_CHARS),
+          occurrence: 0
+        }],
+        revisions: 0,
+        reason: 'Never pays off the anchor.'
+      }
+    ])
+    const marked = document.sections.find(section => section.title === 'Awakening')!
+    expect(reanchorSpan(marked.content, document.findings![0].spans![0]))
+      .toMatchObject({ state: 'anchored' })
+
+    // and survives the file it is stored as
+    const reloaded = parseConversationFromYamlMarkdown(serializeConversationToYamlMarkdown(stored))
+    expect(projectConversation(reloaded!).findings).toEqual(document.findings)
+  })
+
+  it('refuses a critique that names a stage other than the review that is running', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness } = await runWithReviews([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: JSON.stringify({
+            stage: 'style',
+            verdict: 'revise',
+            findings: [{ section: 'Awakening', spans: [quote], reason: 'x' }]
+          }),
+          id: 'call_r1'
+        }
+      },
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: reviewArguments([{ section: 'Awakening', spans: [quote], reason: 'x' }]),
+          id: 'call_r2'
+        }
+      }
+    ])
+
+    const calls = reviewCalls(harness)
+    expect(calls.map(call => call.status)).toEqual(['rejected', 'accepted'])
+    expect(calls[0].reason).toContain('this is the review pass')
+    expect(projectConversation(harness.getState().conversations[0]).findings!
+      .map(finding => finding.stage)).toEqual(['review'])
+  })
+
+  it('refuses a quote the section does not carry, and asks again', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness, reviewTurns } = await runWithReviews([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: reviewArguments([
+            { section: 'Awakening', spans: ['a sentence the section never contained'], reason: 'x' }
+          ]),
+          id: 'call_r1'
+        }
+      },
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: reviewArguments([{ section: 'Awakening', spans: [quote], reason: 'x' }]),
+          id: 'call_r2'
+        }
+      }
+    ])
+
+    expect(reviewTurns()).toBe(2)
+    const calls = reviewCalls(harness)
+    expect(calls.map(call => call.status)).toEqual(['rejected', 'accepted'])
+    expect(calls[0].reason).toContain('was not found in "Awakening"')
+  })
+
+  it('still reads a prose review, as findings that quote nothing', async () => {
+    const { harness, written } = await runWithReviews([
+      { prose: 'VERDICT: Induction | cohesive\nVERDICT: Awakening | revise | Resets the depth.' }
+    ])
+
+    const report = harness.actions.find(action => action.type === 'REVIEW_PASS_COMPLETED')
+    expect(report && report.type === 'REVIEW_PASS_COMPLETED' && report.report.revised).toEqual([
+      { sectionTitle: 'Awakening', reason: 'Resets the depth.' }
+    ])
+    expect(reviewCalls(harness)).toHaveLength(0)
+    expect(generationsOf(harness)).toHaveLength(written + 1)
+
+    const findings = projectConversation(harness.getState().conversations[0]).findings ?? []
+    expect(findings).toEqual([
+      { stage: 'review', section: 'Awakening', reason: 'Resets the depth.' }
+    ])
+  })
+
+  // The reader's button is not gated by a round record, and recording a
+  // critique must not start gating it: a second press reviews the script again.
+  it('can be pressed again, and the later critique replaces the earlier one', async () => {
+    const quote = BODY.split(' ').slice(0, 6).join(' ')
+    const { harness } = await runWithReviews([
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: reviewArguments([{ section: 'Awakening', spans: [quote], reason: 'First press.' }]),
+          id: 'call_r1'
+        }
+      },
+      {
+        call: {
+          name: CRITIQUE_RECORD_TOOL,
+          args: reviewArguments([{ section: 'Induction', spans: [quote], reason: 'Second press.' }]),
+          id: 'call_r2'
+        }
+      }
+    ])
+
+    const afterFirst = generationsOf(harness).length
+    await harness.orchestrator.reviewScript(
+      harness.getState().conversations[0],
+      'A deep rest script'
+    )
+
+    expect(generationsOf(harness)).toHaveLength(afterFirst + 1)
+    const findings = projectConversation(harness.getState().conversations[0]).findings ?? []
+    expect(findings.map(finding => finding.reason)).toEqual(['Second press.'])
   })
 })

@@ -477,6 +477,113 @@ describe('acceptCritique', () => {
   })
 })
 
+// The outline pass judges a PLAN. Nothing is written, so a finding is a
+// section and a reason — and a "quoted passage" at that point could only be a
+// line of the plan passed off as a line of the script, or an invention.
+describe('acceptCritique at the outline stage', () => {
+  it('accepts a finding that names a section and a reason and quotes nothing', () => {
+    const accepted = acceptCritique(bodiesOf({}), 'outline', 'revise', [
+      { section: 'Awakening', reason: 'Nothing plants the anchor it pays off.' }
+    ])
+
+    expect(accepted).toEqual({
+      ok: true,
+      critique: {
+        stage: 'outline',
+        verdict: 'revise',
+        findings: [{ section: 'Awakening', reason: 'Nothing plants the anchor it pays off.' }]
+      }
+    })
+  })
+
+  it('accepts an approval of the plan, so an approved plan is not an unjudged one', () => {
+    expect(acceptCritique(bodiesOf({}), 'outline', 'pass', [])).toEqual({
+      ok: true,
+      critique: { stage: 'outline', verdict: 'pass', findings: [] }
+    })
+  })
+
+  it('refuses a quoted span, and says why there is nothing to quote', () => {
+    const accepted = acceptCritique(bodiesOf({}), 'outline', 'revise', [
+      { section: 'Awakening', spans: ['a passage nobody has written'], reason: 'Thin.' }
+    ])
+
+    expect(accepted.ok).toBe(false)
+    expect(accepted.ok === false && accepted.reason).toContain('is not written yet')
+    expect(accepted.ok === false && accepted.reason).toContain('without spans')
+  })
+
+  // The refusal is about the STAGE, not about the map being empty: a body that
+  // somehow exists is still no licence to quote out of it before the plan has
+  // been written.
+  it('refuses a span even where a body of that name exists', () => {
+    const accepted = acceptCritique(
+      bodiesOf({ Deepening: { body: DEEPENING_BODY } }),
+      'outline',
+      'revise',
+      [{ section: 'Deepening', spans: ['Your body grows heavy and slow'], reason: 'Thin.' }]
+    )
+
+    expect(accepted.ok).toBe(false)
+    expect(accepted.ok === false && accepted.reason).toContain('is not written yet')
+  })
+
+  // Every other rule still applies at this stage: the plan's own titles and a
+  // citation are judged exactly as they are for a written section.
+  it('still holds the finding to the rules every stage shares', () => {
+    expect(acceptCritique(bodiesOf({}), 'outline', 'revise', [
+      { section: 'Awakening', reason: '  ' }
+    ]).ok).toBe(false)
+    expect(acceptCritique(bodiesOf({}), 'outline', 'revise', [
+      { section: 'Awakening', rules: [INVENTED_RULE], reason: 'Thin.' }
+    ]).ok).toBe(false)
+    expect(acceptCritique(bodiesOf({}), 'outline', 'pass', [
+      { section: 'Awakening', reason: 'Thin.' }
+    ]).ok).toBe(false)
+  })
+})
+
+// The review pass judges the FINISHED script, so it quotes like the style pass
+// and is refused like it.
+describe('acceptCritique at the review stage', () => {
+  it('pins a verbatim quote out of the section it names', () => {
+    const quote = 'Your body grows heavy and slow'
+    const accepted = acceptCritique(
+      bodiesOf({ Deepening: { body: DEEPENING_BODY, revisions: 2 } }),
+      'review',
+      'revise',
+      [{ section: 'Deepening', spans: [quote], reason: 'Restates the section before it.' }]
+    )
+
+    expect(accepted.ok === true && accepted.critique.stage).toBe('review')
+    expect(accepted.ok === true && accepted.critique.findings[0].spans?.[0].quote).toBe(quote)
+    expect(accepted.ok === true && accepted.critique.findings[0].revisions).toBe(2)
+  })
+
+  it('accepts a whole-section finding that quotes nothing, because some faults have no passage', () => {
+    const accepted = acceptCritique(
+      bodiesOf({ Deepening: { body: DEEPENING_BODY } }),
+      'review',
+      'revise',
+      [{ section: 'Deepening', reason: 'The section as a whole repeats the one before it.' }]
+    )
+
+    expect(accepted.ok === true && accepted.critique.findings[0].spans).toBeUndefined()
+  })
+
+  it('refuses a quote the section does not carry', () => {
+    const accepted = acceptCritique(
+      bodiesOf({ Deepening: { body: DEEPENING_BODY } }),
+      'review',
+      'revise',
+      [{ section: 'Deepening', spans: ['a sentence the section never contained'], reason: 'x' }]
+    )
+
+    expect(accepted.ok).toBe(false)
+    expect(accepted.ok === false && accepted.reason).toContain('was not found in "Deepening"')
+  })
+})
+
 describe('renderCritique', () => {
   it('reads an approval back as an approval, and tells the model to stop', () => {
     expect(renderCritique({ stage: 'style', verdict: 'pass', findings: [] }))

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Check, Crosshair, Flag, Pencil, RotateCcw, ScanSearch, Undo2, X } from 'lucide-react'
-import { markPlacementNote, type SectionMark } from '../services/sectionMarkView'
+import { markActionName, markPlacementNote, type SectionMark } from '../services/sectionMarkView'
 
 interface MarksPanelProps {
   marks: SectionMark[]
@@ -101,7 +101,7 @@ export const MarksPanel = ({
                   {editing ? (
                     <form
                       className="mark-edit-form"
-                      aria-label={`Rename your mark on "${mark.section}"`}
+                      aria-label={markActionName(mark, 'rename')}
                       onSubmit={event => submitDraft(event, mark)}
                     >
                       <label htmlFor={`${mark.id}_label_input`}>Label</label>
@@ -140,7 +140,7 @@ export const MarksPanel = ({
                         <button
                           type="button"
                           aria-controls={mark.anchorRunKey}
-                          aria-label={`Show the marked passage in "${mark.section}"`}
+                          aria-label={markActionName(mark, 'show')}
                           onClick={() => onFocusMark(mark.id)}
                         >
                           <Crosshair size={14} aria-hidden="true" />
@@ -150,7 +150,7 @@ export const MarksPanel = ({
                       {mark.kind === 'flag' && (
                         <button
                           type="button"
-                          aria-label={`Rename your mark on "${mark.section}"`}
+                          aria-label={markActionName(mark, 'rename')}
                           onClick={() => setDraft({ markId: mark.id, label: mark.label, note: mark.reason })}
                         >
                           <Pencil size={14} aria-hidden="true" />
@@ -161,7 +161,7 @@ export const MarksPanel = ({
                         <button
                           type="button"
                           className="mark-spend"
-                          aria-label={`Rewrite "${mark.section}" for this mark. ${mark.spendNote}`}
+                          aria-label={markActionName(mark, 'spend')}
                           onClick={() => onSpend(mark)}
                         >
                           <RotateCcw size={14} aria-hidden="true" />
@@ -171,11 +171,7 @@ export const MarksPanel = ({
                       )}
                       <button
                         type="button"
-                        aria-label={
-                          mark.kind === 'flag'
-                            ? `Discard your mark on "${mark.section}"`
-                            : `Dismiss this finding about "${mark.section}". The conversation keeps it.`
-                        }
+                        aria-label={markActionName(mark, 'dismiss')}
                         onClick={() => onDismiss(mark)}
                       >
                         <X size={14} aria-hidden="true" />

@@ -3,11 +3,19 @@ Review the hypnosis script outline below against the user's brief. Judge it stri
 - Escalation arc: the sections build coherently, deepening and intensifying before the return to awareness
 - Section balance: each section can carry roughly {sectionWords} words on its own (the finished script aims at about {targetMinutes} minutes spoken, {totalWords} words), no section carries too much or too little of the plan, and no two sections duplicate each other's role
 
-If the outline needs no changes, respond with exactly this line and nothing else:
+Record what you find by calling `critique_record` once, with stage "outline":
+
+* Use verdict "pass", with no findings, when the plan needs no changes.
+* Use verdict "revise" and one finding per planned section at fault, naming the section by its exact title and saying in one line what is wrong with it.
+* Record NO spans. Not one word of this script is written yet, so there is no passage to quote; a finding here is a section and a reason. A span at this stage is refused.
+
+The plan itself is still yours to fix. If it needs changing, write the whole revised plan in the same turn — call `outline_write` with the complete plan, or write it out below as a `# Title` line followed by about {sectionCount} `## Section Title` headers each with a one-sentence description. Send the entire plan rather than the part that changed. Keep everything that already works; change only what the brief, arc, or balance requires, and use more or fewer sections only where the brief clearly needs it. Leave the plan alone when your verdict is "pass".
+
+If no tools are available to you, reply instead with exactly this line and nothing else when the outline needs no changes:
 
 OUTLINE OK
 
-If the outline needs changes, respond with ONLY the full revised outline — the same format, a `# Title` line followed by about {sectionCount} `## Section Title` headers each with a one-sentence description — and nothing else. Use more or fewer sections only where the brief clearly needs it. Keep everything that already works; change only what the brief, arc, or balance requires.
+and, when it does need changes, with ONLY the full revised outline — the `# Title` line and its `## Section Title` headers — and nothing else.
 
 The user's brief:
 
