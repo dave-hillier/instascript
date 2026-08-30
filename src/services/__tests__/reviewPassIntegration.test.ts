@@ -6,7 +6,7 @@ import { MAX_SCRIPT_REVIEW_REVISIONS, SCRIPT_REVIEW_SECTION_TITLE } from '../scr
 import { STYLE_REVIEW_SECTION_TITLE } from '../critiquePass'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from '../outlineCritique'
 import { buildLengthPlan } from '../scriptLength'
-import { parseOutline } from '../conversationDocument'
+import { parseOutline, consolidateSections } from '../conversationDocument'
 import { projectConversation } from '../scriptProjection'
 import { SECTION_MAX_WORDS } from '../sectionQuality'
 import { rawConversationReducer } from '../../reducers/rawConversationReducer'
@@ -15,6 +15,7 @@ import type { RawConversation, ReviewReport, ChatMessage, Generation } from '../
 import type { ExampleScript } from '../exampleSearchService'
 import type { ProviderCallOptions } from '../scriptGenerationService'
 import type { Script } from '../../types/script'
+import { textFrames } from './fixtures/streamFake'
 
 // Sociable integration test for the style-review pass (story 8.5): the real
 // orchestrator and reducer, with the mock provider's streaming delays zeroed
@@ -39,9 +40,15 @@ interface Harness {
   sent: SentRequest[]
 }
 
+// The mock provider answers a REWRITE with the very same prose it wrote the
+// section with, so "did the revision land?" cannot be asked of it: the before
+// and the after are the same string. A test that has to tell them apart passes
+// `rewriteBody`, and every rewrite request — both review passes word their
+// instruction with "review found" — is answered with that instead.
 const createHarness = (
   reviewPassEnabled: boolean,
-  examples: ExampleScript[] = []
+  examples: ExampleScript[] = [],
+  rewriteBody?: string
 ): Harness => {
   const conversation: RawConversation = {
     id: 'conv-1',
@@ -99,6 +106,9 @@ const createHarness = (
       options?: ProviderCallOptions
     ) => {
       sent.push({ label: request.sectionTitle, messages })
+      if (rewriteBody && request.prompt.includes('review found')) {
+        return textFrames(rewriteBody)
+      }
       return provider.regenerateSection(request, messages, abortSignal, options)
     }
   }
@@ -664,8 +674,60 @@ describe('a planned run records the rounds it took', () => {
     expect(kinds[0]).toBe('outline')
     expect(kinds[1]).toBe('outline-critique')
     expect(kinds[2]).toBe('section')
-    expect(kinds[kinds.length - 1]).toBe('style-critique')
+    // The style critique, and then the rewrites it asked for — which are
+    // stamped 'section', because a rewrite is a section revision whatever
+    // round it was performed inside. The stamp describes the work.
+    expect(kinds[kinds.length - 2]).toBe('style-critique')
+    expect(kinds[kinds.length - 1]).toBe('section')
+
+    // Same round NUMBER, though: they belong to the critique round, and the
+    // numbering the planner counts from must not gain a round nothing planned.
+    const critiqueRound = styleCritiqueGeneration(generations)!.round!.round
+    const rewrites = generations.slice(
+      generations.indexOf(styleCritiqueGeneration(generations)!) + 1
+    )
+    expect(rewrites.length).toBeGreaterThan(0)
+    for (const rewrite of rewrites) {
+      expect(rewrite.round).toEqual({ round: critiqueRound, kind: 'section' })
+    }
   })
+
+  // BLOCKER 1. The pass rewrites sections, and the folds that skip a
+  // critique's prose used to skip the rewrites with it — so the reading view
+  // and the saved script showed the un-revised text while the pass reported
+  // success.
+  it('puts the style pass\'s rewrites into the script the reader sees and the file that is saved', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const revisedBody = 'The revised body the style pass paid for.'
+    const { orchestrator, conversation, getState, scriptUpdates } =
+      createHarness(true, [], revisedBody)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+
+    const generations = getState().conversations[0].generations
+    const rewrite = generations[generations.length - 1]
+    expect(rewrite.round!.kind).toBe('section')
+    const revisedTitle = (getState().reviewReport as ReviewReport).revised.slice(-1)[0].sectionTitle
+    expect(rewrite.response).toBe(`## ${revisedTitle}\n${revisedBody}`)
+
+    // The reading view's fold
+    const projected = projectConversation(getState().conversations[0])
+      .sections.find(section => section.title === revisedTitle)
+    expect(projected?.content).toBe(revisedBody)
+
+    // The consolidation the prompts, the review pass and the export fold with
+    expect(consolidateSections(getState().conversations[0])
+      .find(section => section.title === revisedTitle)?.content).toBe(revisedBody)
+
+    // And the script that was saved
+    const saved = scriptUpdates.filter(update => update.status === 'complete').slice(-1)[0]
+    expect(saved.content).toContain(revisedBody)
+
+    vi.restoreAllMocks()
+  }, 30000)
 
   // The record gate, end to end: a run resumed over a finished script must not
   // critique its style a second time, because an approving critique leaves
@@ -792,10 +854,52 @@ describe('the whole-script review is a command that leaves a record', () => {
 
     const added = getState().conversations[0].generations.slice(beforeReview.length)
     expect(added.length).toBeGreaterThan(0)
-    for (const generation of added) {
-      expect(generation.round).toEqual({ round: lastRound + 1, kind: 'review' })
-    }
+    // One round number for the whole press — the record a pipeline that ever
+    // switched the review on would read — and one kind per generation, saying
+    // what that generation IS: the review itself, then the section revisions
+    // it asked for.
+    expect(added.every(generation => generation.round!.round === lastRound + 1)).toBe(true)
+    expect(added[0].round).toEqual({ round: lastRound + 1, kind: 'review' })
+    expect(added.slice(1).every(generation => generation.round!.kind === 'section')).toBe(true)
+    expect(added.length).toBeGreaterThan(1)
   })
+
+  // BLOCKER 2. Storage and the reading view have to say the same thing about
+  // what the script says: finalContent here is built from consolidateSections,
+  // and the reading view folds through projectConversation.
+  it('leaves the two folds agreeing about the reviewed script', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const revisedBody = 'The revised body the whole-script review asked for.'
+    const { orchestrator, conversation, getState, scriptUpdates } =
+      createHarness(false, [], revisedBody)
+
+    await orchestrator.generateScript(
+      { prompt: 'a relaxing script', conversationId: conversation.id },
+      conversation
+    )
+    await orchestrator.reviewScript(getState().conversations[0], 'a relaxing script')
+
+    const reviewed = getState().conversations[0]
+    const revised = (getState().reviewReport as ReviewReport).revised
+    expect(revised.length).toBeGreaterThan(0)
+
+    const projected = projectConversation(reviewed)
+    expect(projected.sections.map(section => ({
+      title: section.title,
+      content: section.content
+    }))).toEqual(consolidateSections(reviewed))
+
+    // Including the rewrite itself: the saved script holds the revised body,
+    // not the one the review asked to be replaced
+    const rewrite = reviewed.generations[reviewed.generations.length - 1]
+    expect(rewrite.response).toContain(revisedBody)
+    const saved = scriptUpdates.filter(update => update.status === 'complete').slice(-1)[0]
+    expect(saved.content).toContain(revisedBody)
+    expect(projected.sections.find(section => section.title === revised.slice(-1)[0].sectionTitle)
+      ?.content).toBe(revisedBody)
+
+    vi.restoreAllMocks()
+  }, 30000)
 
   // It is repeatable: a record gate would forbid the reader's second press,
   // and the button is not gated by one.

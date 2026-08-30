@@ -57,6 +57,25 @@ export const isRejectedGeneration = (generation: Generation): boolean =>
   generation.toolCalls.length > 0 &&
   generation.toolCalls.every(call => call.status === 'rejected')
 
+// A critique is a reply ABOUT the script, not part of it, so none of its prose
+// is script prose — however many '## ' lines the model chose to word it under.
+// The round record is the only thing that can tell the two apart in the log,
+// and it lives here, in the lowest module both folds import, so the projection
+// the reader sees and the consolidation the prompts, the review pass and the
+// filesystem export are built from cannot disagree about it.
+//
+// A REWRITE performed during a critique round is not a critique: the run
+// stamps those generations 'section', because the stamp describes the work the
+// generation is, not the round that happened to enclose it. That is what keeps
+// the style pass's revisions in the script.
+//
+// A conversation written before round records carries none, and keeps the old
+// behaviour: nothing here can tell its critiques from its script.
+export const isCritiqueGeneration = (generation: Generation): boolean => {
+  const kind = generation.round?.kind
+  return kind === 'outline-critique' || kind === 'style-critique' || kind === 'review'
+}
+
 export function parseMarkdownSections(text: string): DocumentSection[] {
   const lines = text.split('\n')
   const sections: DocumentSection[] = []
@@ -102,15 +121,19 @@ export function getLatestOutline(conversation: RawConversation): ScriptOutline |
 // that one builds the document a reader sees, this one the section text the
 // prompts, the review pass and the filesystem export work from. They must
 // agree about what is in the script, so both skip a wholly rejected
-// generation. Without that a run that ends on a refusal — an abort or a
-// failure between a rejection and its rewrite — leaves a refused draft as the
-// last generation for its title, and this fold would hand it to the review
-// pass as the section's prose and write it back as script content.
+// generation and both skip a critique's reply. Without the first, a run that
+// ends on a refusal — an abort or a failure between a rejection and its
+// rewrite — leaves a refused draft as the last generation for its title, and
+// this fold would hand it to the review pass as the section's prose and write
+// it back as script content. Without the second, a critique worded under
+// '## ' headings becomes a section in the prompts, in the reviewed script and
+// in the filesystem export.
 export function consolidateSections(conversation: RawConversation): DocumentSection[] {
   const consolidated: DocumentSection[] = []
 
   for (const generation of conversation.generations) {
     if (isRejectedGeneration(generation)) continue
+    if (isCritiqueGeneration(generation)) continue
     if (isOutlineResponse(generation.response)) continue
 
     for (const section of parseMarkdownSections(generation.response)) {

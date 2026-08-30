@@ -1,5 +1,10 @@
 import { countWords, extractDocumentTitle } from '../utils/scriptMetrics'
-import { isOutlineResponse, isRejectedGeneration, parseOutline } from './conversationDocument'
+import {
+  isCritiqueGeneration,
+  isOutlineResponse,
+  isRejectedGeneration,
+  parseOutline
+} from './conversationDocument'
 import type {
   Generation,
   GenerationRound,
@@ -18,8 +23,9 @@ import type {
 // the section text the prompts, the review pass and the filesystem export work
 // from, and it reads markdown alone — it has no need of a call's verdict,
 // because the body is stored in the response either way. The two agree on the
-// one thing they must: both skip a wholly rejected generation, through the
-// isRejectedGeneration re-exported below.
+// one thing they must: both skip a wholly rejected generation and both skip a
+// critique's reply, through the isRejectedGeneration and isCritiqueGeneration
+// defined once in that module.
 //
 // The dispatch is per generation, not per conversation: a script begun before
 // tool-call authoring and continued after it interleaves both kinds, and both
@@ -51,13 +57,14 @@ export interface ProjectedSection {
   status?: GenerationToolCallStatus
   // The waiver's justification, as the tool handler worded it
   statusReason?: string
-  // True when this body was folded out of markdown written by the
-  // conversation's LAST generation, so the stream behind it may have been cut
-  // off mid-sentence and the body may be a fragment. A tool-written body is
-  // never suspect: the tool path stores a body only from a stream that
-  // finished cleanly, so a call's existence IS the finish evidence. This is
-  // what a resume redoes a section on, in place of the old positional guess
-  // that redid the last written section unconditionally.
+  // True when this body was folded out of markdown a RUN was streaming into
+  // the conversation's LAST generation, with nothing to show that its stream
+  // ended — so the body may be a fragment. See mayHaveBeenCutOff for what
+  // counts as evidence either way. A tool-written body is never suspect: the
+  // tool path stores a body only from a stream that finished cleanly, so a
+  // call's existence IS the finish evidence. This is what a resume redoes a
+  // section on, in place of the old positional guess that redid the last
+  // written section unconditionally.
   truncationSuspect?: boolean
 }
 
@@ -291,7 +298,8 @@ const foldToolCalls = (
 const foldMarkdown = (
   generation: Generation,
   sections: ProjectedSection[],
-  unsettled: boolean
+  unsettled: boolean,
+  suspect: boolean
 ): FoldResult => {
   if (isOutlineResponse(generation.response)) {
     const parsed = unsettled ? null : parseOutline(generation.response)
@@ -311,7 +319,7 @@ const foldMarkdown = (
     // Nothing later can clear the mark, because there is nothing later — a
     // subsequent generation would make this one settled, and an upsert of the
     // same title writes a fresh section without it.
-    upsert(sections, unsettled ? { ...section, truncationSuspect: true } : section)
+    upsert(sections, suspect ? { ...section, truncationSuspect: true } : section)
   }
   return {}
 }
@@ -344,6 +352,10 @@ export function projectConversation(
 
   const generations = conversation?.generations ?? []
   const unsettledIndex = context?.lastGenerationSettled ? -1 : generations.length - 1
+  // Whether this conversation has any round record at all — see
+  // mayHaveBeenCutOff below, which needs to know when a missing record means
+  // "not written by a run" and when it means "written before records existed".
+  const recordsRounds = generations.some(generation => generation.round !== undefined)
   for (let i = 0; i < generations.length; i++) {
     const generation = generations[i]
     // Collected before anything else and from EVERY generation, refused
@@ -353,7 +365,12 @@ export function projectConversation(
     const calls = readToolCalls(generation)
     const folded = calls
       ? foldToolCalls(generation, calls, sections)
-      : foldMarkdownOrCritique(generation, sections, i === unsettledIndex)
+      : foldMarkdownOrCritique(
+          generation,
+          sections,
+          i === unsettledIndex,
+          i === unsettledIndex && mayHaveBeenCutOff(generation, recordsRounds)
+        )
     // A retried conversation can hold a fresh outline after earlier sections,
     // so the last title, and the last plan, to arrive wins.
     title = folded.title ?? title
@@ -384,7 +401,15 @@ export function projectConversation(
 // existed there was no way to tell one apart in the log, so any "## " line in
 // a critique's reply became a section in the reading view and in the export —
 // a latent bug the planner would have made routine. A generation the run
-// stamped as a critique round is therefore never folded for prose.
+// stamped as a critique round is therefore never folded for prose, on the same
+// isCritiqueGeneration test consolidateSections uses, so the two folds cannot
+// disagree about what the script says.
+//
+// The stamp describes the WORK, not the enclosing round: a section rewritten
+// during a critique round is stamped 'section' by the run, and folds here as
+// the revision it is. Keying this on the enclosing round instead is what made
+// the style pass's rewrites invisible to the reading view while the export
+// still showed them.
 //
 // An OUTLINE critique is the exception on one axis: a revised plan is stored
 // as exactly the outline markdown, and it is the plan every later section
@@ -397,15 +422,43 @@ export function projectConversation(
 const foldMarkdownOrCritique = (
   generation: Generation,
   sections: ProjectedSection[],
-  unsettled: boolean
+  unsettled: boolean,
+  suspect: boolean
 ): FoldResult => {
   const kind = generation.round?.kind
-  if (kind === 'style-critique' || kind === 'review') return {}
   if (kind === 'outline-critique') {
     const parsed = unsettled ? null : parseOutline(generation.response)
     return { outline: parsed ?? undefined, outlineText: parsed ? generation.response : undefined }
   }
-  return foldMarkdown(generation, sections, unsettled)
+  if (isCritiqueGeneration(generation)) return {}
+  return foldMarkdown(generation, sections, unsettled, suspect)
+}
+
+// Whether prose in this generation might be a fragment of a stream that was
+// cut off. Two things have to hold, on top of its being the last generation —
+// the `unsettled` half of the test, which the caller applies.
+//
+// It has to be prose a RUN streamed. The round-less generations the reader's
+// own commands leave behind are not: a manual section edit was typed, not
+// streamed, and a whole-script refinement rewrites whatever sections it likes
+// as a command. Suspecting those made the next resume overwrite the reader's
+// own words. A conversation with no round record anywhere was written before
+// rounds existed, and there nothing tells a run's section write from a
+// command, so it keeps the old rule — which is what still lets an old run
+// interrupted mid-section resume where it stopped.
+//
+// And its stream must not have demonstrably ENDED. A turn is completed with
+// metrics only once its stream has run out, so metrics that report neither a
+// stopped turn nor the provider's length cap are that evidence. A run killed
+// mid-stream never reaches that completion and carries none, which is the case
+// this whole mark exists for.
+const mayHaveBeenCutOff = (generation: Generation, recordsRounds: boolean): boolean => {
+  const streamedByARun = recordsRounds ? generation.round?.kind === 'section' : true
+  if (!streamedByARun) return false
+
+  const metrics = generation.metrics
+  if (!metrics) return true
+  return metrics.aborted === true || metrics.finishReason === 'length'
 }
 
 // The in-flight section, spliced over the stored one or appended if it is new.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RawScriptGenerationOrchestrator } from '../rawScriptGenerationOrchestrator'
+import { RawScriptGenerationOrchestrator, StreamPersistence } from '../rawScriptGenerationOrchestrator'
 import { projectConversation } from '../scriptProjection'
 import { planNextRound, resolvePipeline } from '../roundPlan'
 import type { RawScriptServices, RawGenerationCallbacks } from '../rawScriptGenerationOrchestrator'
@@ -13,6 +13,7 @@ import { buildScriptFs } from '../scriptFs'
 import { textFrames, framesFromStrings } from './fixtures/streamFake'
 import { rawConversationReducer } from '../../reducers/rawConversationReducer'
 import type { RawConversationState } from '../../reducers/rawConversationReducer'
+import type { Script } from '../../types/script'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from '../outlineCritique'
 import { STYLE_REVIEW_SECTION_TITLE } from '../critiquePass'
 import {
@@ -119,9 +120,19 @@ describe('where a resumed run picks up', () => {
     expect(resumePlan(conversation)).toBeNull()
   })
 
+  // The empty body is deliberately NOT the last generation: a last generation
+  // is suspect anyway, so a fixture that ends on the empty heading passes
+  // whether or not an empty body counts as written, and says nothing about
+  // the property this test is named for.
   it('rewrites a section generation with an empty body', () => {
-    const conversation = makeConversation([outlineText, '## Induction\n'])
+    const conversation = makeConversation([
+      outlineText,
+      '## Induction\n',
+      '## Deepener\nTen steps down, one at a time.'
+    ])
 
+    expect(projectConversation(conversation).sections.map(s => s.title))
+      .toEqual(['Induction', 'Deepener'])
     expect(resumePlan(conversation)).toEqual({ round: 1, kind: 'section', sectionIndex: 0 })
   })
 
@@ -1365,5 +1376,128 @@ describe('the dispatch choke point and the turn it holds open', () => {
     // is still there to be resumed from — and a stale close must not replace
     // it with a failure line
     expect(harness.generations()[0].response).toBe('## Induction\nHalf a section arrived before')
+  })
+})
+
+// MAJOR 7: this is the only thing deciding whether a stream still arriving is
+// written to storage at all, so a reader who reloads mid-run keeps what has
+// been written. Unguarded, a regression in either direction is silent: too
+// eager costs a serialize-and-store on every text frame, too slow costs the
+// reader everything since the last save.
+describe('StreamPersistence: how often a stream in flight is saved', () => {
+  it('saves the first frame of a run, whenever in the clock it arrives', () => {
+    expect(new StreamPersistence().due(1_700_000_000_000)).toBe(true)
+  })
+
+  it('does not save again until the throttle has passed', () => {
+    const saves = new StreamPersistence(1000)
+
+    expect(saves.due(10_000)).toBe(true)
+    expect(saves.due(10_500)).toBe(false)
+    expect(saves.due(11_000)).toBe(false)
+  })
+
+  it('saves again once it has', () => {
+    const saves = new StreamPersistence(1000)
+
+    expect(saves.due(10_000)).toBe(true)
+    expect(saves.due(10_900)).toBe(false)
+    expect(saves.due(11_001)).toBe(true)
+    // and the window restarts from the save that was actually made, not from
+    // the frame that was turned away
+    expect(saves.due(11_900)).toBe(false)
+    expect(saves.due(12_002)).toBe(true)
+  })
+
+  // Per run, not per orchestrator: a run is the scope over which "since the
+  // last save" means anything.
+  it('starts each run with its own window', () => {
+    const first = new StreamPersistence(1000)
+    first.due(10_000)
+
+    expect(new StreamPersistence(1000).due(10_500)).toBe(true)
+  })
+})
+
+// MAJOR 6 + MAJOR 4, end to end. ensureSectionHeading leaves a reply that
+// already starts with '##' alone, so a model that heads its answer with a
+// title of its own stores the body under THAT title. The planner matches by
+// title, never sees the one it planned, and asks again — for every round left
+// in the budget if nothing bounds it, and then, if the ceiling reported
+// success, dispatched a script with a hole in it as complete.
+describe('a section the model will not write under the planned title', () => {
+  const outline = [
+    '# Deep Rest',
+    '## Induction',
+    'Settle the listener with slow breathing.',
+    '## Awakening',
+    'Count back up to full alertness.'
+  ].join('\n')
+
+  const body = (label: string) =>
+    `${label} ` + Array.from({ length: SECTION_TARGET_WORDS - 1 }, (_, i) => `word${i}`).join(' ')
+
+  const setup = () => {
+    const conversation: RawConversation = {
+      id: 'conv-1',
+      scriptId: 'script-1',
+      generations: [],
+      createdAt: 0,
+      updatedAt: 0
+    }
+
+    let state: RawConversationState = {
+      conversations: [conversation],
+      currentGeneration: null,
+      generationMachine: null,
+      reviewReport: null
+    }
+    const scriptUpdates: Partial<Script>[] = []
+
+    const services: RawScriptServices = {
+      scriptService: {
+        generateScript: () => textFrames(outline),
+        // Every section comes back under a heading the model chose, so the
+        // planned title is never written
+        regenerateSection: () => textFrames(`## A Gentle Beginning\n${body('Beginning')}`)
+      },
+      exampleService: { searchExamples: async () => [] }
+    }
+
+    const callbacks: RawGenerationCallbacks = {
+      dispatch: action => { state = rawConversationReducer(state, action) },
+      appDispatch: action => { scriptUpdates.push(action.updates) },
+      saveConversation: () => {},
+      getConversation: id => state.conversations.find(entry => entry.id === id),
+      // No tool calling, so the run writes as prose — the path where a reply
+      // can carry a heading of its own at all
+      getScript: () => ({ model: 'gpt-3.5-turbo-instruct' })
+    }
+
+    return {
+      orchestrator: new RawScriptGenerationOrchestrator(services, callbacks, {}),
+      conversation,
+      getState: () => state,
+      scriptUpdates
+    }
+  }
+
+  it('gives up by name instead of asking for it until the round budget runs out', async () => {
+    const { orchestrator, conversation, getState, scriptUpdates } = setup()
+
+    await expect(orchestrator.generateScript(
+      { prompt: 'A deep rest script', conversationId: conversation.id },
+      conversation
+    )).rejects.toThrow(/"Induction"/)
+
+    // Twice, not sixty-four times
+    const sectionRounds = getState().conversations[0].generations
+      .filter(generation => generation.round?.kind === 'section')
+    expect(sectionRounds).toHaveLength(2)
+
+    // And the run failed rather than reporting a script with a hole in it
+    expect(getState().generationMachine?.phase).toBe('error')
+    expect(scriptUpdates.some(update => update.status === 'complete')).toBe(false)
+    expect(scriptUpdates.some(update => update.status === 'draft')).toBe(true)
   })
 })

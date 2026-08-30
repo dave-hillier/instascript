@@ -587,6 +587,26 @@ describe('a critique round is a reply about the script, never part of it', () =>
       .toEqual(['Induction'])
   })
 
+  // The branch that reads an outline critique for its PLAN and nothing else.
+  // An approving critique writes no plan at all, and words its answer however
+  // it likes — under "## " headings as often as not. Folding that as prose is
+  // what this branch exists to prevent, and a revised plan folds as an outline
+  // response with or without it, so this is the case that holds the branch up.
+  it('takes no prose from an outline critique that approves the plan', () => {
+    const conversation = conversationOf(
+      ...script.generations,
+      roundGeneration(
+        '## Induction\nVERDICT: OUTLINE OK. The coverage and the arc both hold.',
+        { round: 3, kind: 'outline-critique' }
+      ),
+      markdownGeneration('## Awakening\nAnd back into the room.')
+    )
+    const document = projectConversation(conversation)
+
+    expect(document.sections.map(section => section.title)).toEqual(['Induction', 'Awakening'])
+    expect(document.sections[0].content).toBe('Breathe out slowly and let go.')
+  })
+
   it('does not turn an outline critique\'s revised plan into sections', () => {
     const conversation = conversationOf(
       ...script.generations,
@@ -635,5 +655,94 @@ describe('a run folding its own conversation between rounds', () => {
 
   it('has no plan text when it has no plan', () => {
     expect(projectConversation(conversationOf()).outlineText).toBeUndefined()
+  })
+})
+
+// MAJOR 5: the mark says "a stream may have stopped in the middle of this
+// body", and the planner writes the section again on the strength of it. Prose
+// nobody streamed must never carry it.
+describe('truncation suspicion is for prose a stream might have cut off', () => {
+  const plan = '# Deep Rest\n## Induction\nSettle.\n## Awakening\nReturn.'
+  const run = [
+    roundGeneration(plan, { round: 1, kind: 'outline' }),
+    roundGeneration('## Induction\nBreathe out slowly.', { round: 2, kind: 'section', sectionIndex: 0 })
+  ]
+
+  it('suspects the section prose a run was streaming when it stopped', () => {
+    const document = projectConversation(conversationOf(...run))
+
+    expect(document.sections[0].truncationSuspect).toBe(true)
+  })
+
+  // A turn that completed carries metrics, and completing is the evidence that
+  // the body arrived whole — but only if the provider did not stop it itself.
+  // A reply cut off at the length cap completes normally and is genuinely
+  // half-written, so the finish reason is the one thing separating it from a
+  // section that simply ended.
+  it('suspects a section the provider cut off at its length cap', () => {
+    const document = projectConversation(conversationOf(
+      ...run.slice(0, 1),
+      {
+        ...roundGeneration(
+          '## Induction\nBreathe out slowly and',
+          { round: 2, kind: 'section', sectionIndex: 0 }
+        ),
+        metrics: { startedAt: 1, endedAt: 2, finishReason: 'length' }
+      }
+    ))
+
+    expect(document.sections[0].truncationSuspect).toBe(true)
+  })
+
+  it('trusts a section whose stream reported a clean stop', () => {
+    const document = projectConversation(conversationOf(
+      ...run.slice(0, 1),
+      {
+        ...roundGeneration(
+          '## Induction\nBreathe out slowly.',
+          { round: 2, kind: 'section', sectionIndex: 0 }
+        ),
+        metrics: { startedAt: 1, endedAt: 2, finishReason: 'stop' }
+      }
+    ))
+
+    expect(document.sections[0].truncationSuspect).toBeUndefined()
+  })
+
+  // ConversationProvider.editSection appends exactly this: a round-less
+  // generation holding the reader's own words. Suspecting it made the next
+  // resume rewrite the edit.
+  it('does not suspect a manual section edit, which no stream wrote', () => {
+    const document = projectConversation(conversationOf(
+      ...run,
+      markdownGeneration('## Awakening\nWords the reader typed themselves.')
+    ))
+
+    expect(document.sections.map(section => section.title)).toEqual(['Induction', 'Awakening'])
+    expect(document.sections[1].truncationSuspect).toBeUndefined()
+  })
+
+  // A refinement rewrites whatever sections it likes, as a command, outside
+  // any round. The planner has no business redoing one of them.
+  it('does not suspect a whole-script refinement', () => {
+    const document = projectConversation(conversationOf(
+      ...run,
+      markdownGeneration('## Induction\nBreathe out, slower still.\n\n## Awakening\nReturn now.')
+    ))
+
+    expect(document.sections.every(section => section.truncationSuspect === undefined)).toBe(true)
+  })
+
+  // Where no generation carries a round at all, nothing distinguishes a run's
+  // section write from a command, and the old rule stands — which is what
+  // still lets a pre-rounds run interrupted mid-section resume where it
+  // stopped.
+  it('keeps the old rule for a conversation written before rounds existed', () => {
+    const document = projectConversation(conversationOf(
+      markdownGeneration(plan),
+      markdownGeneration('## Induction\nBreathe out slowly.')
+    ))
+
+    expect(document.sections[0].truncationSuspect).toBe(true)
   })
 })

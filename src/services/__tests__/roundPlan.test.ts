@@ -4,6 +4,8 @@ import {
   resolvePipeline,
   isLegacyConversation,
   MAX_ROUNDS,
+  SECTION_ROUND_ATTEMPTS,
+  RoundPlanStalledError,
   type GenerationPipeline
 } from '../roundPlan'
 import type { ProjectedDocument, ProjectedSection } from '../scriptProjection'
@@ -25,6 +27,15 @@ const sectionOf = (title: string, truncationSuspect?: true): ProjectedSection =>
   ...(truncationSuspect ? { truncationSuspect } : {})
 })
 
+// A heading that folded with nothing under it: a section by the projection's
+// reckoning, and no script at all.
+const emptySectionOf = (title: string): ProjectedSection => ({
+  id: `section_${title.toLowerCase()}`,
+  title,
+  content: '',
+  wordCount: 0
+})
+
 const documentOf = (parts: Partial<ProjectedDocument> = {}): ProjectedDocument => ({
   title: undefined,
   outline: undefined,
@@ -36,6 +47,15 @@ const documentOf = (parts: Partial<ProjectedDocument> = {}): ProjectedDocument =
 
 const roundsUpTo = (last: number, ...kinds: GenerationRound['kind'][]): GenerationRound[] =>
   kinds.map((kind, index) => ({ round: last - kinds.length + 1 + index, kind }))
+
+// Section rounds all aimed at the same outline index, as a run that keeps
+// asking for one section records them.
+const sectionRounds = (sectionIndex: number, count: number): GenerationRound[] =>
+  Array.from({ length: count }, (_, index) => ({
+    round: index + 2,
+    kind: 'section' as const,
+    sectionIndex
+  }))
 
 const plain: GenerationPipeline = {
   outlineCritique: false, styleCritique: false, review: false, maxRounds: MAX_ROUNDS
@@ -74,10 +94,17 @@ describe('planNextRound: numbering', () => {
     expect(planNextRound(document, plain)!.round).toBe(8)
   })
 
-  it('stops planning once maxRounds is spent', () => {
-    const document = documentOf({ rounds: [{ round: MAX_ROUNDS, kind: 'section' }] })
+  // Never null: the loop reads null as "the plan is satisfied" and goes on to
+  // dispatch 'complete'. A ceiling reached with the script unfinished is a
+  // failed run, and has to be told apart from a finished one.
+  it('fails loudly, rather than reporting done, once maxRounds is spent', () => {
+    const document = documentOf({
+      outline: outlineOf('Induction'),
+      rounds: [{ round: MAX_ROUNDS, kind: 'section', sectionIndex: 0 }]
+    })
 
-    expect(planNextRound(document, plain)).toBeNull()
+    expect(() => planNextRound(document, plain)).toThrow(RoundPlanStalledError)
+    expect(() => planNextRound(document, plain)).toThrow(/ceiling of 64 rounds/)
   })
 
   it('plans the very last round it is allowed', () => {
@@ -162,6 +189,29 @@ describe('planNextRound: the artifact gates', () => {
     expect(planNextRound(document, plain)).toEqual({ round: 3, kind: 'section', sectionIndex: 0 })
   })
 
+  // A body that folded to nothing is a hole in the script, and satisfying the
+  // gate with it leaves the hole there for good: nothing later revisits a
+  // section the plan considers written.
+  it('re-plans a section whose body folded to nothing', () => {
+    const document = documentOf({
+      outline: outlineOf('Induction', 'Awakening'),
+      sections: [emptySectionOf('Induction'), sectionOf('Awakening')],
+      rounds: roundsUpTo(3, 'outline', 'section', 'section')
+    })
+
+    expect(planNextRound(document, plain)).toEqual({ round: 4, kind: 'section', sectionIndex: 0 })
+  })
+
+  it('re-plans a section whose body is nothing but whitespace', () => {
+    const document = documentOf({
+      outline: outlineOf('Induction'),
+      sections: [{ ...emptySectionOf('Induction'), content: '\n   \n' }],
+      rounds: roundsUpTo(2, 'outline', 'section')
+    })
+
+    expect(planNextRound(document, plain)).toEqual({ round: 3, kind: 'section', sectionIndex: 0 })
+  })
+
   it('plans a renamed section, because nothing has written the new title', () => {
     const document = documentOf({
       outline: outlineOf('Induction', 'Emergence'),
@@ -170,6 +220,85 @@ describe('planNextRound: the artifact gates', () => {
     })
 
     expect(planNextRound(document, plain)).toEqual({ round: 4, kind: 'section', sectionIndex: 1 })
+  })
+})
+
+// A model that heads its reply with a title of its own stores the body under
+// THAT title, so the planned one stays unwritten and the artifact gate asks
+// again — for every round left in the budget, against a paid API, if nothing
+// bounds it.
+describe('planNextRound: a section that will not be written', () => {
+  const stuck = (attempts: number): ProjectedDocument => documentOf({
+    outline: outlineOf('Induction', 'Awakening'),
+    sections: [sectionOf('A Gentle Beginning')],
+    rounds: [{ round: 1, kind: 'outline' }, ...sectionRounds(0, attempts)]
+  })
+
+  it('asks again after the first attempt misses the planned title', () => {
+    expect(planNextRound(stuck(1), plain))
+      .toEqual({ round: 3, kind: 'section', sectionIndex: 0 })
+  })
+
+  // One section round routinely opens several generations — the prose path's
+  // corrective retry writes two, and the tool path writes one per refused body
+  // — and the projection records every one of them. Counting records rather
+  // than distinct rounds would let a single round spend the whole budget, so a
+  // run interrupted mid-section after a retry could never be resumed.
+  it('does not spend the budget on one round that took several attempts', () => {
+    const document = documentOf({
+      outline: outlineOf('Induction', 'Awakening'),
+      sections: [sectionOf('A Gentle Beginning')],
+      rounds: [
+        { round: 1, kind: 'outline' },
+        // One round, three generations: a refusal, a refusal, and the retry
+        { round: 2, kind: 'section', sectionIndex: 0 },
+        { round: 2, kind: 'section', sectionIndex: 0 },
+        { round: 2, kind: 'section', sectionIndex: 0 }
+      ]
+    })
+
+    expect(planNextRound(document, plain))
+      .toEqual({ round: 3, kind: 'section', sectionIndex: 0 })
+  })
+
+  it('gives up, by name, once the attempts are spent', () => {
+    expect(SECTION_ROUND_ATTEMPTS).toBe(2)
+    expect(() => planNextRound(stuck(SECTION_ROUND_ATTEMPTS), plain))
+      .toThrow(RoundPlanStalledError)
+    expect(() => planNextRound(stuck(SECTION_ROUND_ATTEMPTS), plain))
+      .toThrow(/"Induction"/)
+  })
+
+  // Counted from the end and stopped at the first round that is not this
+  // section's: a section asked for again after other work is a fresh attempt,
+  // not a repeat of a stuck one.
+  it('counts only the attempts made back to back', () => {
+    const document = documentOf({
+      outline: outlineOf('Induction'),
+      sections: [],
+      rounds: [
+        { round: 1, kind: 'section', sectionIndex: 0 },
+        { round: 2, kind: 'outline' },
+        { round: 3, kind: 'section', sectionIndex: 0 }
+      ]
+    })
+
+    expect(planNextRound(document, plain)).toEqual({ round: 4, kind: 'section', sectionIndex: 0 })
+  })
+
+  // A style pass rewriting a section stamps 'section' with no index, which is
+  // progress, not a stuck plan — so it stops the count rather than filling it.
+  it('does not count a rewrite made inside a critique round', () => {
+    const document = documentOf({
+      outline: outlineOf('Induction'),
+      sections: [],
+      rounds: [
+        { round: 1, kind: 'section', sectionIndex: 0 },
+        { round: 2, kind: 'section' }
+      ]
+    })
+
+    expect(planNextRound(document, plain)).toEqual({ round: 3, kind: 'section', sectionIndex: 0 })
   })
 })
 

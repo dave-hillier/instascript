@@ -308,7 +308,7 @@ const EMPTY_TURN_RECORD = 'The request finished without writing anything.'
 // every action and never throttled anything across two of them. A run is the
 // scope over which it actually means something, and this makes that the scope
 // it has.
-class StreamPersistence {
+export class StreamPersistence {
   private lastSaveAt = 0
   private readonly throttleMs: number
 
@@ -1459,6 +1459,12 @@ export class RawScriptGenerationOrchestrator {
       // conversation's last generation belongs to a PREVIOUS run until this
       // one has closed a generation of its own, and a body a previous run left
       // behind may have stopped mid-sentence.
+      //
+      // planNextRound returns null for ONE reason — the plan is satisfied. A
+      // run that cannot go on (the round ceiling, a section asked for twice
+      // and still unwritten) throws instead and lands in the catch below as
+      // the failure it is, rather than falling through to the completion block
+      // and reporting a script with holes in it as complete.
       let settled = false
       let reviewResult: ReviewPassResult | null = null
       let document = this.projectRun(conversation, settled)
@@ -2300,12 +2306,22 @@ export class RawScriptGenerationOrchestrator {
     const conversationId = conversation.id
     this.streamSaves = new StreamPersistence()
 
-    // A COMMAND, and one that stamps NO round: a section's gate is an artifact
-    // gate, so a record here would be inert, and a record carrying a made-up
-    // round number would corrupt the numbering the planner counts from. When
-    // this is reached from inside a round — the style pass and the whole-script
-    // review both rewrite sections through it — the round already in progress
-    // stands, and these generations belong to it.
+    // Reached as a COMMAND — the reader's own regenerate button — this stamps
+    // NO round: a section's gate is an artifact gate, so a record would be
+    // inert, and a record carrying a made-up round number would corrupt the
+    // numbering the planner counts from.
+    //
+    // Reached from INSIDE a round — the style pass and the whole-script review
+    // both rewrite sections through here — it stamps the enclosing round's
+    // NUMBER with kind 'section', because a rewrite is the work this
+    // generation is, whatever round enclosed it. Inheriting the enclosing
+    // 'style-critique' or 'review' kind instead made every fold that skips
+    // critique prose skip these rewrites too, so the reading view and the
+    // saved script never showed the revisions the pass had just paid for.
+    const round: GenerationRound | undefined = this.currentRound
+      ? { round: this.currentRound.round, kind: 'section' }
+      : undefined
+
     try {
       // A fresh regeneration run owns generation state from here; without this
       // a previously completed run's state would swallow the progress updates
@@ -2325,7 +2341,8 @@ export class RawScriptGenerationOrchestrator {
       this.dispatch({
         type: 'START_GENERATION',
         conversationId,
-        messages
+        messages,
+        round
       })
 
       this.persistConversation(conversationId)

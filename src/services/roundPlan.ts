@@ -12,8 +12,6 @@ import type { ProjectedDocument } from './scriptProjection'
 // Nothing here is async, touches React or reads storage, so the whole
 // sequencing decision of a generation run is testable in a node process.
 
-export type { PlannedRoundKind }
-
 export interface PlannedRound {
   round: number
   kind: PlannedRoundKind
@@ -41,6 +39,29 @@ export interface GenerationPipeline {
 // paid API.
 export const MAX_ROUNDS = 64
 
+// How many times in a row the planner will ask for the same section before it
+// gives up on it. A section round that stores its body under a heading the
+// model chose for itself leaves the planned title unwritten, so the artifact
+// gate asks for it again — and, unchecked, again for every round left in the
+// budget. Two attempts, then the run stops and says which section it could not
+// write, because sixty-four paid requests that all miss the same title is not a
+// retry protocol.
+export const SECTION_ROUND_ATTEMPTS = 2
+
+// A run that cannot go on. Both cases mean the same thing to a caller — the
+// plan is NOT satisfied and no further round will satisfy it — which is
+// exactly what returning null cannot say: the loop reads null as "done" and
+// goes on to report a script with holes in it as complete. A stall detector
+// that reports success is worse than no ceiling, so this is thrown rather than
+// returned. planNextRound stays pure; a thrown error is a value the caller
+// cannot silently mistake for the other outcome.
+export class RoundPlanStalledError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RoundPlanStalledError'
+  }
+}
+
 // One checkbox, two stages. The "Review pass" setting has always switched on
 // both the outline critique and the style critique, and its help text already
 // admits it is two things; splitting it into two fields here rather than two
@@ -59,6 +80,32 @@ export const resolvePipeline = (settings: { reviewPass: boolean }): GenerationPi
 
 const ran = (rounds: readonly GenerationRound[], kind: PlannedRoundKind): boolean =>
   rounds.some(round => round.kind === kind)
+
+// How many distinct section rounds ran for this outline index without
+// anything else happening in between. Counted from the END and stopped at the first round
+// that is not this section's, because a section asked for again after an
+// outline critique reordered the plan is a fresh attempt, not a repeat.
+//
+// Rewrites performed inside a critique round are stamped 'section' with no
+// sectionIndex (they are not planned rounds), so they stop the count rather
+// than inflating it — which is right: a style pass rewriting a section is
+// evidence of progress, not of a stuck plan.
+const attemptsAt = (rounds: readonly GenerationRound[], sectionIndex: number): number => {
+  // DISTINCT round numbers, not records. The projection stores one record per
+  // generation, and one section round routinely opens several: the prose path's
+  // corrective retry writes two, and the tool path's rejection loop writes one
+  // per refused body, all stamped with the same round. Counting records would
+  // let a single round spend the whole budget, so a run interrupted in the
+  // middle of a section that took a retry could never be resumed — and it would
+  // say the section had been asked for twice when it had been asked for once.
+  const seen = new Set<number>()
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const round = rounds[i]
+    if (round.kind !== 'section' || round.sectionIndex !== sectionIndex) break
+    seen.add(round.round)
+  }
+  return seen.size
+}
 
 // A conversation written before round records existed carries none, and its
 // optional passes may perfectly well have run — nothing recorded them either
@@ -81,7 +128,11 @@ export function planNextRound(
   // number already spent, leaving this function proposing the same round
   // forever with maxRounds never reached.
   const round = (document.rounds[document.rounds.length - 1]?.round ?? 0) + 1
-  if (round > pipeline.maxRounds) return null
+  if (round > pipeline.maxRounds) {
+    throw new RoundPlanStalledError(
+      `The run reached its ceiling of ${pipeline.maxRounds} rounds with the script unfinished`
+    )
+  }
 
   const legacy = isLegacyConversation(document)
 
@@ -94,9 +145,11 @@ export function planNextRound(
   // sections already written orphans them — no path in this app reconciles
   // that. A run resumed into a half-written script therefore skips the
   // critique rather than restructuring the script underneath itself.
+  // No `!legacy` clause: this gate already requires `sections.length === 0`,
+  // and a legacy conversation is one with sections and no rounds, so the two
+  // can never both hold. The record gates below need theirs.
   if (
     pipeline.outlineCritique &&
-    !legacy &&
     document.sections.length === 0 &&
     !ran(document.rounds, 'outline-critique')
   ) {
@@ -114,9 +167,22 @@ export function planNextRound(
   const written = new Map(document.sections.map(section => [section.title, section]))
   const next = document.outline.sections.findIndex(section => {
     const body = written.get(section.title)
-    return body === undefined || body.truncationSuspect === true
+    // An EMPTY body is not a written section. A heading with nothing under it
+    // folds to a section all the same — that is deliberate, so stored prose is
+    // never dropped from the reading view — and treating it as written leaves
+    // a hole in the script that nothing later fills.
+    if (body === undefined || body.content.trim() === '') return true
+    return body.truncationSuspect === true
   })
-  if (next !== -1) return { round, kind: 'section', sectionIndex: next }
+  if (next !== -1) {
+    if (attemptsAt(document.rounds, next) >= SECTION_ROUND_ATTEMPTS) {
+      throw new RoundPlanStalledError(
+        `The "${document.outline.sections[next].title}" section was asked for ` +
+        `${SECTION_ROUND_ATTEMPTS} times and still has no body under that title`
+      )
+    }
+    return { round, kind: 'section', sectionIndex: next }
+  }
 
   // Record gates. Both of these stages store an approving verdict as ordinary
   // prose, which is indistinguishable in the log from a stage that never ran —
