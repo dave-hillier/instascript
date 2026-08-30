@@ -53,7 +53,7 @@
 
 ## Theme System
 
-The app supports light, dark, and system theme modes (system follows the OS preference via `matchMedia`, with live change listening). The preference persists in localStorage under the key `theme` and is applied as a `data-theme` attribute on the root div.
+The app supports light, dark, and system theme modes (system follows the OS preference via `matchMedia`, with live change listening). The preference persists in localStorage under the key `theme` and is applied as a `data-theme` attribute on the root div. It is written only when the user picks a theme, never on load: a preference that fails to read (corrupt JSON, storage the browser refuses) falls back to the system setting for the session but is left on disk rather than overwritten, and the settings dialog says so instead of presenting the fallback as the saved choice. `src/services/themePreference.ts` owns both halves.
 
 All theming is expressed as CSS custom properties (design tokens) defined per theme in `App.css` under `[data-theme="light"]` and `[data-theme="dark"]` — background, surface, ink, line, accent, and danger colors. Components style against the tokens (`var(--accent)` etc.), never hardcoded colors, so both themes are first-class. When adding UI, use the existing tokens; add a new token rather than a literal color if none fits.
 
