@@ -33,7 +33,7 @@ import { buildLengthPlan } from './scriptLength'
 import type { LengthPlan } from './scriptLength'
 import { assessScriptLength, formatLengthBrief, parseScriptReviewResponse, findingsFromReviewVerdicts, formatScriptReviewSummary, SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
 import { recordExampleSelections } from './exampleCorpus'
-import { isTextFrame, isToolCallFrame } from './providerFrame'
+import { isTextFrame, isThinkingFrame, isToolCallFrame } from './providerFrame'
 import type { ProviderFrame } from './providerFrame'
 import { scanPartialJsonObject } from './partialJson'
 import { WRITING_TOOLS, GROUNDING_SELECT_TOOL, OUTLINE_WRITE_TOOL, SECTION_WRITE_TOOL, CRITIQUE_RECORD_TOOL } from './writingTools'
@@ -124,6 +124,10 @@ interface StreamedToolCall {
 // Everything one provider response carried, whichever way it answered
 interface StreamedResponse {
   text: string
+  // What the model reasoned before answering, when the provider reports it.
+  // Never part of the script: it exists so a caller can show that a reasoning
+  // model is working rather than stalled, and no path folds it into a section.
+  thinking: string
   calls: StreamedToolCall[]
   finishReason: string | null
   // D6: a call may only be ACCEPTED after a clean finish. An abort landing
@@ -321,6 +325,13 @@ const plannedSectionWordCounts = (document: ProjectedDocument): number[] => {
 // about thirty words: finer than prose is read, and a thirtieth of the work.
 // The tail is always notified, so what a reader last saw is the whole body.
 const PROGRESS_STEP_CHARS = 200
+
+// Reasoning is stepped far more finely than prose. Prose is read as it lands,
+// so re-rendering it every 200 characters is plenty; reasoning is shown as a
+// single truncated line whose only job is to look alive, and at the prose step
+// it sits on its first few words for seconds at a time and reads as frozen —
+// which is the exact impression it exists to dispel.
+const THINKING_STEP_CHARS = 40
 
 const EMPTY_TURN_RECORD = 'The request finished without writing anything.'
 
@@ -641,11 +652,30 @@ export class RawScriptGenerationOrchestrator {
   ): Promise<string> {
     let accumulated = ''
     const metrics = this.beginTurnMetrics(conversationId)
+    // Reasoning, and how much of it has been reported. Most of this app's
+    // turns come through here rather than the tool path — the outline, a
+    // section regenerated from the button, every critique — so a reasoning
+    // model reporting nothing but this would leave all of them silent.
+    let thinking = ''
+    let unreported = 0
 
     for await (const frame of stream) {
       // Above the text filter, because everything it reads is a frame the
       // filter throws away
       this.observeMetricFrame(metrics, frame)
+
+      if (isThinkingFrame(frame)) {
+        thinking += frame.delta
+        unreported += frame.delta.length
+        // Stepped the same way prose is, and for the same reason: reasoning
+        // arrives a few characters at a time, and dispatching every fragment
+        // would re-render the panel many times a second to no purpose.
+        if (unreported >= THINKING_STEP_CHARS || thinking === frame.delta) {
+          unreported = 0
+          this.dispatch({ type: 'MODEL_THINKING_STREAMED', conversationId, thinking })
+        }
+        continue
+      }
 
       // Below the filter, not above it: the stream now ends with `finished` and
       // `usage` frames, and checking there would turn an abort arriving after
@@ -689,11 +719,13 @@ export class RawScriptGenerationOrchestrator {
     const calls = new Map<number, StreamedToolCall>()
     const metrics = this.beginTurnMetrics(conversationId)
     let text = ''
+    let thinking = ''
     let finishReason: string | null = null
     let finishedCleanly = false
 
     const snapshot = (): StreamedResponse => ({
       text,
+      thinking,
       calls: [...calls.values()].sort((a, b) => a.index - b.index),
       finishReason,
       finishedCleanly
@@ -707,6 +739,19 @@ export class RawScriptGenerationOrchestrator {
     const notify = (): void => {
       unnotified = 0
       notified = true
+      // Reported from here rather than from a caller's onProgress, because
+      // every tool-path turn has the same silence to explain — the outline, a
+      // section, a critique — and a caller that renders only a section body
+      // would drop it. It is dispatched before onProgress so the reasoning is
+      // on screen even when the body is still empty, which for a reasoning
+      // model is most of the turn.
+      if (thinking) {
+        this.dispatch({
+          type: 'MODEL_THINKING_STREAMED',
+          conversationId,
+          thinking
+        })
+      }
       onProgress?.(snapshot())
     }
 
@@ -727,6 +772,13 @@ export class RawScriptGenerationOrchestrator {
         // after the last content delta must not turn into a thrown run
         if (abortSignal?.aborted) throw new Error('Generation aborted')
         text += frame.delta
+        unnotified += frame.delta.length
+      } else if (isThinkingFrame(frame)) {
+        if (abortSignal?.aborted) throw new Error('Generation aborted')
+        // Counted towards the notification step like any other arrival, which
+        // is the whole point: a reasoning model can spend half a minute here,
+        // and a caller that is never notified has nothing to show for it.
+        thinking += frame.delta
         unnotified += frame.delta.length
       } else if (isToolCallFrame(frame)) {
         if (abortSignal?.aborted) throw new Error('Generation aborted')

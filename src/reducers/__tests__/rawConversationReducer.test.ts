@@ -363,3 +363,69 @@ describe('the critique a judging pass recorded', () => {
     expect(state.conversations[0].generations[0].critique).toEqual(critique)
   })
 })
+
+describe('rawConversationReducer MODEL_THINKING_STREAMED', () => {
+  const generating = (conversationId: string): RawConversationState => ({
+    conversations: [makeConversation(conversationId)],
+    currentGeneration: { conversationId, isComplete: false, sectionTitle: 'Opening' },
+    generationMachine: null,
+    reviewReport: null
+  })
+
+  it('holds the reasoning beside the step it belongs to', () => {
+    const next = rawConversationReducer(generating('conv_a'), {
+      type: 'MODEL_THINKING_STREAMED',
+      conversationId: 'conv_a',
+      thinking: 'Planning the induction'
+    })
+
+    expect(next.currentGeneration).toEqual({
+      conversationId: 'conv_a',
+      isComplete: false,
+      sectionTitle: 'Opening',
+      thinking: 'Planning the induction'
+    })
+  })
+
+  // Reasoning is never part of the script: it must not reach a generation
+  it('writes nothing to the conversation', () => {
+    const state = generating('conv_a')
+    const next = rawConversationReducer(state, {
+      type: 'MODEL_THINKING_STREAMED',
+      conversationId: 'conv_a',
+      thinking: 'Planning the induction'
+    })
+
+    expect(next.conversations).toEqual(state.conversations)
+  })
+
+  it('ignores reasoning for a conversation that is no longer the one running', () => {
+    const state = generating('conv_a')
+    const next = rawConversationReducer(state, {
+      type: 'MODEL_THINKING_STREAMED',
+      conversationId: 'conv_b',
+      thinking: 'from a step already answered'
+    })
+
+    expect(next).toBe(state)
+  })
+
+  // The step boundary is what clears it, so the reasoning of a finished
+  // section never lingers over the next one
+  it('is dropped when the next step reports its progress', () => {
+    const withThinking = rawConversationReducer(generating('conv_a'), {
+      type: 'MODEL_THINKING_STREAMED',
+      conversationId: 'conv_a',
+      thinking: 'Planning the induction'
+    })
+
+    const next = rawConversationReducer(withThinking, {
+      type: 'SET_GENERATION_PROGRESS',
+      conversationId: 'conv_a',
+      isComplete: false,
+      sectionTitle: 'Deepening'
+    })
+
+    expect(next.currentGeneration?.thinking).toBeUndefined()
+  })
+})

@@ -547,6 +547,7 @@ export const ScriptPage = ({
         pendingInstruction={pendingInstruction}
         isGenerating={generationState.isGenerating}
         phaseLabel={phaseLabel}
+        thinking={currentGeneration?.conversationId === conversation?.id ? currentGeneration?.thinking : undefined}
         onStop={stopGeneration}
         errorMessage={persistentErrorMessage}
         wasInterrupted={wasInterrupted}

@@ -11,6 +11,7 @@ export type RawConversationAction =
   | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
   | { type: 'GENERATIONS_DISCARDED'; conversationId: string }
+  | { type: 'MODEL_THINKING_STREAMED'; conversationId: string; thinking: string }
   | { type: 'SET_GENERATION_PROGRESS'; conversationId: string; isComplete: boolean; error?: string; sectionTitle?: string }
   | { type: 'SET_GENERATION_PHASE'; conversationId: string; phase: GenerationPhase; outline?: ScriptOutline; currentSectionIndex?: number; totalSections?: number; sectionWordCounts?: number[]; error?: string }
   | { type: 'REVIEW_PASS_COMPLETED'; report: ReviewReport }
@@ -23,6 +24,11 @@ export type RawConversationState = {
     isComplete: boolean
     error?: string
     sectionTitle?: string
+    // What a reasoning model is thinking, while it thinks. Transient by
+    // construction: SET_GENERATION_PROGRESS rebuilds this object on every step,
+    // so the reasoning of a finished step never outlives it, and nothing here
+    // is ever written to the conversation document.
+    thinking?: string
   } | null
   generationMachine: {
     phase: GenerationPhase
@@ -217,6 +223,17 @@ export const rawConversationReducer = (
         currentGeneration: null,
         generationMachine: null,
         reviewReport: null
+      }
+
+    case 'MODEL_THINKING_STREAMED':
+      // Only the generation actually on screen. Reasoning arriving for a
+      // conversation the reducer is no longer tracking is a late frame from a
+      // step that has already been answered, and showing it would tell the
+      // reader the wrong thing about what is happening now.
+      if (state.currentGeneration?.conversationId !== action.conversationId) return state
+      return {
+        ...state,
+        currentGeneration: { ...state.currentGeneration, thinking: action.thinking }
       }
 
     case 'SET_GENERATION_PROGRESS':

@@ -11,6 +11,10 @@ interface ConversationPanelProps {
   // The live phase line while something is running, e.g. "Writing section 2 of 5..."
   isGenerating: boolean
   phaseLabel: string
+  // What a reasoning model is thinking while it works. A reasoning model can
+  // report nothing else for half a minute before the section arrives whole, and
+  // the phase line alone cannot tell that apart from a stalled request.
+  thinking?: string
   onStop: () => void
   // A generation that failed, and one a closed tab left half-finished
   errorMessage?: string
@@ -34,6 +38,7 @@ export const ConversationPanel = ({
   pendingInstruction,
   isGenerating,
   phaseLabel,
+  thinking,
   onStop,
   errorMessage,
   wasInterrupted,
@@ -128,6 +133,14 @@ export const ConversationPanel = ({
           {isGenerating && (
             <li data-kind="running">
               <p role="status" aria-live="polite">{phaseLabel}</p>
+              {thinking && (
+                // The tail, not the whole reasoning: this is a sign of life
+                // beside the phase line, not a transcript. aria-live is off
+                // deliberately — it changes many times a second, and announcing
+                // every change would make the panel unusable with a screenreader
+                // while saying nothing the phase line has not already said.
+                <p data-kind="thinking" aria-hidden="true">{thinking.slice(-140)}</p>
+              )}
               <button
                 onClick={onStop}
                 aria-label="Stop script generation"
