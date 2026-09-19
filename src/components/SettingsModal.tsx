@@ -9,7 +9,7 @@ import {
   type SpeechCacheUsage,
 } from '../services/speechAudioCache'
 import { formatBytes } from '../utils/formatBytes'
-import { getDefaultModel, type APIProvider } from '../services/config'
+import { getDefaultModel, type APIProvider, type LlmEngine, type ReasoningLevel } from '../services/config'
 import {
   OPENAI_MODELS,
   OPENROUTER_MODELS,
@@ -159,6 +159,8 @@ export type SettingsFormValues = {
   apiProvider: APIProvider
   model: string
   utilityModel: string
+  llmEngine: LlmEngine
+  reasoning: ReasoningLevel
   importAssist: boolean
   reviewPass: boolean
   debugTranscripts: boolean
@@ -176,6 +178,8 @@ type SettingsModalProps = {
   apiProvider: APIProvider
   model: string
   utilityModel: string
+  llmEngine: LlmEngine
+  reasoning: ReasoningLevel
   importAssist: boolean
   reviewPass: boolean
   debugTranscripts: boolean
@@ -207,6 +211,8 @@ export const SettingsModal = ({
   apiProvider,
   model,
   utilityModel,
+  llmEngine,
+  reasoning,
   importAssist,
   reviewPass,
   debugTranscripts,
@@ -233,6 +239,8 @@ export const SettingsModal = ({
   const [tempApiProvider, setTempApiProvider] = useState<APIProvider>(apiProvider || 'mock')
   const [tempModel, setTempModel] = useState(model || 'gpt-5')
   const [tempUtilityModel, setTempUtilityModel] = useState(utilityModel)
+  const [tempLlmEngine, setTempLlmEngine] = useState<LlmEngine>(llmEngine)
+  const [tempReasoning, setTempReasoning] = useState<ReasoningLevel>(reasoning)
   const [tempImportAssist, setTempImportAssist] = useState(importAssist)
   const [tempReviewPass, setTempReviewPass] = useState(reviewPass)
   const [tempDebugTranscripts, setTempDebugTranscripts] = useState(debugTranscripts)
@@ -256,6 +264,8 @@ export const SettingsModal = ({
       setTempApiProvider(apiProvider || 'mock')
       setTempModel(model || 'gpt-5')
       setTempUtilityModel(utilityModel)
+      setTempLlmEngine(llmEngine)
+      setTempReasoning(reasoning)
       setTempImportAssist(importAssist)
       setTempReviewPass(reviewPass)
       setTempDebugTranscripts(debugTranscripts)
@@ -271,6 +281,8 @@ export const SettingsModal = ({
     apiProvider,
     model,
     utilityModel,
+    llmEngine,
+    reasoning,
     importAssist,
     reviewPass,
     debugTranscripts,
@@ -315,6 +327,8 @@ export const SettingsModal = ({
       apiProvider: tempApiProvider,
       model: tempModel.trim() || getDefaultModel(tempApiProvider, 'generation'),
       utilityModel: tempUtilityModel.trim() || getDefaultModel(tempApiProvider, 'utility'),
+      llmEngine: tempLlmEngine,
+      reasoning: tempReasoning,
       importAssist: tempImportAssist,
       reviewPass: tempReviewPass,
       debugTranscripts: tempDebugTranscripts,
@@ -534,6 +548,56 @@ export const SettingsModal = ({
                 value={tempUtilityModel}
                 onChange={setTempUtilityModel}
               />
+
+              <label htmlFor="llm-engine">Client library</label>
+              <select
+                id="llm-engine"
+                value={tempLlmEngine}
+                onChange={(e) => setTempLlmEngine(e.target.value as LlmEngine)}
+                aria-describedby="llm-engine-help"
+              >
+                <option value="pi">pi-ai</option>
+                <option value="sdk">OpenAI SDK</option>
+              </select>
+              <p id="llm-engine-help">
+                Which library carries a generation request to the provider above.
+                The provider, the key and the model are the same either way.
+                pi-ai is the default and the only one that can ask a model how
+                much to reason and show that reasoning as it arrives. On OpenAI
+                it talks to the responses endpoint rather than chat completions;
+                caching still applies there, but it sends no cache key of its
+                own, so repeated runs are not pinned to the same cached prefix
+                the way the SDK path pins them
+              </p>
+
+              {tempLlmEngine === 'pi' && (
+                <>
+                  <label htmlFor="reasoning-level">Reasoning</label>
+                  <select
+                    id="reasoning-level"
+                    value={tempReasoning}
+                    onChange={(e) => setTempReasoning(e.target.value as ReasoningLevel)}
+                    aria-describedby="reasoning-level-help"
+                  >
+                    <option value="provider">Leave to the model</option>
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  <p id="reasoning-level-help">
+                    How much a reasoning model should think before it writes.
+                    Leave to the model sends nothing and is what every run did
+                    before this setting existed. The named levels ask for that
+                    much reasoning and show it as it arrives, so a section that
+                    takes half a minute no longer looks like a stalled request.
+                    Off asks the provider to stop reasoning altogether, which is
+                    the quickest setting and the one that most changes what the
+                    model writes. Only the pi-ai engine can ask — the OpenAI SDK
+                    has no equivalent
+                  </p>
+                </>
+              )}
             </>
           )}
 

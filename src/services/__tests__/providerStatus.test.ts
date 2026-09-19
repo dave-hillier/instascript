@@ -10,12 +10,17 @@ import { createScriptService, createUtilityService } from '../serviceFactory'
 import { MockAPIService } from '../mockApi'
 import { MockUtilityService } from '../utilityModel'
 import { UnconfiguredScriptService, UnconfiguredUtilityService } from '../unconfiguredProvider'
+import { OpenAIService } from '../openai'
+import { OpenRouterService } from '../openrouter'
+import { DeferredPiAiService } from '../piAiLoader'
 
 const config = (overrides: Partial<AppConfig>): AppConfig => ({
   apiKey: null,
   apiProvider: 'mock',
   model: 'gpt-5',
   utilityModel: 'gpt-5-nano',
+  llmEngine: 'sdk',
+  reasoning: 'provider',
   ...overrides
 })
 
@@ -66,6 +71,31 @@ describe('unavailableReason', () => {
 describe('createScriptService', () => {
   it('uses the mock only when the mock is selected', () => {
     expect(createScriptService(config({ apiProvider: 'mock' }))).toBeInstanceOf(MockAPIService)
+  })
+
+  // The engine setting decides which library carries the request and nothing
+  // else, so the default has to keep landing on exactly the services it always
+  // did — a session that never opens the setting must not change path.
+  it('keeps a keyed provider on the SDK services by default', () => {
+    expect(createScriptService(config({ apiProvider: 'openai', apiKey: 'sk-test' })))
+      .toBeInstanceOf(OpenAIService)
+    expect(createScriptService(config({ apiProvider: 'openrouter', apiKey: 'sk-test' })))
+      .toBeInstanceOf(OpenRouterService)
+  })
+
+  // The prototype engine is reached through a loader that pulls pi-ai in on
+  // first use, so the library stays out of the bundle every default-engine
+  // session downloads.
+  it('routes a keyed provider through pi-ai when that engine is chosen', () => {
+    expect(createScriptService(config({ apiProvider: 'openai', apiKey: 'sk-test', llmEngine: 'pi' })))
+      .toBeInstanceOf(DeferredPiAiService)
+    expect(createScriptService(config({ apiProvider: 'openrouter', apiKey: 'sk-test', llmEngine: 'pi' })))
+      .toBeInstanceOf(DeferredPiAiService)
+  })
+
+  it('never reaches the engine choice without a key', () => {
+    expect(createScriptService(config({ apiProvider: 'openai', apiKey: null, llmEngine: 'pi' })))
+      .toBeInstanceOf(UnconfiguredScriptService)
   })
 
   it('does not substitute the mock for a keyless provider', () => {

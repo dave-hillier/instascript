@@ -2,6 +2,7 @@ import type { ScriptGenerationService } from './scriptGenerationService'
 import type { ExampleSearchService } from './exampleSearchService'
 import type { UtilityModelService } from './utilityModelService'
 import { OpenAIService } from './openai'
+import { DeferredPiAiService } from './piAiLoader'
 import { OpenRouterService } from './openrouter'
 import { MockAPIService } from './mockApi'
 import { OpenAICompatibleUtilityService, MockUtilityService } from './utilityModel'
@@ -23,6 +24,16 @@ export function createScriptService(config?: AppConfig): ScriptGenerationService
 
   switch (status.kind) {
     case 'live':
+      // The engine switch sits inside the live branch alone: it chooses which
+      // library carries the request, never which provider answers it or
+      // whether one can. Both branches below reach the same provider with the
+      // same key and model, so a session that switches engines changes how the
+      // request is made and nothing about where it goes.
+      // Loaded on first use rather than imported here, so pi-ai's core stays
+      // out of the entry chunk every session downloads before it renders.
+      if (appConfig.llmEngine === 'pi') {
+        return new DeferredPiAiService(appConfig.apiKey!, status.provider, appConfig.reasoning)
+      }
       return status.provider === 'openrouter'
         ? new OpenRouterService(appConfig.apiKey!)
         : new OpenAIService(appConfig.apiKey!)

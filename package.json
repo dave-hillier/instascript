@@ -12,6 +12,7 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "^0.85.1",
     "@huggingface/transformers": "^4.2.0",
     "lucide-react": "^0.541.0",
     "openai": "^5.15.0",

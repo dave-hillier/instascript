@@ -9,11 +9,35 @@ export type APIProvider = 'openai' | 'openrouter' | 'mock'
 // a fraction of the price. Each role has its own model setting.
 export type ModelRole = 'generation' | 'utility'
 
+// Which client library carries a generation request to the provider. Both
+// carry the same provider, key and model id; they differ in what they can ask
+// for and what they can report back. 'pi' is the default: it is the only one
+// that can ask a model how much to reason and show that reasoning as it
+// arrives, which is the difference a reader actually sees. 'sdk' is the path
+// this app used before pi-ai and is kept so the two can still be compared —
+// selecting it sends exactly the requests it always sent.
+export type LlmEngine = 'sdk' | 'pi'
+
+// How much reasoning to ask a model for, on the engine that can ask. pi-ai
+// normalises this across providers; the OpenAI SDK path has no equivalent, so
+// the setting only bites when the pi engine is selected.
+//
+// 'provider' is the default and sends NOTHING, leaving the model to do whatever
+// it does by default — which is what every run before this setting existed did.
+// The other levels are deliberate: 'off' asks the provider to switch reasoning
+// off, which is the one that removes the long silence before a section arrives,
+// at whatever cost to the writing the reasoning was paying for.
+export type ReasoningLevel = 'provider' | 'off' | 'low' | 'medium' | 'high'
+
+export const REASONING_LEVELS: readonly ReasoningLevel[] = ['provider', 'off', 'low', 'medium', 'high']
+
 export interface AppConfig {
   apiKey: string | null
   apiProvider: APIProvider
   model: string
   utilityModel: string
+  llmEngine: LlmEngine
+  reasoning: ReasoningLevel
 }
 
 /**
@@ -217,13 +241,44 @@ export function isReviewPassEnabled(): boolean {
   return readSetting<boolean>('reviewPass', false) === true
 }
 
+// Which library carries a generation request. Read and written through the
+// shared setting helpers for the same reason as the review-pass flag above: it
+// is consulted on the way into a generation run, and a run is exercised in a
+// node process where there is no window at all.
+//
+// Only an explicit 'sdk' selects the older path. A stored value from a build
+// that predates this setting is absent rather than wrong, and a hand-edited or
+// unrecognised one is not a considered choice — both land on the default
+// rather than on an engine nobody picked.
+export function getLlmEngine(): LlmEngine {
+  return readSetting<LlmEngine>('llmEngine', 'pi') === 'sdk' ? 'sdk' : 'pi'
+}
+
+export function setLlmEngine(engine: LlmEngine): void {
+  writeSetting('llmEngine', engine)
+}
+
+// Read through the same helpers and normalised the same way as the engine
+// above: a value saved by an older build, or edited by hand, falls back to
+// 'provider' rather than sending a level no provider would accept.
+export function getReasoning(): ReasoningLevel {
+  const stored = readSetting<ReasoningLevel>('reasoning', 'provider')
+  return REASONING_LEVELS.includes(stored) ? stored : 'provider'
+}
+
+export function setReasoning(level: ReasoningLevel): void {
+  writeSetting('reasoning', level)
+}
+
 export function createAppConfig(): AppConfig {
   const provider = getApiProvider()
   return {
     apiKey: provider === 'openrouter' ? getOpenRouterApiKey() : getApiKey(),
     apiProvider: provider,
     model: getModel(),
-    utilityModel: getUtilityModel()
+    utilityModel: getUtilityModel(),
+    llmEngine: getLlmEngine(),
+    reasoning: getReasoning()
   }
 }
 

@@ -26,6 +26,18 @@ export interface ProviderToolCallFrame {
   argumentsDelta: string
 }
 
+// What a reasoning model emits before it answers. It is NOT part of the
+// script: nothing here is ever written into a section, and the frame exists
+// only so a caller can show that the model is working. Without it a reasoning
+// model looks identical to a stalled request — on this app's own measurements
+// a section can sit silent for thirty seconds and then arrive whole, because
+// the model spends that time thinking and emits the tool call in one burst at
+// the end.
+export interface ProviderThinkingFrame {
+  kind: 'thinking'
+  delta: string
+}
+
 // Emitted once per request, at the first delta of either kind, so latency to
 // first token is measured where it happens rather than inferred afterwards.
 export interface ProviderFirstTokenFrame {
@@ -52,6 +64,7 @@ export interface ProviderFinishedFrame {
 export type ProviderFrame =
   | ProviderTextFrame
   | ProviderToolCallFrame
+  | ProviderThinkingFrame
   | ProviderFirstTokenFrame
   | ProviderUsageFrame
   | ProviderFinishedFrame
@@ -64,4 +77,8 @@ export function isTextFrame(frame: ProviderFrame): frame is ProviderTextFrame {
 
 export function isToolCallFrame(frame: ProviderFrame): frame is ProviderToolCallFrame {
   return frame.kind === 'toolCall'
+}
+
+export function isThinkingFrame(frame: ProviderFrame): frame is ProviderThinkingFrame {
+  return frame.kind === 'thinking'
 }
