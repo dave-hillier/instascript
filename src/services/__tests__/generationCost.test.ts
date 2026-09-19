@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import {
   estimateConversationTokens,
   estimateCostUsd,
@@ -11,6 +11,7 @@ import {
   OPENAI_UTILITY_MODELS,
   OPENROUTER_UTILITY_MODELS
 } from '../modelPresets'
+import { setCachedCatalog } from '../openrouterCatalog'
 import type { RawConversation } from '../../types/conversation'
 
 const makeConversation = (): RawConversation => ({
@@ -182,5 +183,35 @@ describe('estimateConversationTokens with real provider usage', () => {
     expect(totals.inputTokens).toBe(1_000 + 360)
     expect(totals.outputTokens).toBe(200 + 100)
     expect(totals.measuredCount).toBe(1)
+  })
+})
+
+// The pricing table above covers the curated presets; everything else settings
+// now offers is priced by the catalogue it was picked from.
+describe('estimateCostUsd, against the fetched catalogue', () => {
+  afterEach(() => {
+    setCachedCatalog([], 0)
+  })
+
+  it('prices a catalogue model the static table has never heard of', () => {
+    setCachedCatalog([
+      {
+        id: 'vendor/new-model',
+        name: 'New Model',
+        supportsTools: true,
+        inputPerMillion: 2,
+        outputPerMillion: 10
+      }
+    ])
+
+    const cost = estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 100_000 }, 'vendor/new-model')
+
+    expect(cost).toBeCloseTo(3)
+  })
+
+  it('shows no cost for a catalogue model with no published price', () => {
+    setCachedCatalog([{ id: 'vendor/unpriced', name: 'Unpriced', supportsTools: true }])
+
+    expect(estimateCostUsd({ inputTokens: 1000, outputTokens: 1000 }, 'vendor/unpriced')).toBeNull()
   })
 })

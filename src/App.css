@@ -1481,6 +1481,19 @@ dialog form p.connection-test-result[data-outcome="failure"] {
   color: var(--danger);
 }
 
+/* What the OpenRouter model catalogue is doing, above the two model pickers */
+dialog form p.model-catalog-status {
+  max-width: none;
+  margin: 0 0 0.75rem;
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+dialog form p.model-catalog-status[data-outcome="failure"] {
+  color: var(--danger);
+}
+
 /* Library export/import (story 7.2) */
 .library-transfer {
   display: flex;

@@ -6,6 +6,7 @@
 // only.
 
 import { estimateTokenCount } from '../utils/contextWindow'
+import { findCatalogModel } from './openrouterCatalog'
 import type { RawConversation } from '../types/conversation'
 
 export interface TokenTotals {
@@ -99,13 +100,29 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'x-ai/grok-3-mini': { inputPerMillion: 0.3, outputPerMillion: 0.5 }
 }
 
+// Settings offers OpenRouter's whole catalogue, so most models a script can be
+// generated on are not in the table above. The catalogue publishes a price per
+// model, which is the same list price the table holds by hand; read it when
+// the table has nothing, so the cost line survives the wider choice. A model
+// OpenRouter publishes no price for stays unpriced.
+function catalogPricing(model: string): ModelPricing | null {
+  const catalogued = findCatalogModel(model)
+  if (catalogued?.inputPerMillion === undefined || catalogued.outputPerMillion === undefined) {
+    return null
+  }
+  return {
+    inputPerMillion: catalogued.inputPerMillion,
+    outputPerMillion: catalogued.outputPerMillion
+  }
+}
+
 // Approximate USD cost of the given token totals at the model's list price,
 // or null when the model's pricing is unknown
 export function estimateCostUsd(
   totals: Pick<TokenTotals, 'inputTokens' | 'outputTokens'>,
   model: string
 ): number | null {
-  const pricing = MODEL_PRICING[model]
+  const pricing = MODEL_PRICING[model] ?? catalogPricing(model)
   if (!pricing) return null
   return (
     (totals.inputTokens / 1_000_000) * pricing.inputPerMillion +

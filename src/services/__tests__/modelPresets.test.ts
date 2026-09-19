@@ -43,6 +43,7 @@ import {
   resolveRetiredModel,
   supportsToolCalling
 } from '../modelPresets'
+import { setCachedCatalog } from '../openrouterCatalog'
 
 // A model id saved by an older build lives in localStorage, so these tests
 // need a store to write into. A map is enough: only getItem and setItem are
@@ -282,5 +283,35 @@ describe('the run model pin the ConversationProvider supplies', () => {
 
     expect(callbacks.getScript?.('script_pinned')).toBeUndefined()
     expect(planGeneration(callbacks.getScript?.('script_pinned')).model).toBe('gpt-5')
+  })
+})
+
+// Settings offers OpenRouter's whole catalogue, and the catalogue says per
+// model whether its API takes a `tools` parameter, so a model picked from the
+// list is judged on that rather than left unknown.
+describe('supportsToolCalling, against the fetched catalogue', () => {
+  afterEach(() => {
+    setCachedCatalog([], 0)
+  })
+
+  it('answers from the catalogue for a model the static table has never heard of', () => {
+    setCachedCatalog([
+      { id: 'vendor/tool-caller', name: 'Tool Caller', supportsTools: true },
+      { id: 'vendor/prose-only', name: 'Prose Only', supportsTools: false }
+    ])
+
+    expect(supportsToolCalling('vendor/tool-caller')).toBe(true)
+    expect(supportsToolCalling('vendor/prose-only')).toBe(false)
+    expect(canAttemptToolCalling('vendor/prose-only')).toBe(false)
+  })
+
+  it('keeps the curated verdict when the two disagree', () => {
+    setCachedCatalog([{ id: 'gpt-3.5-turbo-instruct', name: 'Instruct', supportsTools: true }])
+
+    expect(supportsToolCalling('gpt-3.5-turbo-instruct')).toBe(false)
+  })
+
+  it('stays unknown for a model in neither', () => {
+    expect(supportsToolCalling('vendor/not-fetched')).toBe('unknown')
   })
 })

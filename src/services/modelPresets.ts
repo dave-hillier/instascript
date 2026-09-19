@@ -1,6 +1,14 @@
-// The models offered in settings. They live here rather than in the settings
-// component so the pricing table can be checked against them: a preset with no
-// published price shows tokens but no cost, which is a silent gap.
+// The curated model lists. OpenAI publishes no catalogue an app can offer, so
+// its lists are the ones below and nothing else. OpenRouter's lists are now
+// fetched from its /models endpoint (see openrouterCatalog) and these presets
+// are the fallback for when that cannot be reached — an offline settings panel
+// still has something to choose from.
+//
+// They live here rather than in the settings component so the pricing table
+// can be checked against them: a preset with no published price shows tokens
+// but no cost, which is a silent gap.
+
+import { findCatalogModel } from './openrouterCatalog'
 
 export type ModelOption = { value: string; label: string }
 
@@ -91,9 +99,19 @@ export const TOOL_CALLING_SUPPORT: Record<string, boolean> = {
 
 // Retired ids resolve first, so a setting saved before a model was withdrawn
 // is judged on the successor that will actually serve the request.
+//
+// The static table is consulted before the fetched OpenRouter catalogue: it is
+// curated, it covers OpenAI's ids too, and it is the only thing left when the
+// catalogue cannot be reached. The catalogue then answers for everything else,
+// which is most of what settings now offers — it publishes
+// `supported_parameters` per model, so a model picked from the list is judged
+// on what the provider says rather than left unknown.
 export function supportsToolCalling(model: string): ToolCallingSupport {
-  const known = TOOL_CALLING_SUPPORT[resolveRetiredModel(model.trim())]
-  return known === undefined ? 'unknown' : known
+  const id = resolveRetiredModel(model.trim())
+  const known = TOOL_CALLING_SUPPORT[id]
+  if (known !== undefined) return known
+  const catalogued = findCatalogModel(id)
+  return catalogued === undefined ? 'unknown' : catalogued.supportsTools
 }
 
 // The decision every caller actually makes. An unknown id is treated as

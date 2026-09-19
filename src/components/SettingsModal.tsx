@@ -10,25 +10,21 @@ import {
 } from '../services/speechAudioCache'
 import { formatBytes } from '../utils/formatBytes'
 import { getDefaultModel, type APIProvider, type LlmEngine, type ReasoningLevel } from '../services/config'
-import {
-  OPENAI_MODELS,
-  OPENROUTER_MODELS,
-  OPENAI_UTILITY_MODELS,
-  OPENROUTER_UTILITY_MODELS,
-  supportsToolCalling,
-  type ModelOption
-} from '../services/modelPresets'
+import { supportsToolCalling, type ModelOption } from '../services/modelPresets'
+import { generationModelOptions, utilityModelOptions } from '../services/modelOptions'
+import { useOpenRouterCatalog } from '../hooks/useOpenRouterCatalog'
 import { testApiConnection } from '../services/connectionTest'
 import type { LibraryImportCounts } from '../services/libraryTransfer'
 import type { Theme } from '../services/themePreference'
-
-const CUSTOM_MODEL = 'custom'
 
 type ModelFieldProps = {
   id: string
   label: string
   help: string
   options: ModelOption[]
+  // Whether the provider will serve any model id, not just the ones listed.
+  // OpenRouter will, and its catalogue is long enough that the list has to be
+  // typed into rather than scrolled, so the field becomes a combobox.
   allowCustom: boolean
   value: string
   onChange: (model: string) => void
@@ -37,41 +33,49 @@ type ModelFieldProps = {
   warning?: string
 }
 
-// One model picker: a preset list plus, where the provider allows any model
-// id, a free-text field. A value outside the presets is a custom model, so
-// the two controls need no extra state to stay in step.
+// One model picker. Where the provider serves a fixed set — OpenAI — it is a
+// select. Where it serves a catalogue of hundreds and accepts any id besides —
+// OpenRouter — it is a text field with the catalogue behind it as suggestions,
+// so the same control both offers the list and takes a model that is not on
+// it. Either way the value is the model id, and nothing outside the field has
+// to know which of the two it was typed or chosen in.
 const ModelField = ({ id, label, help, options, allowCustom, value, onChange, warning }: ModelFieldProps) => {
-  const isPreset = options.some(option => option.value === value)
   const describedBy = `${id}-help`
 
   return (
     <>
       <label htmlFor={id}>{label}</label>
-      <select
-        id={id}
-        value={isPreset ? value : CUSTOM_MODEL}
-        onChange={event => onChange(event.target.value === CUSTOM_MODEL ? '' : event.target.value)}
-        aria-describedby={describedBy}
-      >
-        {options.map(option => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-        {allowCustom && <option value={CUSTOM_MODEL}>Custom model...</option>}
-      </select>
 
-      {allowCustom && !isPreset && (
+      {allowCustom ? (
         <>
-          <label htmlFor={`${id}-custom`}>Custom model ID</label>
           <input
             type="text"
-            id={`${id}-custom`}
-            placeholder="e.g. x-ai/grok-4.3, anthropic/claude-sonnet-4"
+            id={id}
+            list={`${id}-options`}
             value={value}
+            placeholder="e.g. x-ai/grok-4.5, anthropic/claude-sonnet-4"
             onChange={event => onChange(event.target.value)}
-            aria-describedby={`${id}-custom-help`}
+            aria-describedby={describedBy}
+            autoComplete="off"
+            spellCheck={false}
           />
-          <p id={`${id}-custom-help`}>Enter any OpenRouter model ID</p>
+          <datalist id={`${id}-options`}>
+            {options.map(option => (
+              <option key={option.value} value={option.value} label={option.label} />
+            ))}
+          </datalist>
         </>
+      ) : (
+        <select
+          id={id}
+          value={value}
+          onChange={event => onChange(event.target.value)}
+          aria-describedby={describedBy}
+        >
+          {options.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
       )}
 
       {warning && (
@@ -80,7 +84,7 @@ const ModelField = ({ id, label, help, options, allowCustom, value, onChange, wa
         </p>
       )}
 
-      <p id={`${id}-help`}>{help}</p>
+      <p id={describedBy}>{help}</p>
     </>
   )
 }
@@ -248,6 +252,9 @@ export const SettingsModal = ({
   const [tempStyleInstructions, setTempStyleInstructions] = useState(styleInstructions)
   const [tempImportInstructions, setTempImportInstructions] = useState(importInstructions)
   const transcripts = useSyncExternalStore(subscribeToTranscripts, getTranscripts)
+  // OpenRouter's catalogue is what the model pickers offer, so it is fetched
+  // while the panel is open on that provider and nowhere else
+  const catalog = useOpenRouterCatalog(isOpen && tempApiProvider === 'openrouter')
   const [connectionTest, connectionTestDispatch] = useReducer(connectionTestReducer, { status: 'idle' })
   const [libraryTransfer, libraryTransferDispatch] = useReducer(libraryTransferReducer, { status: 'idle' })
   // Remounts the file input after each import so choosing the same file again
@@ -408,7 +415,7 @@ export const SettingsModal = ({
     }
   }
 
-  const modelOptions = tempApiProvider === 'openai' ? OPENAI_MODELS : OPENROUTER_MODELS
+  const modelOptions = generationModelOptions(tempApiProvider, catalog.models)
   // Generation drives the model with tool calls, so a model whose API has no
   // tools parameter cannot write a script here at all. It is a warning rather
   // than a block: the capability table cannot be complete, and providerStatus
@@ -418,9 +425,20 @@ export const SettingsModal = ({
   const toolCallingWarning = supportsToolCalling(tempModel) === false
     ? `${tempModel} does not support tool calling. Generation writes a script by calling tools, so choose another generation model.`
     : undefined
-  const utilityModelOptions = tempApiProvider === 'openai'
-    ? OPENAI_UTILITY_MODELS
-    : OPENROUTER_UTILITY_MODELS
+  const utilityOptions = utilityModelOptions(tempApiProvider, catalog.models)
+  // What the catalogue is doing, said once above the two pickers rather than
+  // twice inside them. A failure is worth saying out loud: the lists silently
+  // shrink to the short curated fallback, which otherwise looks like the
+  // provider having withdrawn everything else.
+  const catalogMessage = tempApiProvider !== 'openrouter'
+    ? ''
+    : catalog.status === 'failed'
+      ? `OpenRouter's model list could not be loaded (${catalog.error}). The fields below offer a short list, and accept any model id.`
+      : catalog.status === 'loading' && catalog.models.length === 0
+        ? "Loading OpenRouter's model list..."
+        : catalog.models.length > 0
+          ? `${catalog.models.length} models from OpenRouter. Start typing to filter, or enter any model id.`
+          : ''
   const testableKey = tempApiProvider === 'openai' ? tempApiKey : tempOpenRouterApiKey
   const connectionMessage = connectionTest.status === 'testing'
     ? 'Testing connection...'
@@ -536,6 +554,17 @@ export const SettingsModal = ({
 
           {tempApiProvider !== 'mock' && (
             <>
+              {catalogMessage && (
+                <p
+                  className="model-catalog-status"
+                  role="status"
+                  aria-live="polite"
+                  data-outcome={catalog.status === 'failed' ? 'failure' : undefined}
+                >
+                  {catalogMessage}
+                </p>
+              )}
+
               <ModelField
                 id="model-selector"
                 label="Generation model"
@@ -551,7 +580,7 @@ export const SettingsModal = ({
                 id="utility-model-selector"
                 label="Utility model"
                 help="Handles the short background jobs — suggesting tags for imported examples and formatting plain-text imports as markdown. A small cheap model is faster and costs a fraction of the generation model"
-                options={utilityModelOptions}
+                options={utilityOptions}
                 allowCustom={tempApiProvider === 'openrouter'}
                 value={tempUtilityModel}
                 onChange={setTempUtilityModel}
