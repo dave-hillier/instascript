@@ -146,7 +146,12 @@ export const HomePage = () => {
         model: getModel()
       }
 
-      // Create conversation
+      // Created here, in the same event and right after the script is stamped
+      // with its model, because that is where the run's model pin is captured:
+      // the run below starts before React has rendered ADD_SCRIPT, so the
+      // provider cannot read the pin off the script record. Anything that
+      // changes the model setting between the stamp above and this call would
+      // start the run in the wrong mode.
       const conversation = createConversation(scriptId)
       script.conversationId = conversation.id
 

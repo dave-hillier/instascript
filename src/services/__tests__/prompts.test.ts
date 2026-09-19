@@ -10,10 +10,20 @@ import {
   normaliseConversationHistory,
   buildConversationHistory,
   getSystemPrompt,
+  getStyleRules,
+  styleRuleNumbers,
+  isStyleRuleNumber,
+  styleRuleRange,
+  getToolSystemPrompt,
+  getToolOutlineGenerationPrompt,
+  getToolSectionGenerationPrompt,
+  buildToolGenerationSystemPrompt,
   getOutlineGenerationPrompt,
   buildGenerationSystemPrompt,
   withGenerationSystemPrompt,
   buildStructureBlock,
+  buildOutlineCritiquePrompt,
+  buildScriptReviewPrompt,
   withStructureBlock,
   buildExampleTaggingPrompt,
   buildDeviceConsolidationPrompt,
@@ -21,8 +31,7 @@ import {
   formatDeviceObservations,
   formatDevicesForPrompt,
   formatFidelityForCritique,
-  formatFidelityForPrompt,
-  getStyleRules
+  formatFidelityForPrompt
 } from '../prompts'
 import type { CorpusDevice } from '../corpusDevices'
 import { buildScriptFs, renderScriptFsTree } from '../scriptFs'
@@ -88,6 +97,31 @@ describe('the requested length in the prompts', () => {
 
   it('falls back to the default target when no length is given', () => {
     expect(getSystemPrompt()).toContain(`about ${buildLengthPlan().targetMinutes} minutes`)
+  })
+})
+
+// The rules live in their own file now, assembled into the system prompt
+// rather than sliced back out of it by position. These guard the seam: the
+// prompt the model writes against and the rules the critique judges against
+// have to stay one and the same text, and nothing may sit between them.
+describe('the style rules in the system prompt', () => {
+  it('carries the numbered rules to whoever writes the script', () => {
+    const prompt = getSystemPrompt()
+
+    expect(prompt).toContain('## Style rules')
+    expect(prompt).toContain('1. Use second-person imperative voice')
+    expect(prompt).toContain('14. Avoid technical hypnosis terms')
+  })
+
+  it('states the rules once — generation and critique read the same text', () => {
+    expect(getSystemPrompt()).toContain(getStyleRules())
+    expect(getStyleRules()).toMatch(/^## Style rules\n/)
+  })
+
+  it('keeps the rules whole: no gap between the base prompt and rule 1', () => {
+    const prompt = getSystemPrompt()
+
+    expect(prompt).toContain('(i.e. as markdown).\n\n## Style rules')
   })
 })
 
@@ -453,6 +487,73 @@ describe('conversation history normalisation (story 8.13)', () => {
     expect(history).toContainEqual({ role: 'user', content: 'Focus on breathing imagery.' })
   })
 
+  it('leaves a draft the run refused out of the replayed history', () => {
+    // A rejected attempt is stored so nothing is silently lost, but replaying
+    // it would hand the model back a draft it was told to rewrite as though it
+    // were its own kept output — and every later pass would read it.
+    const rejectedMessages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'Write the "Induction" section' }
+    ]
+    const conversation: RawConversation = {
+      id: 'conv-1',
+      scriptId: 'script-1',
+      generations: [
+        {
+          messages: rejectedMessages,
+          response: '## Induction\nThe two-thousand-word draft.',
+          timestamp: 0,
+          toolCalls: [
+            { id: 'call_1', name: 'section_write', title: 'Induction', status: 'rejected', wordCount: 2000 }
+          ]
+        },
+        {
+          messages: rejectedMessages,
+          response: '## Induction\nThe kept draft.',
+          timestamp: 1,
+          toolCalls: [
+            { id: 'call_2', name: 'section_write', title: 'Induction', status: 'accepted', wordCount: 500 }
+          ]
+        }
+      ],
+      createdAt: 0,
+      updatedAt: 0
+    }
+
+    const history = buildConversationHistory(conversation, 'Review the script')
+
+    expect(history.filter(message => message.role === 'assistant')).toEqual([
+      { role: 'assistant', content: '## Induction\nThe kept draft.' }
+    ])
+    expect(history.some(message => message.content.includes('two-thousand-word'))).toBe(false)
+  })
+
+  it('keeps a waived draft in the replayed history: it was accepted', () => {
+    const conversation: RawConversation = {
+      id: 'conv-1',
+      scriptId: 'script-1',
+      generations: [
+        {
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: 'Write the "Induction" section' }
+          ],
+          response: '## Induction\nThe waived draft.',
+          timestamp: 0,
+          toolCalls: [
+            { id: 'call_1', name: 'section_write', title: 'Induction', status: 'waived', wordCount: 820 }
+          ]
+        }
+      ],
+      createdAt: 0,
+      updatedAt: 0
+    }
+
+    expect(buildConversationHistory(conversation, 'Review the script')).toContainEqual(
+      { role: 'assistant', content: '## Induction\nThe waived draft.' }
+    )
+  })
+
   it('leaves a history with no system message unchanged', () => {
     const messages: ChatMessage[] = [
       { role: 'user', content: 'Hello' },
@@ -809,5 +910,168 @@ describe('rules and corpus (story 8.20)', () => {
 
     expect(rules).toContain('## Rules and corpus')
     expect(rules).toContain('the rule wins')
+  })
+})
+
+describe('the tool-mode prompts', () => {
+  const plan = buildLengthPlan(45)
+
+  it('judges a tool-written script against the same style rules file as a prose one', () => {
+    // The rules were extracted into their own file precisely so that the pass
+    // that judges a script reads what the script was written against. A forked
+    // copy for the tool path would drift silently.
+    expect(getToolSystemPrompt()).toContain(getStyleRules())
+  })
+
+  it('drops the markdown format instructions that the tools make obsolete', () => {
+    const prompt = getToolSystemPrompt()
+
+    expect(prompt).not.toContain('title on the first line')
+    expect(prompt).not.toContain('Output no preamble')
+    expect(prompt).toContain('outline_write')
+    expect(prompt).toContain('section_write')
+    expect(prompt).toContain('section_revise')
+  })
+
+  it('carries the requested length the same way the prose system prompt does', () => {
+    const prompt = getToolSystemPrompt(plan)
+
+    expect(prompt).toContain(`${plan.targetMinutes} minutes`)
+    expect(prompt).toContain(String(plan.sectionCount))
+    expect(prompt).not.toContain('{targetMinutes}')
+  })
+
+  it('appends the corpus to the tool system prompt exactly as the prose one does', () => {
+    const example: ExampleScript = {
+      content: 'A candle gutters in still air.',
+      metadata: { id: 'ex-candle', title: 'Candle Flame', source: 'bundled' },
+      score: 0.9
+    }
+
+    expect(buildToolGenerationSystemPrompt(plan, [])).toBe(getToolSystemPrompt(plan))
+    const grounded = buildToolGenerationSystemPrompt(plan, [example])
+    expect(grounded.startsWith(getToolSystemPrompt(plan))).toBe(true)
+    expect(grounded).toContain('A candle gutters in still air.')
+  })
+
+  it('asks for the plan as an outline_write call, against the run length', () => {
+    const prompt = getToolOutlineGenerationPrompt(plan)
+
+    expect(prompt).toContain('outline_write')
+    expect(prompt).toContain(String(plan.sectionCount))
+    expect(prompt).toContain(`${plan.targetMinutes} minutes`)
+    expect(prompt).not.toContain('{sectionWords}')
+  })
+
+  it('asks for a section as a section_write call under its exact outline title', () => {
+    const prompt = getToolSectionGenerationPrompt('Induction', 'Settle the listener.', [
+      { title: 'Awakening', description: 'Return refreshed.' }
+    ])
+
+    expect(prompt).toContain('section_write')
+    expect(prompt).toContain('"Induction"')
+    expect(prompt).toContain('Settle the listener.')
+    expect(prompt).toContain(String(SECTION_TARGET_WORDS))
+    // Story 8.10 survives the move to tools: a section still knows what is
+    // still to come so it can plant setups for it
+    expect(prompt).toContain('Still to come after this section')
+    expect(prompt).toContain('- "Awakening":')
+    // The heading comes from the outline title, so there is nothing to say
+    // about "##" headers or preambles any more
+    expect(prompt).not.toContain('##')
+  })
+})
+
+describe('the numbers the style rules carry', () => {
+  it('reads them off style-rules.txt rather than restating them', () => {
+    const numbers = styleRuleNumbers()
+
+    expect(numbers.length).toBeGreaterThan(1)
+    // A contiguous run from one, which is what the file's numbered list is
+    expect(numbers).toEqual(numbers.map((_, index) => index + 1))
+    // Every number names a line that is actually in the file
+    for (const number of numbers) {
+      expect(getStyleRules()).toContain(`\n${number}. `)
+    }
+  })
+
+  it('recognises a rule the list carries and refuses one it does not', () => {
+    const numbers = styleRuleNumbers()
+
+    expect(isStyleRuleNumber(numbers[0])).toBe(true)
+    expect(isStyleRuleNumber(numbers[numbers.length - 1])).toBe(true)
+    expect(isStyleRuleNumber(numbers[numbers.length - 1] + 1)).toBe(false)
+    expect(isStyleRuleNumber(0)).toBe(false)
+    expect(isStyleRuleNumber(1.5)).toBe(false)
+    expect(isStyleRuleNumber('6')).toBe(false)
+    expect(isStyleRuleNumber(undefined)).toBe(false)
+  })
+
+  it('quotes the range back as the numbers the file actually has', () => {
+    const numbers = styleRuleNumbers()
+
+    expect(styleRuleRange()).toBe(`${numbers[0]}-${numbers[numbers.length - 1]}`)
+  })
+
+  it('does not mistake a sub-bullet of a rule for a rule of its own', () => {
+    // Rule 3's pacing marks are indented bullets, not numbered rules
+    expect(getStyleRules()).toContain('`…` = short pause')
+    expect(styleRuleNumbers()).not.toContain(0)
+  })
+})
+
+// Both judging passes ask for the critique the SAME way — one critique_record
+// call, with the stage of the pass that is running — because the model's
+// answer is read by one acceptance path. What differs between them is what
+// they may quote, and each prompt has to say which it is or the model spends a
+// turn being refused.
+describe('what the judging passes ask for', () => {
+  const outlinePrompt = buildOutlineCritiquePrompt(
+    'a relaxing script',
+    '# Deep Rest\n## Induction\nSettle the listener.',
+    buildLengthPlan()
+  )
+  const reviewPrompt = buildScriptReviewPrompt(
+    'a relaxing script',
+    'The script is 3,300 words.',
+    '# Deep Rest\n## Induction\nSettle.'
+  )
+
+  it('asks the outline critique to record its verdict under its own stage', () => {
+    expect(outlinePrompt).toContain('`critique_record`')
+    expect(outlinePrompt).toContain('stage "outline"')
+  })
+
+  it('tells the outline critique to quote nothing, because nothing is written', () => {
+    expect(outlinePrompt).toContain('Record NO spans')
+    expect(outlinePrompt).not.toMatch(/CHARACTER FOR CHARACTER/)
+  })
+
+  it('leaves the outline critique free to revise the plan it just judged', () => {
+    expect(outlinePrompt).toContain('`outline_write`')
+    expect(outlinePrompt).toContain('# Title')
+  })
+
+  it('keeps the prose answer a model without tools gives, for both passes', () => {
+    expect(outlinePrompt).toContain('If no tools are available to you')
+    expect(outlinePrompt).toContain('OUTLINE OK')
+    expect(reviewPrompt).toContain('If no tools are available to you')
+    expect(reviewPrompt).toContain('VERDICT: <section title> | cohesive')
+    expect(reviewPrompt).toContain('VERDICT: <section title> | revise |')
+  })
+
+  it('asks the whole-script review to record its verdict under its own stage', () => {
+    expect(reviewPrompt).toContain('`critique_record`')
+    expect(reviewPrompt).toContain('stage "review"')
+  })
+
+  it('asks the whole-script review to quote, because the script is written', () => {
+    expect(reviewPrompt).toContain('CHARACTER FOR CHARACTER')
+    expect(reviewPrompt).toContain('`spans`')
+  })
+
+  it('tells the whole-script review it is marking, not rewriting', () => {
+    expect(reviewPrompt).toContain('MARKING this script, not rewriting it')
+    expect(reviewPrompt).not.toContain('what the rewrite must do')
   })
 })

@@ -6,6 +6,12 @@
 import type { Script } from '../types/script'
 import type { RawConversation, Generation, ChatMessage } from '../types/conversation'
 import { sanitizeSelectionCounts } from './exampleCorpus'
+import {
+  sanitizeGenerationToolCalls,
+  sanitizeGenerationMetrics,
+  sanitizeGenerationCritique,
+  sanitizeGenerationRound
+} from './conversationParser'
 
 export const LIBRARY_EXPORT_FORMAT = 'instascript-library'
 export const LIBRARY_EXPORT_VERSION = 1
@@ -123,7 +129,27 @@ const validateGeneration = (value: unknown, conversationId: string): Generation 
     response: typeof value.response === 'string' ? value.response : '',
     timestamp: typeof value.timestamp === 'number' ? value.timestamp : Date.now(),
     cachedTokens: typeof value.cachedTokens === 'number' ? value.cachedTokens : undefined,
-    exampleIds: Array.isArray(value.exampleIds) ? value.exampleIds.filter(isNonEmptyString) : undefined
+    exampleIds: Array.isArray(value.exampleIds) ? value.exampleIds.filter(isNonEmptyString) : undefined,
+    // Deliberately drop-not-throw, unlike the message validation above: a
+    // malformed message means the generation's request is unreadable, but a
+    // malformed tool call only costs the structure around prose that is
+    // intact in `response`. Throwing here would abort the whole import over
+    // a record nothing needs, so an unrecognised entry is simply dropped.
+    toolCalls: sanitizeGenerationToolCalls(value.toolCalls),
+    // Drop-not-throw as well, and for a stronger version of the same reason:
+    // metrics are a record ABOUT the request, so a malformed one costs a line
+    // of telemetry, while throwing here would abort the import of an entire
+    // library over it.
+    metrics: sanitizeGenerationMetrics(value.metrics),
+    // Drop-not-throw again, and this one matters most of the three: a critique
+    // is written by a model, so a malformed one is the likeliest of all to
+    // arrive. validateMessage above THROWS, and a throw here would abort the
+    // import of an ENTIRE library over one unreadable judgement about one
+    // section of one script.
+    critique: sanitizeGenerationCritique(value.critique),
+    // And again: a round record says why a generation was made. An import that
+    // cannot read one loses the reason, not the writing.
+    round: sanitizeGenerationRound(value.round)
   }
 }
 

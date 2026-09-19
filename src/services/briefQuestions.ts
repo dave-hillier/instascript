@@ -9,6 +9,7 @@
 
 import type { ChatMessage } from '../types/conversation'
 import type { ScriptGenerationService } from './scriptGenerationService'
+import { isTextFrame } from './providerFrame'
 import { buildBriefQuestionsPrompt } from './prompts'
 
 // Marker used as the RegenerationRequest section title for the questions
@@ -316,12 +317,14 @@ export async function requestBriefQuestions(
   const messages: ChatMessage[] = [{ role: 'user', content: prompt }]
 
   let text = ''
-  for await (const chunk of service.regenerateSection(
+  for await (const frame of service.regenerateSection(
     { prompt, conversationId: '', sectionTitle: BRIEF_QUESTIONS_SECTION_TITLE },
     messages,
     abortSignal
   )) {
-    text += chunk
+    // The questionnaire is asked as prose; anything else the provider reports
+    // about the request is not part of the reply being parsed
+    if (isTextFrame(frame)) text += frame.delta
   }
 
   const questions = parseBriefQuestions(text)

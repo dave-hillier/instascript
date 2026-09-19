@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { useAppContext } from '../hooks/useAppContext'
@@ -10,7 +10,6 @@ import { PerformanceMode } from '../components/PerformanceMode'
 import { ConversationPanel } from '../components/ConversationPanel'
 import { ScriptDocument } from '../components/ScriptDocument'
 import { buildThread } from '../services/conversationThread'
-import { extractDocumentTitle } from '../utils/scriptMetrics'
 import { buildProgressRows, type ProgressPlan } from '../utils/scriptProgress'
 import {
   exampleFolder,
@@ -19,177 +18,28 @@ import {
   promoteScriptToExample
 } from '../services/exampleCorpus'
 import { formatReviewSummary, reviewReportDescribesStructure } from '../services/critiquePass'
+import { markReducer, marksToStore, NO_MARK_STATE } from '../reducers/markReducer'
+import { findingKey, loadMarks, saveMarks, type ReaderFlag } from '../services/markStore'
+import {
+  documentMarkView,
+  focusedRunKey,
+  markFaultNote,
+  markMadeNote,
+  type SectionMark
+} from '../services/sectionMarkView'
+import { resolveSpan } from '../services/span'
+import { projectConversation, sectionRevisions } from '../services/scriptProjection'
 import { SECTION_TARGET_WORDS } from '../services/sectionQuality'
+import type { ScriptDocumentSection } from './scriptPageDocument'
 import type { Script } from '../types/script'
-import type { RawConversation } from '../types/conversation'
 
-
-interface ScriptDocumentSection {
-  id: string
-  title: string
-  content: string
-  wordCount: number
-}
-
-interface ScriptDocument {
-  title?: string
-  sections: ScriptDocumentSection[]
-  fullContent: string
-  isGenerating: boolean
-  hasError: boolean
-  errorMessage?: string
-}
-
-interface CurrentGeneration {
-  conversationId: string
-  isComplete: boolean
-  error?: string
-  sectionTitle?: string
-}
-
-// Parse sections from script content
-const parseSections = (scriptContent: string): { title?: string; sections: ScriptDocumentSection[] } => {
-  const lines = scriptContent.split('\n')
-  const firstLine = lines[0]
-  const titleMatch = firstLine.match(/^#\s+(.+)$/)
-  const documentTitle = titleMatch ? titleMatch[1].trim() : undefined
-
-  const sections: ScriptDocumentSection[] = []
-  let currentSectionStart = -1
-  let currentSectionTitle = ''
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    if (line.match(/^##\s+/)) {
-      // Complete previous section
-      if (currentSectionStart >= 0 && currentSectionTitle) {
-        const sectionContent = lines.slice(currentSectionStart + 1, i).join('\n').trim()
-        const wordCount = sectionContent.trim().split(/\s+/).filter(word => word.length > 0).length
-        sections.push({
-          id: `section_${currentSectionTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
-          title: currentSectionTitle,
-          content: sectionContent,
-          wordCount
-        })
-      }
-
-      // Start new section
-      currentSectionStart = i
-      currentSectionTitle = line.match(/##\s+(.+?)$/)?.[1]?.trim() || ''
-    }
-  }
-
-  // Handle last section
-  if (currentSectionStart >= 0 && currentSectionTitle) {
-    const sectionContent = lines.slice(currentSectionStart + 1).join('\n').trim()
-    const wordCount = sectionContent.trim().split(/\s+/).filter(word => word.length > 0).length
-    sections.push({
-      id: `section_${currentSectionTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
-      title: currentSectionTitle,
-      content: sectionContent,
-      wordCount
-    })
-  }
-
-  return { title: documentTitle, sections }
-}
-
-// Build document from multi-generation conversation
-// Generation 0 = outline, Generations 1..N = sections
-const getScriptDocument = (
-  conversation: RawConversation | undefined,
-  currentGeneration: CurrentGeneration | null
-): ScriptDocument => {
-  if (!conversation?.generations?.length) {
-    return {
-      sections: [],
-      fullContent: '',
-      isGenerating: false,
-      hasError: !!currentGeneration?.error,
-      errorMessage: currentGeneration?.error
-    }
-  }
-
-  // Outline generations start with a document-level "# Title" heading; section
-  // generations start with "## Section". A retried conversation can contain a
-  // fresh outline after earlier sections, so the last outline's title wins and
-  // outline bodies (plans, not script prose) are excluded from consolidation.
-  let documentTitle: string | undefined
-  const consolidatedSections: ScriptDocumentSection[] = []
-
-  for (const generation of conversation.generations) {
-    const isOutline = /^#(?!#)/.test(generation.response.trimStart())
-
-    if (isOutline) {
-      documentTitle = extractDocumentTitle(generation.response) ?? documentTitle
-      continue
-    }
-
-    const { sections: genSections } = parseSections(generation.response)
-
-    for (const section of genSections) {
-      const existingIndex = consolidatedSections.findIndex(s => s.title === section.title)
-      if (existingIndex >= 0) {
-        consolidatedSections[existingIndex] = section
-      } else {
-        consolidatedSections.push(section)
-      }
-    }
-  }
-
-  // Apply live updates during streaming
-  const sectionsWithLiveUpdates = consolidatedSections.map(section => {
-    const isSectionRegenerating = conversation && currentGeneration &&
-      currentGeneration.conversationId === conversation.id &&
-      !currentGeneration.isComplete &&
-      currentGeneration.sectionTitle === section.title
-
-    if (isSectionRegenerating) {
-      const liveContent = conversation.generations[conversation.generations.length - 1]?.response || ''
-      const { sections: liveSections } = parseSections(liveContent)
-      if (liveSections.length > 0) {
-        return { ...section, content: liveSections[0].content, wordCount: liveSections[0].wordCount }
-      }
-      return section
-    }
-    return section
-  })
-
-  // Check if a new section is currently streaming (not yet in consolidated)
-  if (currentGeneration &&
-      currentGeneration.conversationId === conversation.id &&
-      !currentGeneration.isComplete &&
-      currentGeneration.sectionTitle) {
-    const alreadyExists = sectionsWithLiveUpdates.some(s => s.title === currentGeneration.sectionTitle)
-    if (!alreadyExists) {
-      const liveResponse = conversation.generations[conversation.generations.length - 1]?.response || ''
-      const { sections: liveSections } = parseSections(liveResponse)
-      if (liveSections.length > 0) {
-        sectionsWithLiveUpdates.push(liveSections[0])
-      }
-    }
-  }
-
-  const isConversationGenerating = conversation && currentGeneration ?
-    currentGeneration.conversationId === conversation.id && !currentGeneration.isComplete : false
-
-  const fullContent = [
-    documentTitle ? `# ${documentTitle}` : '',
-    ...sectionsWithLiveUpdates.map(section => `## ${section.title}\n${section.content}`)
-  ].filter(Boolean).join('\n\n')
-
-  return {
-    title: documentTitle,
-    sections: sectionsWithLiveUpdates,
-    fullContent,
-    isGenerating: isConversationGenerating,
-    hasError: !!currentGeneration?.error,
-    errorMessage: currentGeneration?.error
-  }
-}
 
 const TARGET_WORDS_PER_SECTION = SECTION_TARGET_WORDS
+
+// Joins the observed finding keys into one dependency. A record separator
+// cannot appear in a key: the keys are built from a stage, a section title, a
+// reason and a quote, joined by a unit separator.
+const FINDING_KEY_SEPARATOR = '\u001E'
 
 interface WordCountMeterProps {
   sections: ScriptDocumentSection[]
@@ -284,6 +134,14 @@ export const ScriptPage = ({
   const [refineError, setRefineError] = useState<string | null>(null)
   // Why the last on-demand style review failed, shown beside its button
   const [reviewError, setReviewError] = useState<string | null>(null)
+  // The reader's own marks and the findings they have put away. Browser-only
+  // and keyed by script id (M2): a flag is a note about the words in front of
+  // the reader, not part of the record of how the script was written.
+  const [markState, markDispatch] = useReducer(markReducer, NO_MARK_STATE)
+  // Which mark the reader asked to be shown, so the panel and the body agree
+  const [focusedMarkId, setFocusedMarkId] = useState<string | null>(null)
+  // Why the last selection could not be marked, when it could not be
+  const [selectionNote, setSelectionNote] = useState<string | null>(null)
   // The corpus folder this script is saved into, if it is. Read from the
   // corpus rather than remembered, so a script saved in an earlier session
   // still says so.
@@ -292,19 +150,52 @@ export const ScriptPage = ({
     return saved ? exampleFolder(saved) : null
   })
 
+  // Marks are loaded per script and saved whenever they change. The script id
+  // is carried in the state itself so a save cannot be misfiled: navigating
+  // between scripts changes the id and the loaded marks in the same event.
+  useEffect(() => {
+    if (!id) return
+    markDispatch({ type: 'MARKS_LOADED', scriptId: id, marks: loadMarks(id) })
+    setFocusedMarkId(null)
+    setSelectionNote(null)
+  }, [id])
+
+  useEffect(() => {
+    if (markState.scriptId === null) return
+    saveMarks(markState.scriptId, marksToStore(markState))
+  }, [markState])
+
   const script = state.scripts.find((s: Script) => s.id === id)
   const conversation = script ? getConversationByScriptId(script.id) : undefined
   const currentGeneration = conversationState.currentGeneration
   const generationMachine = conversationState.generationMachine
   const reviewReport = conversationState.reviewReport
 
-  // Get structured document and generation state
-  const document = getScriptDocument(conversation, currentGeneration)
+  // The conversation is folded ONCE per render and everything the page needs
+  // is read off that one projection — the document it draws, and the findings
+  // the judging passes recorded. Folding again for the findings would redo the
+  // whole conversation on every keystroke in the section editor and the refine
+  // composer.
+  const projected = projectConversation(conversation, currentGeneration)
+  // The generating flag belongs to this conversation alone: a run started on
+  // another script must not make this one read as being written.
+  const document = {
+    title: projected.title,
+    sections: projected.sections,
+    fullContent: projected.fullContent,
+    isGenerating: !!conversation && !!currentGeneration &&
+      currentGeneration.conversationId === conversation.id &&
+      !currentGeneration.isComplete
+  }
+  const findings = projected.findings ?? []
   const generationState = {
     isGenerating: document.isGenerating,
     shouldDisableRegenerate: document.isGenerating,
     error: currentGeneration?.error
   }
+  // Section actions, and spending a mark, are both off while a run is in
+  // flight and where there is no conversation to ask through.
+  const canEditSections = !generationState.shouldDisableRegenerate && !!conversation
 
   const isThisConversation = conversation && generationMachine &&
     generationMachine.conversationId === conversation.id
@@ -357,8 +248,14 @@ export const ScriptPage = ({
     }
   }
 
-  const handleRegenerateSection = async (sectionTitle: string, instruction?: string) => {
-    if (!script || !conversation) return
+  // Answers whether the rewrite actually happened, because spending a mark
+  // turns on it: a mark discarded against a rewrite that failed is a reader's
+  // note lost with nothing to restore it from.
+  const handleRegenerateSection = async (
+    sectionTitle: string,
+    instruction?: string
+  ): Promise<boolean> => {
+    if (!script || !conversation) return false
 
     try {
       await regenerateSection({
@@ -368,8 +265,10 @@ export const ScriptPage = ({
         targetMinutes: script.targetMinutes,
         brief: script.initialPrompt ?? script.title
       })
+      return true
     } catch (error) {
       console.error('Error regenerating section:', error)
+      return false
     }
   }
 
@@ -483,6 +382,116 @@ export const ScriptPage = ({
   }
 
 
+  // The findings the document now carries, as the store names them. Joined
+  // into one string so the pruning effect below runs when that set changes
+  // rather than on every keystroke.
+  const observedFindingKeys = findings
+    .map(finding => findingKey(finding, finding.stage))
+    .join(FINDING_KEY_SEPARATOR)
+
+  // What the reader dismissed or spent is kept honest against the document.
+  // A key no finding produces any more hides nothing and can restore nothing,
+  // and left alone both lists would grow for the life of the script.
+  //
+  // Only once the conversation store has answered: before it does, a script
+  // with findings and one still loading look identical from here, and pruning
+  // against the loading one would forget every dismissal the reader made.
+  useEffect(() => {
+    if (!conversationsLoaded || markState.scriptId !== id) return
+    markDispatch({
+      type: 'FINDINGS_OBSERVED',
+      keys: observedFindingKeys === '' ? [] : observedFindingKeys.split(FINDING_KEY_SEPARATOR)
+    })
+  }, [conversationsLoaded, id, markState.scriptId, observedFindingKeys])
+
+  // Everything about how marks are drawn and what they offer is decided in
+  // services/sectionMarkView, in one pass over the whole document; this page
+  // holds the reader's state and hands the answer to the components.
+  const markView = documentMarkView({
+    sections: document.sections,
+    findings,
+    flags: markState.flags,
+    dismissed: markState.dismissed,
+    spent: markState.spent,
+    // Spending is hidden, never queued, while a generation is in flight (M4)
+    canSpend: canEditSections,
+    focusedMarkId
+  })
+
+  // The reader selected words in a section body. The selection is resolved
+  // against that body by exactly the rule a model's quoted passage is held to,
+  // so a mark that could not be found again is refused with the reason rather
+  // than stored and quietly relocated later.
+  const handlePassageSelected = (sectionTitle: string, selection: string): void => {
+    const section = document.sections.find(candidate => candidate.title === sectionTitle)
+    if (!section) return
+    if (section.isLive) {
+      setSelectionNote('This section is still being written. Mark it once it settles.')
+      return
+    }
+
+    const resolved = resolveSpan(section.content, selection)
+    if (!resolved.ok) {
+      setSelectionNote(markFaultNote(resolved))
+      return
+    }
+
+    // Said out loud, because nothing else about a successful mark is: the
+    // panel entry and the highlight are both silent to a reader who cannot
+    // see them, and this is the same region a refusal is announced in.
+    setSelectionNote(markMadeNote(resolved.anchor.quote))
+    setFocusedMarkId(null)
+    const flag: ReaderFlag = {
+      id: `flag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      section: sectionTitle,
+      anchor: resolved.anchor,
+      // What the body had been through when the passage was pinned, so a
+      // rewrite that happened afterwards can be told from one that did not
+      revisions: sectionRevisions(section),
+      label: 'Marked passage',
+      createdAt: Date.now()
+    }
+    markDispatch({ type: 'PASSAGE_FLAGGED', flag })
+  }
+
+  // Spending a mark is an ordinary section rewrite down the path that already
+  // exists — the instruction is the passage and the reason, nothing new.
+  //
+  // The mark is given up only once the rewrite has actually happened. A
+  // provider error would otherwise take the reader's own note with it, and a
+  // flag is not recoverable from anywhere: it was never in the conversation.
+  // Nothing can be spent twice in the meantime, because a mark stops being
+  // spendable while the run is in flight (M4).
+  const handleSpendMark = async (mark: SectionMark): Promise<void> => {
+    if (!mark.spendable) return
+    setFocusedMarkId(null)
+    const rewritten = await handleRegenerateSection(mark.section, mark.instruction)
+    if (!rewritten) return
+    markDispatch(
+      mark.kind === 'flag'
+        ? { type: 'FLAG_SPENT', id: mark.key }
+        : { type: 'FINDING_SPENT', key: mark.key }
+    )
+  }
+
+  // Dismissing changes nothing in the conversation. A finding is remembered as
+  // hidden, because the model did make it and the log has to keep saying so; a
+  // flag was only ever the reader's own note, so it goes.
+  const handleDismissMark = (mark: SectionMark): void => {
+    markDispatch(
+      mark.kind === 'flag'
+        ? { type: 'FLAG_DISMISSED', id: mark.key }
+        : { type: 'FINDING_DISMISSED', key: mark.key }
+    )
+    if (focusedMarkId === mark.id) setFocusedMarkId(null)
+  }
+
+  const handleRestoreDismissed = (): void => {
+    for (const key of markState.dismissed) {
+      markDispatch({ type: 'FINDING_RESTORED', key })
+    }
+  }
+
   if (!script) {
     return (
       <div>
@@ -531,8 +540,6 @@ export const ScriptPage = ({
     ? reviewReport.summary ?? formatReviewSummary(reviewReport.revised)
     : undefined
 
-  const canEditSections = !generationState.shouldDisableRegenerate && !!conversation
-
   return (
     <div className="workspace">
       <ConversationPanel
@@ -540,6 +547,7 @@ export const ScriptPage = ({
         pendingInstruction={pendingInstruction}
         isGenerating={generationState.isGenerating}
         phaseLabel={phaseLabel}
+        thinking={currentGeneration?.conversationId === conversation?.id ? currentGeneration?.thinking : undefined}
         onStop={stopGeneration}
         errorMessage={persistentErrorMessage}
         wasInterrupted={wasInterrupted}
@@ -585,6 +593,19 @@ export const ScriptPage = ({
         onStartEdit={handleStartEdit}
         onCancelEdit={handleCancelEdit}
         onEditSubmit={handleEditSubmit}
+        markViews={markView.bySection}
+        marks={markView.marks}
+        focusedMarkId={focusedMarkId}
+        focusedRunKey={focusedRunKey(markView.marks, focusedMarkId)}
+        onFocusMark={setFocusedMarkId}
+        onPassageSelected={handlePassageSelected}
+        selectionNote={selectionNote}
+        onSpendMark={handleSpendMark}
+        onDismissMark={handleDismissMark}
+        onRelabelMark={(mark, label) => markDispatch({ type: 'FLAG_RELABELLED', id: mark.key, label })}
+        onAnnotateMark={(mark, note) => markDispatch({ type: 'FLAG_ANNOTATED', id: mark.key, note })}
+        dismissedCount={markState.dismissed.length}
+        onRestoreDismissed={handleRestoreDismissed}
         informingExamples={informingExamples}
         showScriptActions={script.status === 'complete' && !!document.fullContent}
         onReviewScript={handleReviewScript}

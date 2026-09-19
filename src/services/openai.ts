@@ -2,21 +2,24 @@ import OpenAI from 'openai'
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import { buildGenerationSystemPrompt } from './prompts'
 import type { ExampleScript } from './exampleSearchService'
-import type { ScriptGenerationService } from './scriptGenerationService'
+import type { ScriptGenerationService, ProviderCallOptions } from './scriptGenerationService'
+import { toolTurnsToOpenAI } from './scriptGenerationService'
 import { getModel } from './config'
 import { buildLengthPlan } from './scriptLength'
-import { beginTranscript, exampleIdsOf, toTranscriptMessages, NO_TRANSCRIPT } from './debugTranscript'
-import type { TranscriptContext, TranscriptRecorder } from './debugTranscript'
+import { exampleIdsOf } from './debugTranscript'
+import type { TranscriptContext } from './debugTranscript'
+import { streamOpenAiCompatible } from './openAiCompatibleStream'
+import type { ProviderFrame } from './providerFrame'
 
 export class OpenAIService implements ScriptGenerationService {
   private client: OpenAI
 
   constructor(apiKey: string) {
-    console.debug('OpenAIService created with API key', { 
+    console.debug('OpenAIService created with API key', {
       apiKeyLength: apiKey.length,
       apiKeyPrefix: apiKey.substring(0, 7) + '...'
     })
-    
+
     this.client = new OpenAI({
       apiKey,
       dangerouslyAllowBrowser: true // Note: In production, API calls should be made from the server
@@ -53,15 +56,16 @@ export class OpenAIService implements ScriptGenerationService {
     request: GenerationRequest,
     messages?: ChatMessage[],
     examples?: ExampleScript[],
-    abortSignal?: AbortSignal
-  ): AsyncGenerator<string, void, unknown> {
+    abortSignal?: AbortSignal,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     console.debug('OpenAIService.generateScript called', {
       messagesCount: messages?.length || 0,
       examplesCount: examples?.length || 0
     })
-    
+
     let finalMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
-    
+
     if (messages && messages.length > 0) {
       // Use provided messages directly (already includes system + examples + conversation history)
       finalMessages = this.chatMessagesToOpenAI(messages)
@@ -75,14 +79,15 @@ export class OpenAIService implements ScriptGenerationService {
     yield* this.streamCompletion(finalMessages, abortSignal, {
       label: 'Generation',
       exampleIds: exampleIdsOf(examples)
-    })
+    }, options)
   }
 
   async *regenerateSection(
     request: RegenerationRequest,
     messages: ChatMessage[],
-    abortSignal?: AbortSignal
-  ): AsyncGenerator<string, void, unknown> {
+    abortSignal?: AbortSignal,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     console.debug('OpenAIService.regenerateSection called', {
       messagesCount: messages.length,
       sectionTitle: request.sectionTitle
@@ -91,96 +96,44 @@ export class OpenAIService implements ScriptGenerationService {
     const finalMessages = this.chatMessagesToOpenAI(messages)
     yield* this.streamCompletion(finalMessages, abortSignal, {
       label: request.sectionTitle || 'Refinement'
-    })
+    }, options)
   }
 
   private async *streamCompletion(
     messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam>,
     abortSignal: AbortSignal | undefined,
-    context: TranscriptContext
-  ): AsyncGenerator<string, void, unknown> {
-    let transcript: TranscriptRecorder = NO_TRANSCRIPT
+    context: TranscriptContext,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
+    // Generate a prompt cache key based on system message (which includes examples)
+    // This ensures requests with the same examples get cached together
+    const systemMessage = messages.find(msg => msg.role === 'system')
+    const systemContent = systemMessage?.content
+    const promptCacheKey = systemContent && typeof systemContent === 'string'
+      ? `system-${this.generateCacheKeyHash(systemContent)}`
+      : undefined
 
-    try {
-      // Generate a prompt cache key based on system message (which includes examples)
-      // This ensures requests with the same examples get cached together
-      const systemMessage = messages.find(msg => msg.role === 'system')
-      const systemContent = systemMessage?.content
-      const promptCacheKey = systemContent && typeof systemContent === 'string'
-        ? `system-${this.generateCacheKeyHash(systemContent)}`
-        : undefined
-
-      const completionsPayload = {
-        model: getModel(),
-        messages: messages,
-        stream: true,
-        temperature: 1, // Not supported on gpt-5 
-        ...(promptCacheKey && { prompt_cache_key: promptCacheKey })
-      }
-      
-      const requestOptions = abortSignal ? { signal: abortSignal } : {}
-      
-      console.debug('OpenAI Chat Completions API Request:', {
-        ...completionsPayload,
-        promptCacheKey,
-        systemMessageLength: systemMessage?.content?.length || 0,
-        totalMessages: messages.length,
-        hasAbortSignal: !!abortSignal
-      })
-      
-      // Records exactly what goes to the provider, examples and all, when the
-      // debug transcript option is on
-      transcript = beginTranscript({
-        provider: 'openai',
-        model: completionsPayload.model,
-        label: context.label,
-        exampleIds: context.exampleIds,
-        messages: toTranscriptMessages(messages),
-        params: { temperature: completionsPayload.temperature, promptCacheKey }
-      })
-
-      // Use the Chat Completions API with streaming
-      const response = await this.client.chat.completions.create(completionsPayload, requestOptions) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-
-      // Stream the response chunks
-      let isFirstChunk = true
-      for await (const chunk of response) {
-        const delta = chunk.choices[0]?.delta?.content
-        if (delta) {
-          transcript.appendChunk(delta)
-          yield delta
-        }
-
-        // Log cache performance on first chunk
-        if (isFirstChunk && chunk.usage) {
-          isFirstChunk = false
-          const usage = chunk.usage
-          const promptTokensDetails = usage.prompt_tokens_details
-          if (promptTokensDetails?.cached_tokens !== undefined) {
-            const totalPromptTokens = usage.prompt_tokens || 0
-            const cachedTokens = promptTokensDetails.cached_tokens
-            const cacheHitRate = totalPromptTokens ? (cachedTokens / totalPromptTokens * 100).toFixed(1) : '0'
-            console.debug('Prompt Cache Performance:', {
-              promptCacheKey,
-              totalPromptTokens,
-              cachedTokens,
-              cacheHitRate: `${cacheHitRate}%`,
-              cacheEnabled: cachedTokens > 0
-            })
-          }
-        }
-      }
-
-      transcript.complete()
-    } catch (error) {
-      if (abortSignal?.aborted) {
-        transcript.abort()
-        console.debug('Generation aborted by user')
-        return
-      }
-      transcript.fail(error)
-      console.error('Generation error:', error)
-      throw error
-    }
+    yield* streamOpenAiCompatible({
+      client: this.client,
+      provider: 'openai',
+      model: getModel(),
+      // The tool exchange rides after the stored history, never inside it:
+      // a tool result has to follow the assistant turn that made the call
+      messages: [...messages, ...toolTurnsToOpenAI(options?.toolTurns)],
+      extras: {
+        temperature: 1, // Not supported on gpt-5
+        ...(promptCacheKey && { prompt_cache_key: promptCacheKey }),
+        // Offered whole on every generation request (D4), so the tool list is
+        // identical between requests and the prompt cache is never spent on a
+        // change the cache key — hashed from the system message alone — cannot
+        // see. An absent list leaves the payload byte-identical to the prose
+        // path's.
+        ...(options?.tools && options.tools.length > 0 && { tools: [...options.tools] })
+      },
+      abortSignal,
+      label: context.label,
+      exampleIds: context.exampleIds,
+      transcriptParams: { temperature: 1, promptCacheKey }
+    })
   }
 }

@@ -1,4 +1,5 @@
 import type { ScriptGenerationService } from './scriptGenerationService'
+import type { ProviderFrame } from './providerFrame'
 import type { UtilityModelService, UtilityCompletionRequest } from './utilityModelService'
 import { MissingApiKeyError, PROVIDER_LABELS, type LiveProvider } from './providerStatus'
 
@@ -15,12 +16,12 @@ export class UnconfiguredScriptService implements ScriptGenerationService {
   }
 
   // eslint-disable-next-line require-yield
-  async *generateScript(): AsyncGenerator<string, void, unknown> {
+  async *generateScript(): AsyncGenerator<ProviderFrame, void, unknown> {
     throw new MissingApiKeyError(this.provider)
   }
 
   // eslint-disable-next-line require-yield
-  async *regenerateSection(): AsyncGenerator<string, void, unknown> {
+  async *regenerateSection(): AsyncGenerator<ProviderFrame, void, unknown> {
     throw new MissingApiKeyError(this.provider)
   }
 }

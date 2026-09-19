@@ -1,8 +1,9 @@
 // Cumulative token and cost estimation for a script's conversation
-// (story 8.12). Token counts use the same character-based heuristic as the
-// context-window sizing, so everything shown to the user is labelled as an
-// estimate. Pricing is a small static table covering the preset models;
-// anything else shows tokens only.
+// (story 8.12). A generation that recorded what the provider actually billed
+// is counted from THAT; only a generation with no such record falls back to
+// the character-based heuristic the context-window sizing uses. Pricing is a
+// small static table covering the preset models; anything else shows tokens
+// only.
 
 import { estimateTokenCount } from '../utils/contextWindow'
 import type { RawConversation } from '../types/conversation'
@@ -11,25 +12,66 @@ export interface TokenTotals {
   inputTokens: number
   outputTokens: number
   generationCount: number
+  // How many of those generations contributed at least one number the
+  // provider reported rather than one this file estimated. The two sides are
+  // counted together, so a generation whose provider reported only its
+  // completion tokens counts here while its prompt figure is still an
+  // estimate: equal to generationCount means every generation carried SOME
+  // measurement, not that every figure in the totals is measured; 0 means the
+  // whole total is a guess.
+  measuredCount: number
 }
 
-// Sums estimated tokens across every generation of the conversation. This
-// under-reports: the example corpus is sent with every prose request but never
-// stored on the generation, so the exemplar tokens the provider billed for are
-// not counted here. The stored exampleIds are what a faithful estimate would
-// have to re-measure against.
+// Sums tokens across every generation of the conversation, preferring what
+// the provider reported over what this file can guess.
+//
+// The two sides are decided separately, because a provider may report one and
+// not the other; each falls back on its own. The estimate is deliberately kept
+// rather than replaced: every conversation generated before per-generation
+// metrics existed has no usage to read, and its cost line would otherwise drop
+// to zero — a silent, plausible, wrong answer.
+//
+// The estimated path still under-reports: the example corpus is sent with
+// every prose request but never stored on the generation, so the exemplar
+// tokens the provider billed for are not counted. The stored exampleIds are
+// what a faithful estimate would have to re-measure against. The measured path
+// has no such gap, which is most of the point of it. It does fold cached
+// prompt tokens in at the full input rate, because the pricing table below has
+// no cached rate to apply — so a cache-heavy run reads as costlier than it was.
 export function estimateConversationTokens(conversation: RawConversation): TokenTotals {
   let inputTokens = 0
   let outputTokens = 0
+  let measuredCount = 0
 
   for (const generation of conversation.generations) {
-    for (const message of generation.messages) {
-      inputTokens += estimateTokenCount(message.content)
+    const metrics = generation.metrics
+    let measured = false
+
+    if (metrics?.promptTokens !== undefined) {
+      inputTokens += metrics.promptTokens
+      measured = true
+    } else {
+      for (const message of generation.messages) {
+        inputTokens += estimateTokenCount(message.content)
+      }
     }
-    outputTokens += estimateTokenCount(generation.response)
+
+    if (metrics?.completionTokens !== undefined) {
+      outputTokens += metrics.completionTokens
+      measured = true
+    } else {
+      outputTokens += estimateTokenCount(generation.response)
+    }
+
+    if (measured) measuredCount += 1
   }
 
-  return { inputTokens, outputTokens, generationCount: conversation.generations.length }
+  return {
+    inputTokens,
+    outputTokens,
+    generationCount: conversation.generations.length,
+    measuredCount
+  }
 }
 
 export interface ModelPricing {
@@ -59,7 +101,10 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
 
 // Approximate USD cost of the given token totals at the model's list price,
 // or null when the model's pricing is unknown
-export function estimateCostUsd(totals: TokenTotals, model: string): number | null {
+export function estimateCostUsd(
+  totals: Pick<TokenTotals, 'inputTokens' | 'outputTokens'>,
+  model: string
+): number | null {
   const pricing = MODEL_PRICING[model]
   if (!pricing) return null
   return (
@@ -74,3 +119,4 @@ export function formatCostUsd(cost: number): string {
   if (cost > 0 && cost < 0.01) return '< $0.01'
   return `$${cost.toFixed(2)}`
 }
+

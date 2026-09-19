@@ -1,4 +1,5 @@
-import type { RawConversation } from '../types/conversation'
+import type { Generation, GenerationToolCall, RawConversation } from '../types/conversation'
+import { isRejectedGeneration } from './scriptProjection'
 
 // The script page reads as a conversation: the brief the user gave, the
 // instructions they added since, and what the model did in between. The
@@ -34,6 +35,25 @@ const sectionTitles = (response: string): string[] =>
 const plural = (count: number, noun: string) =>
   `${count} ${noun}${count === 1 ? '' : 's'}`
 
+const SECTION_TOOLS = new Set(['section_write', 'section_revise'])
+
+// The writing call a generation is about, where it made one. A generation holds
+// at most one section's worth of calls, so the last section call is the verdict
+// the generation ended on.
+const sectionCall = (generation: Generation): GenerationToolCall | undefined =>
+  [...(generation.toolCalls ?? [])].reverse().find(call => SECTION_TOOLS.has(call.name))
+
+// The length a generation wrote. A tool call recorded the count its verdict was
+// reached on, which is the honest number; only a prose generation has to be
+// measured here, and then the heading line is part of what was counted.
+const wordDetail = (generation: Generation, response: string): string => {
+  const call = sectionCall(generation)
+  const words = call?.wordCount ?? countWords(response)
+  return call?.status === 'waived'
+    ? `${plural(words, 'word')} · kept outside the length window`
+    : plural(words, 'word')
+}
+
 const lastUserMessage = (messages: { role: string; content: string }[]): string =>
   [...messages].reverse().find(message => message.role === 'user')?.content ?? ''
 
@@ -65,6 +85,22 @@ export const buildThread = ({ brief, chips, conversation, isStreaming }: ThreadI
     const prompt = lastUserMessage(generation.messages)
     const response = generation.response
     const isOutline = /^#(?!#)/.test(response.trimStart())
+
+    // A draft the run refused is not a write: reporting it as one would put the
+    // very word count the run rejected in the thread as an accomplishment. It
+    // stays in the thread — the attempt happened — but as the refusal it was.
+    if (isRejectedGeneration(generation)) {
+      const refused = sectionCall(generation)
+      entries.push({
+        id: `gen-${index}`,
+        kind: 'activity',
+        label: refused?.title
+          ? `Refused a draft of "${refused.title}"`
+          : 'Refused a draft',
+        detail: wordDetail(generation, response)
+      })
+      return
+    }
 
     if (isOutline) {
       const planned = sectionTitles(response).length
@@ -119,7 +155,7 @@ export const buildThread = ({ brief, chips, conversation, isStreaming }: ThreadI
         id: `gen-${index}`,
         kind: 'activity',
         label: `Rewrote "${rewrite[1]}"`,
-        detail: plural(countWords(response), 'word')
+        detail: wordDetail(generation, response)
       })
       return
     }
@@ -130,7 +166,20 @@ export const buildThread = ({ brief, chips, conversation, isStreaming }: ThreadI
         id: `gen-${index}`,
         kind: 'activity',
         label: `Wrote "${written[1]}"`,
-        detail: plural(countWords(response), 'word')
+        detail: wordDetail(generation, response)
+      })
+      return
+    }
+
+    // A waived section that no prompt template claimed still has to say it was
+    // waived, so the entry is built from the call rather than the prompt
+    const waived = sectionCall(generation)
+    if (waived?.status === 'waived' && waived.title) {
+      entries.push({
+        id: `gen-${index}`,
+        kind: 'activity',
+        label: `Wrote "${waived.title}"`,
+        detail: wordDetail(generation, response)
       })
       return
     }

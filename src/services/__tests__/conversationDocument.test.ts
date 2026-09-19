@@ -6,18 +6,20 @@ import {
   ensureSectionHeading,
   isOutlineResponse
 } from '../conversationDocument'
-import type { RawConversation, Generation } from '../../types/conversation'
+import { projectConversation } from '../scriptProjection'
+import type { RawConversation, Generation, GenerationRound } from '../../types/conversation'
 
-const makeGeneration = (response: string): Generation => ({
+const makeGeneration = (response: string, round?: GenerationRound): Generation => ({
   messages: [],
   response,
-  timestamp: 0
+  timestamp: 0,
+  ...(round ? { round } : {})
 })
 
 const makeConversation = (responses: string[]): RawConversation => ({
   id: 'conv-1',
   scriptId: 'script-1',
-  generations: responses.map(makeGeneration),
+  generations: responses.map(response => makeGeneration(response)),
   createdAt: 0,
   updatedAt: 0
 })
@@ -68,6 +70,51 @@ describe('consolidateSections', () => {
       { title: 'Induction', content: 'Rewritten body.' },
       { title: 'Awakening', content: 'Awakening body.' }
     ])
+  })
+
+  // The two folds have to agree about what the script says: this one feeds the
+  // prompts, the reviewed script and the filesystem export, and the projection
+  // feeds the reading view. A critique worded under '## ' headings is a reply
+  // ABOUT the script, and belongs to neither.
+  it('skips a critique round\'s reply, however it is worded', () => {
+    const conversation: RawConversation = {
+      ...makeConversation([]),
+      generations: [
+        makeGeneration(outlineText, { round: 1, kind: 'outline' }),
+        makeGeneration('## Induction\nBreathe out slowly.', { round: 2, kind: 'section', sectionIndex: 0 }),
+        makeGeneration(
+          '## Induction\nVERDICT: violates 6 | Cliched imagery.',
+          { round: 3, kind: 'style-critique' }
+        )
+      ]
+    }
+
+    expect(consolidateSections(conversation))
+      .toEqual([{ title: 'Induction', content: 'Breathe out slowly.' }])
+    // and the projection beside it says exactly the same thing
+    expect(projectConversation(conversation, null, { lastGenerationSettled: true })
+      .sections.map(section => ({ title: section.title, content: section.content })))
+      .toEqual([{ title: 'Induction', content: 'Breathe out slowly.' }])
+  })
+
+  // The rewrites a critique round performs are stamped 'section', not
+  // 'style-critique': they are section revisions, and both folds must keep
+  // them or the reader and the export disagree about what the script says.
+  it('keeps a section rewritten during a critique round', () => {
+    const conversation: RawConversation = {
+      ...makeConversation([]),
+      generations: [
+        makeGeneration(outlineText, { round: 1, kind: 'outline' }),
+        makeGeneration('## Induction\nBreathe out slowly.', { round: 2, kind: 'section', sectionIndex: 0 }),
+        makeGeneration('VERDICT: violates 6', { round: 3, kind: 'style-critique' }),
+        makeGeneration('## Induction\nThe revised induction.', { round: 3, kind: 'section' })
+      ]
+    }
+
+    expect(consolidateSections(conversation))
+      .toEqual([{ title: 'Induction', content: 'The revised induction.' }])
+    expect(projectConversation(conversation, null, { lastGenerationSettled: true })
+      .sections[0].content).toBe('The revised induction.')
   })
 
   it('replaces multiple sections from a single refinement generation', () => {

@@ -16,12 +16,21 @@ Length (measured, not estimated — treat these numbers as fact):
 
 {lengthBrief}
 
-For every "##" section of the script, output exactly one line in one of these two formats:
+You are MARKING this script, not rewriting it. Record what you find and stop there: do not write, revise or lengthen a single section. A reader reads your findings and decides what to act on, and a finding they can disagree with is worth more than a rewrite they never saw.
+
+Record the review by calling `critique_record` once, with stage "review":
+
+* Use verdict "pass", with no findings, when every section earns its place in the arc.
+* Use verdict "revise" and one finding per section at fault. Name a section at most once, and say in one line what is wrong with it — which of the five questions above it fails, and how.
+* Quote the passages that carry the fault in `spans`. Each span must be copied CHARACTER FOR CHARACTER out of that section as it reads below — not paraphrased, not tidied, not summarised — long enough to appear exactly once in that section. A span that is too short, that cannot be found, or that appears more than once is refused with the fault named, and you must quote again. Where the fault is the section as a whole rather than any passage in it, record the finding with no spans and say so in the reason.
+* Cite no rule numbers: this pass judges the arc, not the numbered style rules.
+
+Flag only real problems: a section that genuinely earns its place in the arc is not a finding.
+
+If no tools are available to you, reply instead with one line per "##" section, in script order, in one of these two formats and nothing else — no preamble, no commentary, no code fences:
 
 VERDICT: <section title> | cohesive
-VERDICT: <section title> | revise | <one line naming the specific problem and what the rewrite must do>
-
-Flag only real problems: a section that genuinely earns its place in the arc is cohesive. Output only VERDICT lines, one per section, in script order — no preamble, no commentary, no code fences.
+VERDICT: <section title> | revise | <one line naming the specific problem>
 
 Here is the script to review:
 

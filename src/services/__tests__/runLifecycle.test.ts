@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RunLifecycle, KeyedRunGuard } from '../runLifecycle'
+import { RunLifecycle } from '../runLifecycle'
 
 // A manually-settled promise standing in for a generation run
 function deferred() {
@@ -242,29 +242,5 @@ describe('RunLifecycle', () => {
       await admission
       expect(events).toEqual(['run C admitted'])
     })
-  })
-})
-
-describe('KeyedRunGuard', () => {
-  it('admits the first run for a key and rejects a duplicate until finished', () => {
-    const guard = new KeyedRunGuard()
-
-    expect(guard.tryStart('conv-1-initial')).toBe(true)
-    expect(guard.tryStart('conv-1-initial')).toBe(false)
-
-    guard.finish('conv-1-initial')
-    expect(guard.tryStart('conv-1-initial')).toBe(true)
-  })
-
-  it('tracks keys independently', () => {
-    const guard = new KeyedRunGuard()
-
-    expect(guard.tryStart('conv-1-initial')).toBe(true)
-    expect(guard.tryStart('conv-1-Induction')).toBe(true)
-    expect(guard.tryStart('conv-2-initial')).toBe(true)
-
-    guard.finish('conv-1-Induction')
-    expect(guard.tryStart('conv-1-initial')).toBe(false)
-    expect(guard.tryStart('conv-1-Induction')).toBe(true)
   })
 })

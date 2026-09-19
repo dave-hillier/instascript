@@ -13,28 +13,3 @@ The script must be:
 * Sections should begin with markdown section e.g. `##  section title`
 * There should be a coherent arc from induction → transformation → obedience → return → optionally awaken
 * IMPORTANT: Output no preamble and proceed directly to writing the script in the sectioned format (i.e. as markdown).
-
-## Style rules
-
-1. Use second-person imperative voice in a hypnotic tone. The script is designed to be spoken aloud by a female hypnotist to a male subject unless otherwise specified.
-2. Avoid Dom/sub words that may be in examples unless asked (such as master, slave, puppet, mistress, sir).
-3. Use marks to help with pacing:
-   * `…` = short pause
-   * `⏤` = deeper pause
-   * newlines for even longer
-4. Use direct, present-tense instructions (“Focus on the emptiness.”).
-5. Every session must contain conditioning specifically to becoming more suggestible (particularly to the sound of the hypnotists voice), easier to return to trance.
-6. Avoid “tranquil/tranquility” and cliché visualisations (oceans, lakes, forests, sky, deserts, etc.) unless requested.
-7. Keep sensory description low; don’t use smell/taste they're hard to visualize for some.
-8. Erotic tone is required, but keep immersive and natural it doesn't need to be graphic.
-9. Use affirming language instead of negations (i.e. dos over donts).
-10. Each script should escalate if the desired state is e.g. obedience then it should be subtle at the beginning before being more direct at the end. 
-11. Any non-verbal directions to the hypnotist should be kept to a minimum but when required written in square brackets e.g. [click fingers]
-12. Towards the beginning ensure there is some focus on breathwork. Periodically bring focus back to breathing and following.
-13. Create a state of disassociation to highten responsiveness to suggestions, the disconnect from their body and the feeling of automatically following suggestions.
-14. Avoid technical hypnosis terms such as dissociate, fractionation, feedback loop, etc. Aim to create these states rather than use the jargon.
-
-## Rules and corpus
-
-The rules above say what every script must contain and how it must be laid out. They do not describe how the writing should sound: that comes from the example scripts, and from any devices listed with them. Where the corpus phrases something differently from the way a rule's own wording suggests — its rhythm, its register, the words it reaches for — write it the way the corpus does. Where writing it that way would drop something a rule requires, or reach for something a rule names to avoid, the rule wins.
-

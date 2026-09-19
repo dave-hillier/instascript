@@ -83,22 +83,3 @@ export class RunLifecycle {
     }
   }
 }
-
-// Per-key re-entrancy guard: admits at most one run per key at a time. Used
-// by the orchestrator so a duplicate request for the same generation (same
-// conversation and section) is rejected while one is already in flight.
-export class KeyedRunGuard {
-  private active = new Set<string>()
-
-  // Returns false when a run for this key is already in flight; otherwise
-  // claims the key until finish() is called
-  tryStart(key: string): boolean {
-    if (this.active.has(key)) return false
-    this.active.add(key)
-    return true
-  }
-
-  finish(key: string): void {
-    this.active.delete(key)
-  }
-}

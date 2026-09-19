@@ -60,3 +60,32 @@ describe('duplicateRawConversation', () => {
     expect(copy.generations).toEqual([])
   })
 })
+
+describe('duplicateRawConversation with tool calls', () => {
+  const withToolCalls = (): RawConversation => ({
+    ...sourceConversation(),
+    generations: [{
+      ...sourceConversation().generations[0],
+      toolCalls: [
+        { id: 'call_1', name: 'section_write', title: 'Settling', status: 'waived', wordCount: 361, reason: 'closest of 4 attempts' }
+      ]
+    }]
+  })
+
+  it('carries tool calls into the copy', () => {
+    const copy = duplicateRawConversation(withToolCalls(), 'script_1800000000000_new')
+
+    expect(copy.generations[0].toolCalls).toEqual(withToolCalls().generations[0].toolCalls)
+  })
+
+  it('survives structuredClone as plain data, independent of the source', () => {
+    // duplicateRawConversation clones with structuredClone, so a tool call
+    // must never hold anything unclonable
+    const source = withToolCalls()
+    const copy = duplicateRawConversation(source, 'script_1800000000000_new')
+
+    copy.generations[0].toolCalls![0].status = 'rejected'
+
+    expect(source.generations[0].toolCalls![0].status).toBe('waived')
+  })
+})

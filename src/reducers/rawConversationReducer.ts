@@ -1,16 +1,17 @@
-import type { RawConversation, ChatMessage, Generation, GenerationPhase, ReviewReport, ScriptOutline } from '../types/conversation'
+import type { CritiqueRecord, RawConversation, ChatMessage, Generation, GenerationMetrics, GenerationPhase, GenerationRound, GenerationToolCall, ReviewReport, ScriptOutline } from '../types/conversation'
 
 export type RawConversationAction =
   | { type: 'LOAD_CONVERSATIONS'; conversations: RawConversation[] }
   | { type: 'CREATE_CONVERSATION'; conversation: RawConversation }
   | { type: 'SECTION_EDITED'; conversationId: string; generation: Generation }
-  | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[] }
-  | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
-  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; cachedTokens?: number }
+  | { type: 'START_GENERATION'; conversationId: string; messages: ChatMessage[]; exampleIds?: string[]; round?: GenerationRound }
+  | { type: 'UPDATE_CURRENT_GENERATION'; conversationId: string; response: string; cachedTokens?: number; toolCalls?: GenerationToolCall[] }
+  | { type: 'COMPLETE_GENERATION'; conversationId: string; response: string; toolCalls?: GenerationToolCall[]; metrics?: GenerationMetrics; critique?: CritiqueRecord }
   | { type: 'DELETE_CONVERSATION'; conversationId: string }
   | { type: 'CONVERSATIONS_CLEARED' }
   | { type: 'GENERATION_RESTARTED'; conversationId: string }
   | { type: 'GENERATIONS_DISCARDED'; conversationId: string }
+  | { type: 'MODEL_THINKING_STREAMED'; conversationId: string; thinking: string }
   | { type: 'SET_GENERATION_PROGRESS'; conversationId: string; isComplete: boolean; error?: string; sectionTitle?: string }
   | { type: 'SET_GENERATION_PHASE'; conversationId: string; phase: GenerationPhase; outline?: ScriptOutline; currentSectionIndex?: number; totalSections?: number; sectionWordCounts?: number[]; error?: string }
   | { type: 'REVIEW_PASS_COMPLETED'; report: ReviewReport }
@@ -23,6 +24,11 @@ export type RawConversationState = {
     isComplete: boolean
     error?: string
     sectionTitle?: string
+    // What a reasoning model is thinking, while it thinks. Transient by
+    // construction: SET_GENERATION_PROGRESS rebuilds this object on every step,
+    // so the reasoning of a finished step never outlives it, and nothing here
+    // is ever written to the conversation document.
+    thinking?: string
   } | null
   generationMachine: {
     phase: GenerationPhase
@@ -85,7 +91,14 @@ export const rawConversationReducer = (
                   messages: action.messages,
                   response: '',
                   timestamp: Date.now(),
-                  exampleIds: action.exampleIds
+                  exampleIds: action.exampleIds,
+                  // Stamped once, at creation, and deliberately given none of
+                  // the `?? existing` merge treatment toolCalls has below.
+                  // Calls accumulate across a generation; the round a
+                  // generation belongs to is fixed the moment it is opened,
+                  // and a merge would let a new generation silently inherit
+                  // the previous round's number.
+                  round: action.round
                 }],
                 updatedAt: Date.now()
               }
@@ -105,7 +118,11 @@ export const rawConversationReducer = (
                   {
                     ...conv.generations[conv.generations.length - 1],
                     response: action.response,
-                    cachedTokens: action.cachedTokens
+                    cachedTokens: action.cachedTokens,
+                    // Calls accumulate over a run, so an update that carries
+                    // none is silent about them rather than a claim that none
+                    // were made — keep what the generation already recorded
+                    toolCalls: action.toolCalls ?? conv.generations[conv.generations.length - 1].toolCalls
                   }
                 ],
                 updatedAt: Date.now()
@@ -127,7 +144,38 @@ export const rawConversationReducer = (
                   {
                     ...conv.generations[conv.generations.length - 1],
                     response: action.response,
-                    cachedTokens: action.cachedTokens
+                    // The cache-hit count predates metrics and is what files
+                    // written before them carry, so it is still stored on its
+                    // own — filled here from the metrics the closing action
+                    // brings, which is the same reading the provider gave, so
+                    // this reducer never writes a figure that disagrees with
+                    // the metrics beside it. A completion carrying no metrics
+                    // (the prose section retry) keeps what is already stored.
+                    cachedTokens:
+                      action.metrics?.cachedTokens
+                      ?? conv.generations[conv.generations.length - 1].cachedTokens,
+                    // Calls accumulate over a run, so an update that carries
+                    // none is silent about them rather than a claim that none
+                    // were made — keep what the generation already recorded
+                    toolCalls: action.toolCalls ?? conv.generations[conv.generations.length - 1].toolCalls,
+                    // Same rule, for the same reason: the one dispatch that
+                    // rewrites an already-completed generation (the prose
+                    // section retry, when the first attempt won) carries no
+                    // metrics, and must not erase the request's own record
+                    metrics: action.metrics ?? conv.generations[conv.generations.length - 1].metrics,
+                    // What a judging pass decided, on the generation that
+                    // recorded it. This is the ONLY way a critique reaches the
+                    // conversation: everything downstream — the serializer,
+                    // the parser, the library importer and the projection's
+                    // findings fold — reads it off the generation, so without
+                    // it a model's findings exist for the length of one
+                    // function call and are never drawn or reloaded.
+                    //
+                    // Same `?? existing` rule as its neighbours, for the same
+                    // reason: a completion carrying no critique is silent
+                    // about one rather than a claim that the pass decided
+                    // nothing.
+                    critique: action.critique ?? conv.generations[conv.generations.length - 1].critique
                   }
                 ],
                 updatedAt: Date.now()
@@ -175,6 +223,17 @@ export const rawConversationReducer = (
         currentGeneration: null,
         generationMachine: null,
         reviewReport: null
+      }
+
+    case 'MODEL_THINKING_STREAMED':
+      // Only the generation actually on screen. Reasoning arriving for a
+      // conversation the reducer is no longer tracking is a late frame from a
+      // step that has already been answered, and showing it would tell the
+      // reader the wrong thing about what is happening now.
+      if (state.currentGeneration?.conversationId !== action.conversationId) return state
+      return {
+        ...state,
+        currentGeneration: { ...state.currentGeneration, thinking: action.thinking }
       }
 
     case 'SET_GENERATION_PROGRESS':

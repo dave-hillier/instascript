@@ -1,14 +1,26 @@
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
-import type { ScriptGenerationService } from './scriptGenerationService'
+import type { ScriptGenerationService, ProviderCallOptions } from './scriptGenerationService'
 import { STYLE_REVIEW_SECTION_TITLE } from './critiquePass'
 import { OUTLINE_CRITIQUE_SECTION_TITLE } from './outlineCritique'
 import { SCRIPT_REVIEW_SECTION_TITLE } from './scriptReview'
 import { BRIEF_QUESTIONS_SECTION_TITLE } from './briefQuestions'
-import { SECTION_TARGET_WORDS } from './sectionQuality'
+import { SECTION_TARGET_WORDS, SECTION_MAX_WORDS } from './sectionQuality'
+import { parseOutline } from './conversationDocument'
+import { OUTLINE_WRITE_TOOL, SECTION_WRITE_TOOL } from './writingTools'
 import { countWords } from '../utils/scriptMetrics'
 import { beginTranscript, exampleIdsOf } from './debugTranscript'
 import type { TranscriptMessage } from './debugTranscript'
+import type { ProviderFrame } from './providerFrame'
+
+// The request kinds that route on a sentinel title rather than on a section
+// of the script being written
+const SENTINEL_SECTION_TITLES = new Set<string>([
+  STYLE_REVIEW_SECTION_TITLE,
+  SCRIPT_REVIEW_SECTION_TITLE,
+  OUTLINE_CRITIQUE_SECTION_TITLE,
+  BRIEF_QUESTIONS_SECTION_TITLE
+])
 
 export class MockAPIService implements ScriptGenerationService {
   constructor() {
@@ -196,7 +208,7 @@ Continue to breathe... continue to follow... continue to let go. Everything is u
     label: string,
     abortSignal?: AbortSignal,
     exampleIds?: string[]
-  ): AsyncGenerator<string, void, unknown> {
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     const transcript = beginTranscript({
       provider: 'mock',
       model: 'mock',
@@ -205,15 +217,126 @@ Continue to breathe... continue to follow... continue to let go. Everything is u
       messages
     })
 
+    let sawFirstToken = false
     for await (const chunk of this.streamContent(content, abortSignal)) {
+      if (!sawFirstToken) {
+        sawFirstToken = true
+        yield { kind: 'firstToken', at: Date.now() }
+      }
       transcript.appendChunk(chunk)
-      yield chunk
+      yield { kind: 'text', delta: chunk }
     }
 
     if (abortSignal?.aborted) {
       transcript.abort()
       return
     }
+    // The mock never calls tools, so a run against it always ends the way a
+    // completed prose reply ends
+    yield { kind: 'finished', reason: 'stop' }
+    transcript.complete()
+  }
+
+  // --- tool-calling mode -------------------------------------------------
+  //
+  // The mock is the provider whenever no key is configured, which is the
+  // default install and every sociable test in the repo. Without a
+  // tool-emitting mode the new writing path would ship with no end-to-end
+  // coverage at all and a keyless user would silently only ever see the legacy
+  // prose path. So the mock answers with tool calls exactly when it is offered
+  // tools, which is the same signal a real provider goes on.
+  //
+  // A brief carrying this marker makes the mock's first section body
+  // deliberately far too long, so the rejection loop can be exercised end to
+  // end. It writes a body inside the window again once a rejection has come
+  // back, which is what a cooperative model does.
+  static readonly OVERLONG_SECTION_MARKER = 'mock:section-too-long'
+
+  private wasRejected(options?: ProviderCallOptions): boolean {
+    return (options?.toolTurns ?? []).some(
+      turn => turn.role === 'tool' && turn.content.includes('REJECTED')
+    )
+  }
+
+  private outlineToolArguments(prompt: string): string {
+    const outline = parseOutline(this.generateOutlineContent(prompt))
+    return JSON.stringify({
+      title: outline?.title ?? 'Deep Relaxation and Renewal',
+      sections: (outline?.sections ?? []).map(section => ({
+        title: section.title,
+        description: section.description,
+        target_words: SECTION_TARGET_WORDS
+      }))
+    })
+  }
+
+  private sectionToolArguments(
+    request: RegenerationRequest,
+    messages: ChatMessage[],
+    options?: ProviderCallOptions
+  ): string {
+    // The marker is written into the brief, and a section request carries the
+    // brief in its history rather than in its own instruction, so both are
+    // searched
+    const marked = request.prompt.includes(MockAPIService.OVERLONG_SECTION_MARKER)
+      || messages.some(message => message.content.includes(MockAPIService.OVERLONG_SECTION_MARKER))
+    const overlong = marked && !this.wasRejected(options)
+    const body = this.generateSectionContent(request.sectionTitle)
+    return JSON.stringify({
+      title: request.sectionTitle,
+      body: overlong ? this.padBeyondMaximum(body) : body
+    })
+  }
+
+  // Long enough to be rejected on measurement, not merely near the edge, so a
+  // test asserting a rejection is not at the mercy of the filler's word count
+  private padBeyondMaximum(content: string): string {
+    let padded = content
+    while (countWords(padded) <= SECTION_MAX_WORDS + 100) {
+      padded += `\n\n${this.generateRefinedSectionContent()}`
+    }
+    return padded
+  }
+
+  // The arguments arrive as fragments, as a real provider sends them, so a
+  // caller reassembling them from a partial JSON prefix is genuinely exercised
+  private async *streamToolCallRecorded(
+    name: string,
+    args: string,
+    messages: TranscriptMessage[],
+    label: string,
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
+    const transcript = beginTranscript({ provider: 'mock', model: 'mock', label, messages })
+    const callId = `call_mock_${label.replace(/\W+/g, '_')}`
+
+    let sawFirstToken = false
+    for (let i = 0; i < args.length; i += 24) {
+      if (abortSignal?.aborted) {
+        transcript.abort()
+        return
+      }
+      const fragment = args.slice(i, i + 24)
+      if (!sawFirstToken) {
+        sawFirstToken = true
+        yield { kind: 'firstToken', at: Date.now() }
+      }
+      transcript.appendToolCallDelta(0, name, fragment)
+      yield {
+        kind: 'toolCall',
+        index: 0,
+        id: callId,
+        name,
+        argumentsDelta: fragment
+      }
+      await this.delay(1, 5)
+    }
+
+    if (abortSignal?.aborted) {
+      transcript.abort()
+      return
+    }
+    yield { kind: 'finished', reason: 'tool_calls' }
     transcript.complete()
   }
 
@@ -221,8 +344,9 @@ Continue to breathe... continue to follow... continue to let go. Everything is u
     request: GenerationRequest,
     messages?: ChatMessage[],
     examples?: ExampleScript[],
-    abortSignal?: AbortSignal
-  ): AsyncGenerator<string, void, unknown> {
+    abortSignal?: AbortSignal,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     await this.delay(500, 1500)
     if (abortSignal?.aborted) return
 
@@ -232,6 +356,18 @@ Continue to breathe... continue to follow... continue to let go. Everything is u
     const sent = messages && messages.length > 0
       ? messages
       : [{ role: 'user' as const, content: request.prompt }]
+
+    if (options?.tools && options.tools.length > 0) {
+      yield* this.streamToolCallRecorded(
+        OUTLINE_WRITE_TOOL,
+        this.outlineToolArguments(request.prompt),
+        sent,
+        'Generation',
+        abortSignal
+      )
+      return
+    }
+
     yield* this.streamRecorded(
       content,
       sent,
@@ -428,10 +564,29 @@ There is no hurry. There was never any hurry. The pace is yours, and the pace is
   async *regenerateSection(
     request: RegenerationRequest,
     messages: ChatMessage[],
-    abortSignal?: AbortSignal
-  ): AsyncGenerator<string, void, unknown> {
+    abortSignal?: AbortSignal,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     await this.delay(300, 800)
     if (abortSignal?.aborted) return
+
+    // The sentinel titles route judging requests — critiques, reviews, the
+    // questionnaire — and a whole-script refinement routes on an empty title.
+    // None of those write a section, so none of them answer with a section
+    // call however the request was parameterised.
+    const writesASection = request.sectionTitle !== ''
+      && !SENTINEL_SECTION_TITLES.has(request.sectionTitle)
+
+    if (writesASection && options?.tools && options.tools.length > 0) {
+      yield* this.streamToolCallRecorded(
+        SECTION_WRITE_TOOL,
+        this.sectionToolArguments(request, messages, options),
+        messages,
+        request.sectionTitle,
+        abortSignal
+      )
+      return
+    }
 
     // The style-review marker asks for a critique of the submitted script.
     // An empty section title marks a whole-script refinement: respond with

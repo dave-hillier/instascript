@@ -2,11 +2,14 @@ import OpenAI from 'openai'
 import type { GenerationRequest, RegenerationRequest, ChatMessage } from '../types/conversation'
 import type { ExampleScript } from './exampleSearchService'
 import { buildGenerationSystemPrompt } from './prompts'
-import type { ScriptGenerationService } from './scriptGenerationService'
+import type { ScriptGenerationService, ProviderCallOptions } from './scriptGenerationService'
+import { toolTurnsToOpenAI } from './scriptGenerationService'
 import { getModel } from './config'
 import { buildLengthPlan } from './scriptLength'
-import { beginTranscript, exampleIdsOf, toTranscriptMessages } from './debugTranscript'
+import { exampleIdsOf } from './debugTranscript'
 import type { TranscriptContext } from './debugTranscript'
+import { streamOpenAiCompatible } from './openAiCompatibleStream'
+import type { ProviderFrame } from './providerFrame'
 
 export class OpenRouterService implements ScriptGenerationService {
   private client: OpenAI
@@ -36,8 +39,9 @@ export class OpenRouterService implements ScriptGenerationService {
     request: GenerationRequest,
     messages?: ChatMessage[],
     examples?: ExampleScript[],
-    abortSignal?: AbortSignal
-  ): AsyncGenerator<string, void, unknown> {
+    abortSignal?: AbortSignal,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     let finalMessages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = []
 
     if (messages && messages.length > 0) {
@@ -51,62 +55,39 @@ export class OpenRouterService implements ScriptGenerationService {
     yield* this.streamCompletion(finalMessages, abortSignal, {
       label: 'Generation',
       exampleIds: exampleIdsOf(examples)
-    })
+    }, options)
   }
 
   async *regenerateSection(
     request: RegenerationRequest,
     messages: ChatMessage[],
-    abortSignal?: AbortSignal
-  ): AsyncGenerator<string, void, unknown> {
+    abortSignal?: AbortSignal,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
     const finalMessages = this.chatMessagesToOpenAI(messages)
     yield* this.streamCompletion(finalMessages, abortSignal, {
       label: request.sectionTitle || 'Refinement'
-    })
+    }, options)
   }
 
   private async *streamCompletion(
     messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam>,
     abortSignal: AbortSignal | undefined,
-    context: TranscriptContext
-  ): AsyncGenerator<string, void, unknown> {
-    const model = getModel()
-    // Records exactly what goes to the provider, examples and all, when the
-    // debug transcript option is on
-    const transcript = beginTranscript({
+    context: TranscriptContext,
+    options?: ProviderCallOptions
+  ): AsyncGenerator<ProviderFrame, void, unknown> {
+    yield* streamOpenAiCompatible({
+      client: this.client,
       provider: 'openrouter',
-      model,
+      model: getModel(),
+      // As in the OpenAI service: the tool exchange is appended at send time
+      messages: [...messages, ...toolTurnsToOpenAI(options?.toolTurns)],
+      ...(options?.tools && options.tools.length > 0 && {
+        extras: { tools: [...options.tools] }
+      }),
+      abortSignal,
       label: context.label,
-      exampleIds: context.exampleIds,
-      messages: toTranscriptMessages(messages)
+      exampleIds: context.exampleIds
     })
-
-    try {
-      const requestOptions = abortSignal ? { signal: abortSignal } : {}
-
-      const response = await this.client.chat.completions.create({
-        model,
-        messages: messages,
-        stream: true
-      }, requestOptions) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-
-      for await (const chunk of response) {
-        const delta = chunk.choices[0]?.delta?.content
-        if (delta) {
-          transcript.appendChunk(delta)
-          yield delta
-        }
-      }
-
-      transcript.complete()
-    } catch (error) {
-      if (abortSignal?.aborted) {
-        transcript.abort()
-        return
-      }
-      transcript.fail(error)
-      console.error('OpenRouter generation error:', error)
-      throw error
-    }
   }
 }

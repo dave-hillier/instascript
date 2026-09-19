@@ -18,7 +18,13 @@ import {
   setImportAssistEnabled,
   getJobInstructions,
   setJobInstructions,
-  type APIProvider
+  getLlmEngine,
+  setLlmEngine,
+  getReasoning,
+  setReasoning,
+  type APIProvider,
+  type LlmEngine,
+  type ReasoningLevel
 } from './services/config'
 import { configChanged } from './services/configStore'
 import { loadThemePreference, saveTheme, type Theme } from './services/themePreference'
@@ -178,6 +184,16 @@ function AppContent() {
   const [utilityModel, setUtilityModelState] = useState<string>(getUtilityModel)
   const [importAssist, setImportAssist] = useState<boolean>(isImportAssistEnabled)
 
+  // Which client library carries a generation request. pi-ai is the default; a
+  // session that never opens this setting uses it, and the older SDK path is
+  // kept for comparison.
+  const [llmEngine, setLlmEngineState] = useState<LlmEngine>(getLlmEngine)
+
+  // How much reasoning to ask for, on the engine that can ask (story: the long
+  // silence before a section arrives is the model thinking, and until now
+  // nothing said so)
+  const [reasoning, setReasoningState] = useState<ReasoningLevel>(getReasoning)
+
   // Standing instructions the user writes once and every run of the job they
   // name carries (story 5.9)
   const [styleInstructions, setStyleInstructions] = useState<string>(
@@ -308,6 +324,14 @@ function AppContent() {
     }
   }, [reviewPass])
 
+  useEffect(() => {
+    setLlmEngine(llmEngine)
+  }, [llmEngine])
+
+  useEffect(() => {
+    setReasoning(reasoning)
+  }, [reasoning])
+
   // Save transcript capture preference when it changes
   useEffect(() => {
     try {
@@ -324,7 +348,7 @@ function AppContent() {
   // next reload. Declared after those effects so it runs once they have.
   useEffect(() => {
     configChanged()
-  }, [apiKey, openRouterApiKey, apiProvider, model, utilityModel, debugTranscripts])
+  }, [apiKey, openRouterApiKey, apiProvider, model, utilityModel, llmEngine, reasoning, debugTranscripts])
 
   // Save section titles visibility when it changes
   useEffect(() => {
@@ -397,6 +421,8 @@ function AppContent() {
     setApiProvider(settings.apiProvider)
     setModel(settings.model)
     setUtilityModelState(settings.utilityModel)
+    setLlmEngineState(settings.llmEngine)
+    setReasoningState(settings.reasoning)
     setImportAssist(settings.importAssist)
     setReviewPass(settings.reviewPass)
     setDebugTranscripts(settings.debugTranscripts)
@@ -724,6 +750,8 @@ function AppContent() {
         apiProvider={apiProvider || 'mock'}
         model={model || 'gpt-5'}
         utilityModel={utilityModel}
+        llmEngine={llmEngine}
+        reasoning={reasoning}
         importAssist={importAssist}
         reviewPass={reviewPass}
         debugTranscripts={debugTranscripts}

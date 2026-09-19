@@ -3,12 +3,10 @@ import {
   assessScriptLength,
   formatLengthBrief,
   parseScriptReviewResponse,
-  selectScriptRevisions,
-  buildScriptRevisionInstruction,
-  describeRevisionReason,
-  formatScriptReviewSummary,
-  MAX_SCRIPT_REVIEW_REVISIONS
+  findingsFromReviewVerdicts,
+  formatScriptReviewSummary
 } from '../scriptReview'
+import { MAX_CRITIQUE_FINDINGS } from '../critiquePass'
 import { buildLengthPlan } from '../scriptLength'
 import type { DocumentSection } from '../conversationDocument'
 
@@ -116,119 +114,50 @@ describe('parseScriptReviewResponse', () => {
   })
 })
 
-describe('selectScriptRevisions', () => {
-  const sections = [
-    section('Induction', 500),
-    section('Deepening', 300),
-    section('Awakening', 700)
-  ]
+describe('findingsFromReviewVerdicts', () => {
+  const titles = ['Induction', 'Deepening', 'Awakening']
 
-  it('rewrites only the flagged sections when the length is on target', () => {
-    const onTarget = scriptOf(3300, 3)
-    const verdicts = parseScriptReviewResponse(
-      `VERDICT: ${onTarget[0].title} | cohesive\nVERDICT: ${onTarget[1].title} | revise | Resets the depth.`
-    )
+  it('records one finding per section the review would not call cohesive', () => {
+    const verdicts = parseScriptReviewResponse([
+      'VERDICT: Induction | cohesive',
+      'VERDICT: Deepening | revise | Re-inducts a listener who is already deep.'
+    ].join('\n'))
 
-    const revisions = selectScriptRevisions(verdicts, onTarget, assessScriptLength(onTarget))
-
-    expect(revisions).toHaveLength(1)
-    expect(revisions[0].sectionTitle).toBe(onTarget[1].title)
-    expect(revisions[0].issue).toBe('Resets the depth.')
-    expect(revisions[0].wordTarget).toBeUndefined()
+    expect(findingsFromReviewVerdicts(verdicts, titles)).toEqual([
+      { section: 'Deepening', reason: 'Re-inducts a listener who is already deep.' }
+    ])
   })
 
-  it('adds the sections with the most room when the script is short', () => {
-    const assessment = assessScriptLength(sections)
-    const verdicts = parseScriptReviewResponse('VERDICT: Induction | revise | Ends flat.')
+  it('quotes nothing, because a VERDICT line points at no passage', () => {
+    const verdicts = parseScriptReviewResponse('VERDICT: Deepening | revise | Resets the depth.')
 
-    const revisions = selectScriptRevisions(verdicts, sections, assessment)
-
-    // The flagged section first, then the shortest sections
-    expect(revisions.map(revision => revision.sectionTitle)).toEqual([
-      'Induction',
-      'Deepening',
-      'Awakening'
-    ])
-    // Every chosen section carries a share of the shortfall, so each grows
-    for (const revision of revisions) {
-      expect(revision.wordTarget).toBeGreaterThan(revision.currentWords)
+    for (const finding of findingsFromReviewVerdicts(verdicts, titles)) {
+      expect(finding.spans).toBeUndefined()
+      expect(finding.rules).toBeUndefined()
     }
   })
 
-  it('asks the longest sections to give ground when the script runs long', () => {
-    const long = [section('Induction', 1800), section('Deepening', 1400), section('Awakening', 1200)]
-    const revisions = selectScriptRevisions([], long, assessScriptLength(long))
+  it('drops a verdict naming a section the script does not have', () => {
+    const verdicts = parseScriptReviewResponse('VERDICT: Imaginary Section | revise | Does not exist.')
 
-    expect(revisions.map(revision => revision.sectionTitle)).toEqual([
-      'Induction',
-      'Deepening',
-      'Awakening'
-    ])
-    for (const revision of revisions) {
-      expect(revision.wordTarget).toBeLessThan(revision.currentWords)
-    }
+    expect(findingsFromReviewVerdicts(verdicts, titles)).toEqual([])
   })
 
-  it('never exceeds the revision cap', () => {
+  it('says so rather than recording a silent finding when the review gave no reason', () => {
+    const verdicts = parseScriptReviewResponse('VERDICT: Deepening | revise')
+
+    expect(findingsFromReviewVerdicts(verdicts, titles)[0].reason)
+      .toBe('The review marked this section without saying why.')
+  })
+
+  it('never records more findings than a critique may carry', () => {
     const many = scriptOf(1200, 8)
     const verdicts = parseScriptReviewResponse(
       many.map(item => `VERDICT: ${item.title} | revise | Restates the previous section.`).join('\n')
     )
 
-    expect(selectScriptRevisions(verdicts, many, assessScriptLength(many)))
-      .toHaveLength(MAX_SCRIPT_REVIEW_REVISIONS)
-  })
-
-  it('ignores verdicts for sections that are not in the script', () => {
-    const onTarget = scriptOf(3300, 3)
-    const verdicts = parseScriptReviewResponse('VERDICT: Imaginary Section | revise | Does not exist.')
-
-    expect(selectScriptRevisions(verdicts, onTarget, assessScriptLength(onTarget))).toHaveLength(0)
-  })
-})
-
-describe('buildScriptRevisionInstruction', () => {
-  it('carries the cohesion problem into the rewrite', () => {
-    const instruction = buildScriptRevisionInstruction({
-      sectionTitle: 'Deepening',
-      currentWords: 400,
-      issue: 'Re-inducts a listener who is already deep.'
-    })
-
-    expect(instruction).toContain('Re-inducts a listener who is already deep.')
-    expect(instruction).toContain('follows on from the section before it')
-    expect(instruction).not.toMatch(/approximately \d+ words/)
-  })
-
-  it('states an explicit word target when the section must grow', () => {
-    const instruction = buildScriptRevisionInstruction({
-      sectionTitle: 'Deepening',
-      currentWords: 400,
-      wordTarget: 700
-    })
-
-    expect(instruction).toContain('from 400 to approximately 700 words')
-    expect(instruction).toContain('rather than padding')
-  })
-
-  it('asks for cuts when the section must shrink', () => {
-    const instruction = buildScriptRevisionInstruction({
-      sectionTitle: 'Deepening',
-      currentWords: 900,
-      wordTarget: 600
-    })
-
-    expect(instruction).toContain('tighten this section')
-    expect(instruction).toContain('Cut repetition')
-  })
-})
-
-describe('describeRevisionReason', () => {
-  it('names why the section was rewritten', () => {
-    expect(describeRevisionReason({ sectionTitle: 'A', currentWords: 400, issue: 'x' })).toBe('cohesion')
-    expect(describeRevisionReason({ sectionTitle: 'A', currentWords: 400, wordTarget: 700 })).toBe('length')
-    expect(describeRevisionReason({ sectionTitle: 'A', currentWords: 400, issue: 'x', wordTarget: 700 }))
-      .toBe('cohesion and length')
+    expect(findingsFromReviewVerdicts(verdicts, many.map(item => item.title)))
+      .toHaveLength(MAX_CRITIQUE_FINDINGS)
   })
 })
 
@@ -241,18 +170,20 @@ describe('formatScriptReviewSummary', () => {
     expect(summary).toContain(`close to the ${defaultPlan.targetMinutes} minute target`)
   })
 
-  it('lists what was rewritten and why', () => {
+  it('lists what was MARKED, and says plainly that nothing was rewritten', () => {
     const summary = formatScriptReviewSummary(
       [
-        { sectionTitle: 'Deepening', reason: 'cohesion' },
-        { sectionTitle: 'Awakening', reason: 'length' }
+        { sectionTitle: 'Deepening', reason: 'Re-inducts an already deep listener.' },
+        { sectionTitle: 'Awakening', reason: 'Never pays off the anchor.' }
       ],
       assessScriptLength(scriptOf(2000))
     )
 
-    expect(summary).toContain('rewrote 2 sections')
-    expect(summary).toContain('Deepening (cohesion)')
-    expect(summary).toContain('Awakening (length)')
-    expect(summary).toContain(`still under the ${defaultPlan.targetMinutes} minute target`)
+    expect(summary).toContain('marked 2 sections')
+    expect(summary).toContain('Nothing was rewritten')
+    expect(summary).not.toContain('rewrote')
+    expect(summary).toContain('Deepening (Re-inducts an already deep listener.)')
+    expect(summary).toContain('Awakening (Never pays off the anchor.)')
+    expect(summary).toContain(`under the ${defaultPlan.targetMinutes} minute target`)
   })
 })

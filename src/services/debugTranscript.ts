@@ -11,6 +11,21 @@ export interface TranscriptMessage {
 
 export type TranscriptStatus = 'streaming' | 'complete' | 'aborted' | 'error'
 
+// A tool call as it was streamed: the arguments are accumulated from the
+// fragments the provider sent, so a transcript taken mid-stream shows a
+// partial JSON document rather than nothing at all.
+export interface TranscriptToolCall {
+  index: number
+  name?: string
+  arguments: string
+}
+
+export interface TranscriptUsage {
+  promptTokens?: number
+  completionTokens?: number
+  cachedTokens?: number
+}
+
 export interface TranscriptEntry {
   id: string
   startedAt: number
@@ -26,12 +41,19 @@ export interface TranscriptEntry {
   params?: Record<string, unknown>
   messages: TranscriptMessage[]
   response: string
+  // Present only when the model called tools on this request
+  toolCalls?: TranscriptToolCall[]
+  usage?: TranscriptUsage
   status: TranscriptStatus
   error?: string
 }
 
 export interface TranscriptRecorder {
   appendChunk(chunk: string): void
+  // One streamed fragment of one tool call's arguments, identified by the
+  // index the provider keyed it on
+  appendToolCallDelta(index: number, name: string | undefined, argumentsDelta: string): void
+  recordUsage(usage: TranscriptUsage): void
   complete(): void
   abort(): void
   fail(error: unknown): void
@@ -94,6 +116,8 @@ export function clearTranscripts(): void {
 // request that fails before recording starts
 export const NO_TRANSCRIPT: TranscriptRecorder = {
   appendChunk: () => {},
+  appendToolCallDelta: () => {},
+  recordUsage: () => {},
   complete: () => {},
   abort: () => {},
   fail: () => {}
@@ -138,21 +162,52 @@ export function beginTranscript(input: BeginTranscriptInput): TranscriptRecorder
   }
 
   let response = ''
+  // Keyed on the provider's call index, which is the only identifier every
+  // fragment carries
+  const toolCalls = new Map<number, TranscriptToolCall>()
+  let usage: TranscriptUsage | undefined
+
+  // Rebuilt on each write so a stored entry never shares the live map
+  const toolCallList = (): TranscriptToolCall[] | undefined =>
+    toolCalls.size === 0
+      ? undefined
+      : [...toolCalls.values()].map(call => ({ ...call }))
+
+  const streamed = (): Partial<TranscriptEntry> => ({
+    response,
+    toolCalls: toolCallList(),
+    usage
+  })
 
   return {
     appendChunk: (chunk: string) => {
       response += chunk
       update({ response }, true)
     },
+    appendToolCallDelta: (index: number, name: string | undefined, argumentsDelta: string) => {
+      const existing = toolCalls.get(index) ?? { index, arguments: '' }
+      toolCalls.set(index, {
+        index,
+        // The name arrives once, with the first fragment; later fragments must
+        // not blank it out
+        name: name ?? existing.name,
+        arguments: existing.arguments + argumentsDelta
+      })
+      update({ toolCalls: toolCallList() }, true)
+    },
+    recordUsage: (next: TranscriptUsage) => {
+      usage = next
+      update({ usage }, true)
+    },
     complete: () => {
-      update({ response, status: 'complete', endedAt: Date.now() })
+      update({ ...streamed(), status: 'complete', endedAt: Date.now() })
     },
     abort: () => {
-      update({ response, status: 'aborted', endedAt: Date.now() })
+      update({ ...streamed(), status: 'aborted', endedAt: Date.now() })
     },
     fail: (error: unknown) => {
       update({
-        response,
+        ...streamed(),
         status: 'error',
         endedAt: Date.now(),
         error: error instanceof Error ? error.message : String(error)
@@ -241,7 +296,23 @@ export function formatTranscriptsAsText(transcripts: TranscriptEntry[]): string 
         .map(message => `--- ${message.role} ---\n${message.content}`)
         .join('\n\n')
 
-      return `${header}\n\n${messages}\n\n--- response ---\n${entry.response}`
+      const toolCalls = entry.toolCalls
+        ?.map(call => `--- tool call ${call.index}${call.name ? `: ${call.name}` : ''} ---\n${call.arguments}`)
+        .join('\n\n')
+
+      const usage = entry.usage
+        ? `--- usage ---\n${[
+            entry.usage.promptTokens !== undefined ? `prompt: ${entry.usage.promptTokens}` : null,
+            entry.usage.completionTokens !== undefined ? `completion: ${entry.usage.completionTokens}` : null,
+            entry.usage.cachedTokens !== undefined ? `cached: ${entry.usage.cachedTokens}` : null
+          ].filter(Boolean).join(', ')}`
+        : null
+
+      return [
+        `${header}\n\n${messages}\n\n--- response ---\n${entry.response}`,
+        toolCalls,
+        usage
+      ].filter(Boolean).join('\n\n')
     })
     .join('\n\n\n')
 }

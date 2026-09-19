@@ -3,7 +3,8 @@ import {
   serializeLibraryExport,
   parseLibraryExport,
   mergeLibrary,
-  LIBRARY_EXPORT_FORMAT
+  LIBRARY_EXPORT_FORMAT,
+  LIBRARY_EXPORT_VERSION
 } from '../libraryTransfer'
 import type { Script } from '../../types/script'
 import type { RawConversation } from '../../types/conversation'
@@ -227,5 +228,246 @@ describe('the requested length survives a library round trip', () => {
     const serialized = serializeLibraryExport([makeScript('s1')], [])
 
     expect(parseLibraryExport(serialized).scripts[0].targetMinutes).toBeUndefined()
+  })
+})
+
+describe('library export tool calls', () => {
+  const withToolCalls = (): RawConversation => {
+    const conversation = makeConversation('c1', 's1')
+    conversation.generations[0].toolCalls = [
+      { id: 'call_1', name: 'section_write', title: 'Induction', status: 'rejected', wordCount: 212, reason: 'under 400 words' },
+      { id: 'call_2', name: 'section_write', title: 'Induction', status: 'accepted', wordCount: 512 }
+    ]
+    return conversation
+  }
+
+  it('round-trips tool calls through export and import', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [withToolCalls()])
+    )
+
+    expect(parsed.conversations[0].generations[0].toolCalls)
+      .toEqual(withToolCalls().generations[0].toolCalls)
+  })
+
+  it('imports an export written before tool calls existed', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].toolCalls).toBeUndefined()
+  })
+
+  it('drops a malformed tool call instead of aborting the whole import', () => {
+    // Unlike a malformed message, an unreadable tool call must never take the
+    // import down with it: the prose is intact in the response
+    const conversation = withToolCalls()
+    const raw = JSON.parse(serializeLibraryExport([makeScript('s1')], [conversation]))
+    raw.conversations[0].generations[0].toolCalls = [
+      { id: 'call_1', name: 'section_write', status: 'accepted', wordCount: 512 },
+      { id: 'call_2', name: 'a_tool_from_the_future', status: 'accepted' },
+      'not an object'
+    ]
+
+    const parsed = parseLibraryExport(JSON.stringify(raw))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].toolCalls).toEqual([
+      { id: 'call_1', name: 'section_write', status: 'accepted', wordCount: 512 }
+    ])
+  })
+
+  it('drops a toolCalls field that is not a list, leaving the generation intact', () => {
+    const raw = JSON.parse(serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')]))
+    raw.conversations[0].generations[0].toolCalls = { id: 'call_1' }
+
+    const parsed = parseLibraryExport(JSON.stringify(raw))
+
+    expect(parsed.conversations[0].generations[0].toolCalls).toBeUndefined()
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+  })
+})
+
+
+describe('round records in a library export', () => {
+  const withRound = (): RawConversation => {
+    const conversation = makeConversation('c1', 's1')
+    conversation.generations[0].round = { round: 4, kind: 'section', sectionIndex: 2 }
+    return conversation
+  }
+
+  it('round-trips a round record through export and import', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [withRound()])
+    )
+
+    expect(parsed.conversations[0].generations[0].round)
+      .toEqual({ round: 4, kind: 'section', sectionIndex: 2 })
+  })
+
+  it('imports an export written before rounds existed', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].round).toBeUndefined()
+  })
+
+  it('drops an unreadable round instead of aborting the whole import', () => {
+    const raw = JSON.parse(serializeLibraryExport([makeScript('s1')], [withRound()]))
+    raw.conversations[0].generations[0].round = { round: 4, kind: 'regrounding' }
+
+    const parsed = parseLibraryExport(JSON.stringify(raw))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].round).toBeUndefined()
+  })
+})
+
+describe('run metrics in a library export', () => {
+  const conversationWithMetrics = (): RawConversation => ({
+    ...makeConversation('c1', 's1'),
+    generations: [
+      {
+        messages: [{ role: 'user', content: 'write a script' }],
+        response: '## Induction\nBreathe.',
+        timestamp: 1700000000000,
+        metrics: {
+          startedAt: 1699999999000,
+          endedAt: 1700000000000,
+          firstTokenAt: 1699999999200,
+          promptTokens: 900,
+          completionTokens: 120,
+          cachedTokens: 768,
+          finishReason: 'stop'
+        }
+      }
+    ]
+  })
+
+  it('survives export and import intact', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [conversationWithMetrics()])
+    )
+
+    expect(parsed.conversations[0].generations[0].metrics).toEqual({
+      startedAt: 1699999999000,
+      endedAt: 1700000000000,
+      firstTokenAt: 1699999999200,
+      promptTokens: 900,
+      completionTokens: 120,
+      cachedTokens: 768,
+      finishReason: 'stop'
+    })
+  })
+
+  it('drops malformed metrics instead of failing the whole import', () => {
+    // validateMessage THROWS on a bad role, and one throw aborts the import of
+    // every script and conversation in the file. Metrics are a record ABOUT a
+    // request, so they must never be able to reach that: a nonsense record
+    // costs its own line of telemetry and nothing else.
+    const file = JSON.parse(
+      serializeLibraryExport([makeScript('s1')], [conversationWithMetrics()])
+    )
+    file.conversations[0].generations[0].metrics = { startedAt: 'ages ago', promptTokens: [] }
+
+    const parsed = parseLibraryExport(JSON.stringify(file))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].metrics).toBeUndefined()
+  })
+
+  it('imports a conversation exported before metrics existed', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].metrics).toBeUndefined()
+  })
+})
+
+describe('critiques in a library export', () => {
+  const critique = {
+    stage: 'style' as const,
+    verdict: 'revise' as const,
+    findings: [{
+      section: 'Induction',
+      rules: [6],
+      spans: [{ quote: 'Breathe.', before: '', after: '', occurrence: 0 }],
+      revisions: 0,
+      reason: 'Ocean imagery.'
+    }]
+  }
+
+  const withCritique = (): RawConversation => {
+    const conversation = makeConversation('c1', 's1')
+    conversation.generations[0].critique = critique
+    return conversation
+  }
+
+  it('round-trips a critique through export and import', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [withCritique()])
+    )
+
+    expect(parsed.conversations[0].generations[0].critique).toEqual(critique)
+  })
+
+  it('keeps LIBRARY_EXPORT_VERSION where it was: nothing about the file format changed', () => {
+    const file = JSON.parse(serializeLibraryExport([makeScript('s1')], [withCritique()]))
+
+    expect(file.format).toBe(LIBRARY_EXPORT_FORMAT)
+    expect(file.version).toBe(LIBRARY_EXPORT_VERSION)
+  })
+
+  it('drops an unreadable critique instead of aborting the whole import', () => {
+    // validateMessage THROWS on a bad role, and one throw aborts the import of
+    // every script and conversation in the file. A critique is written by a
+    // MODEL, so a malformed one is the likeliest of all to arrive — it must
+    // never be able to reach that.
+    const file = JSON.parse(serializeLibraryExport([makeScript('s1')], [withCritique()]))
+    file.conversations[0].generations[0].critique = { stage: 'lunchtime', verdict: 'maybe' }
+
+    const parsed = parseLibraryExport(JSON.stringify(file))
+
+    expect(parsed.conversations).toHaveLength(1)
+    expect(parsed.conversations[0].generations[0].response).toContain('Induction')
+    expect(parsed.conversations[0].generations[0].critique).toBeUndefined()
+  })
+
+  it('drops the findings it cannot read and keeps the ones it can', () => {
+    const file = JSON.parse(serializeLibraryExport([makeScript('s1')], [withCritique()]))
+    file.conversations[0].generations[0].critique = {
+      stage: 'style',
+      verdict: 'revise',
+      findings: ['not an object', { section: 'Induction', reason: 'Ocean imagery.' }]
+    }
+
+    const parsed = parseLibraryExport(JSON.stringify(file))
+
+    expect(parsed.conversations[0].generations[0].critique).toEqual({
+      stage: 'style',
+      verdict: 'revise',
+      findings: [{ section: 'Induction', reason: 'Ocean imagery.' }]
+    })
+  })
+
+  it('imports a conversation exported before critiques were recorded', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [makeConversation('c1', 's1')])
+    )
+
+    expect(parsed.conversations[0].generations[0].critique).toBeUndefined()
+  })
+
+  it('keeps a critique structured-cloneable, as duplicateRawConversation needs', () => {
+    const parsed = parseLibraryExport(
+      serializeLibraryExport([makeScript('s1')], [withCritique()])
+    )
+
+    expect(structuredClone(parsed.conversations[0]).generations[0].critique).toEqual(critique)
   })
 })
